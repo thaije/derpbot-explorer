@@ -16,7 +16,7 @@ DerpBot's full sensor suite (from AUTONOMOUS_AGENT_GUIDE.md) plus the added RGBD
 |---|---|---|---|
 | 2-D LiDAR | `/derpbot_0/scan` | ~10 Hz | 360°, 720 rays, 0.5° res, 0.15–12 m, `sensor_msgs/LaserScan` |
 | IMU | `/derpbot_0/imu` | 100 Hz | `sensor_msgs/Imu`, **BEST_EFFORT QoS** |
-| RGBD camera (RGB) | `/derpbot_0/rgbd` | 10 Hz | 640×480, 90° H FOV, forward-facing, `sensor_msgs/Image` |
+| RGBD camera (RGB) | `/derpbot_0/rgbd/image` | 10 Hz | 640×480, 90° H FOV, forward-facing, `sensor_msgs/Image` |
 | RGBD camera (depth) | `/derpbot_0/rgbd/depth_image` | 10 Hz | 640×480, 90° H FOV, 0.3–10 m range (reliable ≤3 m, noisy beyond), `sensor_msgs/Image` 32FC1 (metres) |
 | RGBD camera (pointcloud) | `/derpbot_0/rgbd/points` | 10 Hz | Optional. `sensor_msgs/PointCloud2` |
 | Odometry | `/derpbot_0/odom` | — | `nav_msgs/Odometry`, wheel-encoder dead-reckoning |
@@ -89,7 +89,7 @@ agent_node.py
 **Goal:** Robot moves without crashing. Validates sensor subscriptions and control.
 
 **Approach:**
-- Subscribe to `/derpbot_0/scan`, `/derpbot_0/odom`, `/derpbot_0/imu` (BEST_EFFORT), `/derpbot_0/rgbd`, `/derpbot_0/rgbd/depth_image`
+- Subscribe to `/derpbot_0/scan`, `/derpbot_0/odom`, `/derpbot_0/imu` (BEST_EFFORT), `/derpbot_0/rgbd/image`, `/derpbot_0/rgbd/depth_image`
 - Implement reactive obstacle avoidance: read LiDAR, compute a "safe" twist
 - Algorithm: Virtual Force Field (VFF) — repulsive vectors from nearby obstacles, attractive vector forward. Simple, no map needed.
 - Publish `Twist` to `/derpbot_0/cmd_vel`
@@ -165,7 +165,7 @@ NAVIGATE: follow path → if reached goal → EXPLORE
 **Goal:** Replace oracle with real camera-based detection using RGBD + GPU.
 
 **Approach:**
-- Subscribe to `/derpbot_0/rgbd` and `/derpbot_0/rgbd/depth_image` (both 10 Hz, `sensor_msgs/Image`). Synchronise using `message_filters.ApproximateTimeSynchronizer`.
+- Subscribe to `/derpbot_0/rgbd/image` and `/derpbot_0/rgbd/depth_image` (both 10 Hz, `sensor_msgs/Image`). Synchronise using `message_filters.ApproximateTimeSynchronizer`.
 - **Object detection model — open-vocabulary, GPU-accelerated:**
   - Primary: **YOLO-World** (ultralytics) or **GroundingDINO** — text-prompted object detection. Feed target type strings directly from the mission endpoint (e.g. `"fire extinguisher"`, `"hazard sign"`) as text prompts. No retraining needed; any new target type the mission specifies is automatically supported.
   - Fallback: **YOLOv8n** with COCO classes — covers common objects like fire extinguishers. Less flexible but simpler to deploy.

@@ -52,7 +52,7 @@ Ground robot (differential drive — currently the only supported model).
 |---|---|---|---|
 | 2-D LiDAR | `/derpbot_0/scan` | ~10 Hz | 360°, 720 rays, 0.5° resolution, 0.15–12 m range, `sensor_msgs/LaserScan` |
 | IMU | `/derpbot_0/imu` | 100 Hz | `sensor_msgs/Imu`, **BEST_EFFORT QoS** |
-| RGBD — RGB | `/derpbot_0/rgbd` | 10 Hz | 640 × 480, 90° H-FOV, forward-facing, `sensor_msgs/Image` |
+| RGBD — RGB | `/derpbot_0/rgbd/image` | 10 Hz | 640 × 480, 90° H-FOV, forward-facing, `sensor_msgs/Image` |
 | RGBD — depth | `/derpbot_0/rgbd/depth_image` | 10 Hz | float32 metres, 0.15–6.0 m range, Gaussian noise σ=0.01 m, `sensor_msgs/Image` |
 | RGBD — intrinsics | `/derpbot_0/rgbd/camera_info` | 10 Hz | `sensor_msgs/CameraInfo` — required for 3-D back-projection |
 | RGBD — point cloud | `/derpbot_0/rgbd/points` | 10 Hz | `sensor_msgs/PointCloud2` — **off by default**, enable with `--enable-pointcloud` |
@@ -79,6 +79,8 @@ Publish your detections on `/derpbot_0/detections` as `vision_msgs/Detection2DAr
 | `results[0].pose.pose.position.{x,y}` | Estimated world position in metres (from robot pose + depth estimate) |
 
 **Validation logic:** a detection is a **true positive** if the class matches a known target type, the claimed position is within 1.5 m of a real object of that type, and there is line of sight. Detections of unknown classes are silently ignored (no penalty). False positives, duplicate positives and localization error reduce your score.
+
+**Safety threshold:** a near-miss is any obstacle within **≤ 0.3 m** of the robot (as measured by LiDAR). Collisions and near-misses both reduce the Safety score. The robot body is 30 × 20 cm (LiDAR-to-surface offset ≈ 0.15 m front/back).
 
 **Note:** a ground-truth oracle can be enabled with `--enable-oracle` (see §4). When active, the simulator bridges its bbox camera directly to `/derpbot_0/detections`, replacing the need for your own vision pipeline. **Off by default** — for scored runs you must publish your own detections using `/derpbot_0/rgbd` and `/derpbot_0/rgbd/depth_image`.
 
