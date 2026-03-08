@@ -51,3 +51,7 @@ qtcreator-*
 CATKIN_IGNORE
 
 .venv
+
+# debug outputs
+grid.png
+debug/

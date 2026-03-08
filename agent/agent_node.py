@@ -8,6 +8,8 @@ Publishes Twist to /derpbot_0/cmd_vel.
 """
 
 import rclpy
+from pathlib import Path
+
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 
@@ -16,9 +18,19 @@ from sensor_msgs.msg import LaserScan, Imu
 from nav_msgs.msg import Odometry
 
 from obstacle_avoider import ObstacleAvoider
+from occupancy_grid import OccupancyGrid
 
+
+import math
 
 ROBOT = "derpbot_0"
+
+
+def _yaw_from_quaternion(q) -> float:
+    """Extract yaw from a geometry_msgs/Quaternion."""
+    siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+    cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+    return math.atan2(siny_cosp, cosy_cosp)
 
 
 class AgentNode(Node):
@@ -28,6 +40,7 @@ class AgentNode(Node):
         ])
 
         self.avoider = ObstacleAvoider()
+        self.grid = OccupancyGrid()
 
         # latest sensor data
         self._scan: LaserScan | None = None
@@ -52,7 +65,8 @@ class AgentNode(Node):
         # Control loop at 10 Hz
         self.create_timer(0.1, self._control_loop)
 
-        self.get_logger().info("AgentNode Phase 1 started — Drive & Survive")
+        self._debug_dir = Path(__file__).parent.parent
+        self.get_logger().info("AgentNode Phase 2 started — Mapping")
 
     # ------------------------------------------------------------------ #
     # Callbacks                                                            #
@@ -60,6 +74,12 @@ class AgentNode(Node):
 
     def _scan_cb(self, msg: LaserScan) -> None:
         self._scan = msg
+        if self._odom is not None:
+            p = self._odom.pose.pose
+            rx = p.position.x
+            ry = p.position.y
+            ryaw = _yaw_from_quaternion(p.orientation)
+            self.grid.update(rx, ry, ryaw, msg.ranges, msg.angle_min, msg.angle_increment)
 
     def _odom_cb(self, msg: Odometry) -> None:
         self._odom = msg
@@ -97,13 +117,23 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        # save debug grid
+        try:
+            grid_path = node._debug_dir / "grid.png"
+            node.grid.save_png(grid_path)
+            node.get_logger().info(f"Grid saved to {grid_path}")
+        except Exception as e:
+            node.get_logger().warn(f"Grid save failed: {e}")
         # stop robot on exit (best-effort — context may already be gone)
         try:
             node._cmd_pub.publish(Twist())
         except Exception:
             pass
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
