@@ -178,13 +178,19 @@ class FrontierExplorer:
                 f"FrontierExplorer: goal ({cx:.2f}, {cy:.2f}), cluster size={best.size}"
             )
 
-            success = self._send_goal_and_wait(cx, cy, current_map.header.frame_id)
+            result = self._send_goal_and_wait(cx, cy, current_map.header.frame_id)
 
-            if not success:
+            if result is False:
                 self._logger.info(
                     f"FrontierExplorer: goal ({cx:.2f}, {cy:.2f}) failed — blacklisting."
                 )
                 self._blacklist.append((cx, cy))
+                # Brief pause — give Nav2 time to finish cancellation/cleanup
+                # before we send the next goal (avoids acceptance future delays).
+                time.sleep(3.0)
+            elif result is None:
+                # Acceptance timed out — Nav2 busy, don't blacklist, just retry.
+                time.sleep(3.0)
 
     # ------------------------------------------------------------------
     # Frontier detection — BFS
@@ -294,10 +300,12 @@ class FrontierExplorer:
 
     def _send_goal_and_wait(
         self, goal_x: float, goal_y: float, frame_id: str
-    ) -> bool:
+    ) -> Optional[bool]:
         """
         Send a NavigateToPose goal and block until it succeeds, fails, or the
-        robot gets stuck.  Returns True on success, False on failure/stuck.
+        robot gets stuck.
+        Returns True on success, False on failure/stuck (blacklist), None on
+        acceptance timeout (skip without blacklisting).
         """
         goal_msg = NavigateToPose.Goal()
         pose = PoseStamped()
@@ -311,12 +319,12 @@ class FrontierExplorer:
         future = self._nav_client.send_goal_async(goal_msg)
         # Poll — do NOT call spin_until_future_complete here; the node is already
         # spinning in a MultiThreadedExecutor in agent_node.py.
-        deadline = time.time() + 10.0
+        deadline = time.time() + 90.0
         while not future.done() and time.time() < deadline:
             time.sleep(0.05)
         if not future.done():
-            self._logger.warning("FrontierExplorer: timeout waiting for goal acceptance.")
-            return False
+            self._logger.warning("FrontierExplorer: timeout waiting for goal acceptance — skipping (not blacklisting).")
+            return None
         goal_handle = future.result()
 
         if not goal_handle or not goal_handle.accepted:
@@ -347,11 +355,17 @@ class FrontierExplorer:
                 self._logger.warning(
                     "FrontierExplorer: stuck detected — cancelling goal."
                 )
-                goal_handle.cancel_goal_async()
+                cancel_future = goal_handle.cancel_goal_async()
+                cancel_deadline = time.time() + 5.0
+                while not cancel_future.done() and time.time() < cancel_deadline:
+                    time.sleep(0.1)
                 return False
 
             if not self._exploring:
-                goal_handle.cancel_goal_async()
+                cancel_future = goal_handle.cancel_goal_async()
+                cancel_deadline = time.time() + 5.0
+                while not cancel_future.done() and time.time() < cancel_deadline:
+                    time.sleep(0.1)
                 return False
 
         result = result_future.result()
