@@ -95,12 +95,17 @@ class FrontierExplorer:
         # Subscriptions
         # /map is published TRANSIENT_LOCAL — subscriber must also use TRANSIENT_LOCAL
         # to receive the held last message immediately on subscribe.
+        # ReentrantCallbackGroup ensures the map callback is never blocked by other
+        # callbacks in the node's default MutuallyExclusiveCallbackGroup (e.g. TF
+        # listener callbacks that fire at high frequency).
         map_qos = rclpy.qos.QoSProfile(
             depth=1,
             durability=rclpy.qos.DurabilityPolicy.TRANSIENT_LOCAL,
             reliability=rclpy.qos.ReliabilityPolicy.RELIABLE,
         )
-        node.create_subscription(OccupancyGrid, "/map", self._map_cb, map_qos)
+        reentrant = rclpy.callback_groups.ReentrantCallbackGroup()
+        node.create_subscription(OccupancyGrid, "/map", self._map_cb, map_qos,
+                                 callback_group=reentrant)
         node.create_subscription(
             Odometry, "/derpbot_0/odom", self._odom_cb,
             rclpy.qos.QoSProfile(depth=10),
@@ -175,21 +180,26 @@ class FrontierExplorer:
 
             cx, cy = best.centroid_world  # used for scoring/blacklisting
 
-            # Navigate to the cluster cell closest to the robot, not the centroid.
-            # Centroid can land in unknown/inflated space; a frontier cell is by
-            # definition free space adjacent to unknown — always navigable.
+            # Navigate to the cluster cell closest to the centroid, not to the robot.
+            # - All frontier cells are free (value == 0), so this is always navigable.
+            # - Centroid can land outside free cells (average may fall in unknown/
+            #   inflated space). Closest-to-centroid picks a real free cell near the
+            #   geometric interior of the frontier.
+            # - Unlike closest-to-robot, this requires the robot to actually travel
+            #   toward the unexplored area.
             res = current_map.info.resolution
             ox = current_map.info.origin.position.x
             oy = current_map.info.origin.position.y
+            centroid_r = (cy - oy) / res - 0.5
+            centroid_c = (cx - ox) / res - 0.5
             goal_x, goal_y = cx, cy  # fallback
             min_d = math.inf
             for r, c in best.cells:
-                wx = ox + (c + 0.5) * res
-                wy = oy + (r + 0.5) * res
-                d = math.hypot(wx - rx, wy - ry)
+                d = math.hypot(r - centroid_r, c - centroid_c)
                 if d < min_d:
                     min_d = d
-                    goal_x, goal_y = wx, wy
+                    goal_x = ox + (c + 0.5) * res
+                    goal_y = oy + (r + 0.5) * res
 
             self._logger.info(
                 f"FrontierExplorer: goal ({goal_x:.2f}, {goal_y:.2f})"
@@ -198,7 +208,12 @@ class FrontierExplorer:
 
             result = self._send_goal_and_wait(goal_x, goal_y, current_map.header.frame_id)
 
-            if result is False:
+            if result is True:
+                # Blacklist centroid on success. If frontier cells persist after the
+                # robot visited (unknown area is behind a wall), blacklisting prevents
+                # the robot from repeatedly returning to the same inaccessible spot.
+                self._blacklist.append((cx, cy))
+            elif result is False:
                 self._logger.info(
                     f"FrontierExplorer: goal ({cx:.2f}, {cy:.2f}) failed — blacklisting."
                 )
