@@ -173,12 +173,30 @@ class FrontierExplorer:
                 self._done_callback()
                 return
 
-            cx, cy = best.centroid_world
+            cx, cy = best.centroid_world  # used for scoring/blacklisting
+
+            # Navigate to the cluster cell closest to the robot, not the centroid.
+            # Centroid can land in unknown/inflated space; a frontier cell is by
+            # definition free space adjacent to unknown — always navigable.
+            res = current_map.info.resolution
+            ox = current_map.info.origin.position.x
+            oy = current_map.info.origin.position.y
+            goal_x, goal_y = cx, cy  # fallback
+            min_d = math.inf
+            for r, c in best.cells:
+                wx = ox + (c + 0.5) * res
+                wy = oy + (r + 0.5) * res
+                d = math.hypot(wx - rx, wy - ry)
+                if d < min_d:
+                    min_d = d
+                    goal_x, goal_y = wx, wy
+
             self._logger.info(
-                f"FrontierExplorer: goal ({cx:.2f}, {cy:.2f}), cluster size={best.size}"
+                f"FrontierExplorer: goal ({goal_x:.2f}, {goal_y:.2f})"
+                f" [centroid ({cx:.2f}, {cy:.2f})], cluster size={best.size}"
             )
 
-            result = self._send_goal_and_wait(cx, cy, current_map.header.frame_id)
+            result = self._send_goal_and_wait(goal_x, goal_y, current_map.header.frame_id)
 
             if result is False:
                 self._logger.info(
