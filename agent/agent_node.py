@@ -1,139 +1,126 @@
-#!/usr/bin/env python3
 """
-DerpBot autonomous explorer — Phase 1: Drive & Survive.
+DerpBot Autonomous Agent — Approach 1: Classical Modular Pipeline
+  slam_toolbox  → /map
+  Nav2          → NavigateToPose
+  FrontierExplorer → systematic coverage
+  Detector + DepthProjector + Tracker → /derpbot_0/detections
 
-Subscribes to LiDAR + odom + IMU.
-Uses VFF reactive obstacle avoidance to wander without crashing.
-Publishes Twist to /derpbot_0/cmd_vel.
+State machine: INIT → EXPLORE → DONE
+
+Run (once Nav2 + slam_toolbox are up):
+  python3 agent_node.py
+Or via launch file:
+  ros2 launch derpbot_autonomy.launch.py
 """
+
+import logging
+import sys
+import threading
 
 import rclpy
-from pathlib import Path
-
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 
-from geometry_msgs.msg import Twist
-from sensor_msgs.msg import LaserScan, Imu
-from nav_msgs.msg import Odometry
+from mission_client import fetch_mission
+from frontier_explorer import FrontierExplorer
+from detector import Detector
+from depth_projector import DepthProjector
+from tracker import Tracker
 
-from obstacle_avoider import ObstacleAvoider
-from occupancy_grid import OccupancyGrid
-
-
-import math
-
-ROBOT = "derpbot_0"
-
-
-def _yaw_from_quaternion(q) -> float:
-    """Extract yaw from a geometry_msgs/Quaternion."""
-    siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
-    cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
-    return math.atan2(siny_cosp, cosy_cosp)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("agent_node")
 
 
 class AgentNode(Node):
     def __init__(self):
-        super().__init__("agent_node", parameter_overrides=[
-            rclpy.parameter.Parameter("use_sim_time", rclpy.Parameter.Type.BOOL, True)
+        super().__init__("derpbot_agent", parameter_overrides=[
+            rclpy.parameter.Parameter("use_sim_time", rclpy.parameter.Parameter.Type.BOOL, True)
         ])
+        self._state = "INIT"
+        self._done_event = threading.Event()
 
-        self.avoider = ObstacleAvoider()
-        self.grid = OccupancyGrid()
+        self.get_logger().info("AgentNode: INIT — fetching mission…")
 
-        # latest sensor data
-        self._scan: LaserScan | None = None
-        self._odom: Odometry | None = None
+        # --- Fetch mission (blocks until server is ready) ---
+        try:
+            mission = fetch_mission()
+        except RuntimeError as exc:
+            self.get_logger().error("AgentNode: %s", exc)
+            sys.exit(1)
 
-        # QoS profiles
-        reliable_qos = QoSProfile(depth=10)
-        best_effort_qos = QoSProfile(
-            depth=10,
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            durability=DurabilityPolicy.VOLATILE,
+        self.get_logger().info(
+            "AgentNode: mission received — targets: %s, time_limit: %ds",
+            mission.targets, mission.time_limit,
         )
 
-        # Subscribers
-        self.create_subscription(LaserScan, f"/{ROBOT}/scan", self._scan_cb, reliable_qos)
-        self.create_subscription(Odometry, f"/{ROBOT}/odom", self._odom_cb, reliable_qos)
-        self.create_subscription(Imu, f"/{ROBOT}/imu", self._imu_cb, best_effort_qos)
+        if not mission.targets:
+            self.get_logger().warning("AgentNode: no targets in mission — will explore only.")
 
-        # Publisher
-        self._cmd_pub = self.create_publisher(Twist, f"/{ROBOT}/cmd_vel", reliable_qos)
+        # --- Wire up perception pipeline ---
+        self._detector = Detector(self, targets=mission.targets)
+        self._detector.start()
 
-        # Control loop at 10 Hz
-        self.create_timer(0.1, self._control_loop)
+        self._depth_projector = DepthProjector(self)
 
-        self._debug_dir = Path(__file__).parent.parent
-        self.get_logger().info("AgentNode Phase 2 started — Mapping")
-
-    # ------------------------------------------------------------------ #
-    # Callbacks                                                            #
-    # ------------------------------------------------------------------ #
-
-    def _scan_cb(self, msg: LaserScan) -> None:
-        self._scan = msg
-        if self._odom is not None:
-            p = self._odom.pose.pose
-            rx = p.position.x
-            ry = p.position.y
-            ryaw = _yaw_from_quaternion(p.orientation)
-            self.grid.update(rx, ry, ryaw, msg.ranges, msg.angle_min, msg.angle_increment)
-
-    def _odom_cb(self, msg: Odometry) -> None:
-        self._odom = msg
-
-    def _imu_cb(self, msg: Imu) -> None:
-        pass  # available for future phases
-
-    # ------------------------------------------------------------------ #
-    # Control loop                                                         #
-    # ------------------------------------------------------------------ #
-
-    def _control_loop(self) -> None:
-        if self._scan is None:
-            # no data yet — stay still
-            return
-
-        scan = self._scan
-        linear_x, angular_z = self.avoider.compute(
-            ranges=list(scan.ranges),
-            angle_min=scan.angle_min,
-            angle_increment=scan.angle_increment,
+        self._tracker = Tracker(
+            node=self,
+            detector=self._detector,
+            depth_projector=self._depth_projector,
+            targets=mission.targets,
         )
 
-        twist = Twist()
-        twist.linear.x = linear_x
-        twist.angular.z = angular_z
-        self._cmd_pub.publish(twist)
+        # --- Frontier explorer ---
+        self._explorer = FrontierExplorer(
+            node=self,
+            done_callback=self._on_exploration_done,
+        )
+
+        self._state = "EXPLORE"
+        self.get_logger().info("AgentNode: EXPLORE — starting frontier exploration.")
+        self._explorer.start()
+
+    # ------------------------------------------------------------------
+    # Done callback (called from FrontierExplorer when no frontiers remain)
+    # ------------------------------------------------------------------
+
+    def _on_exploration_done(self) -> None:
+        self.get_logger().info("AgentNode: exploration complete — transitioning to DONE.")
+        self._state = "DONE"
+        self._done_event.set()
+
+    # ------------------------------------------------------------------
+    # Shutdown
+    # ------------------------------------------------------------------
+
+    def shutdown(self) -> None:
+        self.get_logger().info("AgentNode: shutting down.")
+        self._explorer.stop()
+        self._tracker.stop()
 
 
-def main(args=None):
-    rclpy.init(args=args)
+def main():
+    rclpy.init()
     node = AgentNode()
+
+    executor = rclpy.executors.MultiThreadedExecutor()
+    executor.add_node(node)
+
+    # Spin in background thread while we wait for exploration to finish
+    spin_thread = threading.Thread(target=executor.spin, daemon=True)
+    spin_thread.start()
+
     try:
-        rclpy.spin(node)
+        node._done_event.wait()  # blocks until exploration complete
+        node.get_logger().info("AgentNode: mission DONE.")
     except KeyboardInterrupt:
-        pass
+        node.get_logger().info("AgentNode: interrupted.")
     finally:
-        # save debug grid
-        try:
-            grid_path = node._debug_dir / "grid.png"
-            node.grid.save_png(grid_path)
-            node.get_logger().info(f"Grid saved to {grid_path}")
-        except Exception as e:
-            node.get_logger().warn(f"Grid save failed: {e}")
-        # stop robot on exit (best-effort — context may already be gone)
-        try:
-            node._cmd_pub.publish(Twist())
-        except Exception:
-            pass
-        node.destroy_node()
-        try:
-            rclpy.shutdown()
-        except Exception:
-            pass
+        node.shutdown()
+        executor.shutdown()
+        rclpy.shutdown()
 
 
 if __name__ == "__main__":

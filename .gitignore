@@ -55,3 +55,6 @@ CATKIN_IGNORE
 # debug outputs
 grid.png
 debug/
+
+# MCP tools etc
+.serena
