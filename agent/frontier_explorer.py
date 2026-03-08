@@ -209,6 +209,9 @@ class FrontierExplorer:
             result = self._send_goal_and_wait(goal_x, goal_y, current_map.header.frame_id)
 
             if result is True:
+                self._logger.info(
+                    f"FrontierExplorer: goal ({cx:.2f}, {cy:.2f}) SUCCEEDED — blacklisting."
+                )
                 # Blacklist centroid on success. If frontier cells persist after the
                 # robot visited (unknown area is behind a wall), blacklisting prevents
                 # the robot from repeatedly returning to the same inaccessible spot.
