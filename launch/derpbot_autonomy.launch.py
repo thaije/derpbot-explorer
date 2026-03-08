@@ -10,9 +10,9 @@ Usage:
   ros2 launch derpbot_autonomy.launch.py
   ros2 launch derpbot_autonomy.launch.py use_sim_time:=true
 
-TF frames expected from the simulator:
-  map → odom → base_link → camera_link
-  (verify with: ros2 run tf2_tools view_frames)
+TF frames (confirmed from sim):
+  map → odom → base_footprint → base_link → camera_link
+                                           → lidar_link
 """
 
 import os
@@ -51,10 +51,8 @@ def generate_launch_description():
         name="slam_toolbox",
         output="screen",
         parameters=[SLAM_PARAMS, {"use_sim_time": use_sim_time}],
-        remappings=[
-            ("/scan", "/derpbot_0/scan"),
-            ("/odom", "/derpbot_0/odom"),
-        ],
+        # scan_topic is set directly in slam_toolbox_params.yaml; no remapping needed.
+        # slam_toolbox uses TF for odom (not an odom topic subscription).
     )
 
     # --- Nav2 bringup (navigation only — no AMCL, slam_toolbox provides localisation) ---

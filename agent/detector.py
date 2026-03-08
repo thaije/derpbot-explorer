@@ -105,12 +105,12 @@ class Detector:
         self._frame_count = 0
         self._lock = threading.Lock()
 
-        self._logger.info("Detector: loading model for targets: %s", targets)
+        self._logger.info(f"Detector: loading model for targets: {targets}")
         try:
             self._model, self._model_name = _load_model(targets)
-            self._logger.info("Detector: loaded %s on cuda:%d", self._model_name, GPU_DEVICE)
+            self._logger.info(f"Detector: loaded {self._model_name} on cuda:{GPU_DEVICE}")
         except Exception as exc:
-            self._logger.error("Detector: model load failed — %s", exc)
+            self._logger.error(f"Detector: model load failed — {exc}")
             return
 
         # Subscribe to RGB image
@@ -126,7 +126,7 @@ class Detector:
         if self._model is None:
             self._logger.error("Detector: model not loaded — detection disabled.")
         else:
-            self._logger.info("Detector: active, processing every %dth frame.", PROCESS_EVERY_N_FRAMES)
+            self._logger.info(f"Detector: active, processing every {PROCESS_EVERY_N_FRAMES}th frame.")
 
     # ------------------------------------------------------------------
     # Image callback
@@ -143,7 +143,7 @@ class Detector:
         try:
             frame = self._bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
         except Exception as exc:
-            self._logger.warning("Detector: cv_bridge conversion failed — %s", exc)
+            self._logger.warning(f"Detector: cv_bridge conversion failed — {exc}")
             return
 
         # Run inference
@@ -155,7 +155,7 @@ class Detector:
                 verbose=False,
             )
         except Exception as exc:
-            self._logger.warning("Detector: inference error — %s", exc)
+            self._logger.warning(f"Detector: inference error — {exc}")
             return
 
         stamp = msg.header.stamp

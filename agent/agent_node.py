@@ -48,12 +48,11 @@ class AgentNode(Node):
         try:
             mission = fetch_mission()
         except RuntimeError as exc:
-            self.get_logger().error("AgentNode: %s", exc)
+            self.get_logger().error(f"AgentNode: {exc}")
             sys.exit(1)
 
         self.get_logger().info(
-            "AgentNode: mission received — targets: %s, time_limit: %ds",
-            mission.targets, mission.time_limit,
+            f"AgentNode: mission received — targets: {mission.targets}, time_limit: {mission.time_limit}s"
         )
 
         if not mission.targets:

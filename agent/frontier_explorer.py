@@ -40,7 +40,7 @@ W_DIST = 0.5    # penalise distance from robot
 
 # Stuck detection
 STUCK_DIST_THRESHOLD = 0.10   # metres — robot must move this far
-STUCK_TIME_THRESHOLD = 8.0    # seconds
+STUCK_TIME_THRESHOLD = 30.0   # seconds (Nav2 rotates first; give it time to start translating)
 
 # Blacklist radius: frontiers within this distance of a failed goal are blacklisted
 BLACKLIST_RADIUS = 0.5        # metres
@@ -93,7 +93,14 @@ class FrontierExplorer:
         self._exploring = False
 
         # Subscriptions
-        node.create_subscription(OccupancyGrid, "/map", self._map_cb, 10)
+        # /map is published TRANSIENT_LOCAL — subscriber must also use TRANSIENT_LOCAL
+        # to receive the held last message immediately on subscribe.
+        map_qos = rclpy.qos.QoSProfile(
+            depth=1,
+            durability=rclpy.qos.DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=rclpy.qos.ReliabilityPolicy.RELIABLE,
+        )
+        node.create_subscription(OccupancyGrid, "/map", self._map_cb, map_qos)
         node.create_subscription(
             Odometry, "/derpbot_0/odom", self._odom_cb,
             rclpy.qos.QoSProfile(depth=10),
@@ -168,14 +175,14 @@ class FrontierExplorer:
 
             cx, cy = best.centroid_world
             self._logger.info(
-                "FrontierExplorer: goal (%.2f, %.2f), cluster size=%d", cx, cy, best.size
+                f"FrontierExplorer: goal ({cx:.2f}, {cy:.2f}), cluster size={best.size}"
             )
 
             success = self._send_goal_and_wait(cx, cy, current_map.header.frame_id)
 
             if not success:
                 self._logger.info(
-                    "FrontierExplorer: goal (%.2f, %.2f) failed — blacklisting.", cx, cy
+                    f"FrontierExplorer: goal ({cx:.2f}, {cy:.2f}) failed — blacklisting."
                 )
                 self._blacklist.append((cx, cy))
 
@@ -302,7 +309,14 @@ class FrontierExplorer:
         goal_msg.pose = pose
 
         future = self._nav_client.send_goal_async(goal_msg)
-        rclpy.spin_until_future_complete(self._node, future)
+        # Poll — do NOT call spin_until_future_complete here; the node is already
+        # spinning in a MultiThreadedExecutor in agent_node.py.
+        deadline = time.time() + 10.0
+        while not future.done() and time.time() < deadline:
+            time.sleep(0.05)
+        if not future.done():
+            self._logger.warning("FrontierExplorer: timeout waiting for goal acceptance.")
+            return False
         goal_handle = future.result()
 
         if not goal_handle or not goal_handle.accepted:
@@ -347,6 +361,6 @@ class FrontierExplorer:
             return True
 
         self._logger.info(
-            "FrontierExplorer: goal finished with status %d.", result.status
+            f"FrontierExplorer: goal finished with status {result.status}."
         )
         return False

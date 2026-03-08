@@ -41,7 +41,12 @@ def fetch_mission(url: str = MISSION_URL) -> MissionData:
             with urllib.request.urlopen(url, timeout=5) as resp:
                 raw = resp.read().decode("utf-8")
             data = json.loads(raw)
-            targets = [str(t) for t in data.get("targets", [])]
+            raw_targets = data.get("targets", [])
+            # Targets may be plain strings or dicts like {"type": "fire_extinguisher", ...}
+            targets = [
+                t["type"] if isinstance(t, dict) else str(t)
+                for t in raw_targets
+            ]
             time_limit = int(data.get("time_limit", 300))
             mission = MissionData(targets=targets, time_limit=time_limit)
             logger.info("Mission fetched: %s", mission)

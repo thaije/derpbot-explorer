@@ -92,7 +92,7 @@ class DepthProjector:
         try:
             img = self._bridge.imgmsg_to_cv2(msg, desired_encoding="32FC1")
         except Exception as exc:
-            self._logger.warning("DepthProjector: cv_bridge error — %s", exc)
+            self._logger.warning(f"DepthProjector: cv_bridge error — {exc}")
             return
         with self._depth_lock:
             self._depth_image = img
@@ -157,7 +157,7 @@ class DepthProjector:
             tf2_ros.ExtrapolationException,
             tf2_ros.ConnectivityException,
         ) as exc:
-            self._logger.debug("DepthProjector: TF lookup failed — %s", exc)
+            self._logger.debug(f"DepthProjector: TF lookup failed — {exc}")
             return None
 
         return (pt_world.point.x, pt_world.point.y)

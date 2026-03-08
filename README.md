@@ -1,17 +1,48 @@
 # derpbot-explorer
-Various robot autonomy implementations for achieving highscores on the Autonomous Robotics Simulation Testbed (ARST).
 
-Full plan for first simple autonnomy: [`docs/simple_autonomy.md`](docs/simple_autonomy.md)   
-Roadmap to more complex autonomy: [`docs/five approaches to robot autonomy.md`](docs/five approaches to robot autonomy.md)  
-Agent state: [`docs/AGENT_HANDOFF.md`](docs/AGENT_HANDOFF.md)
+Autonomous robot exploration agent for the [Autonomous Robotics Simulation Testbed (ARST)](docs/AUTONOMOUS_AGENT_GUIDE.md). Explores unknown indoor environments, builds a map, detects target objects, and reports findings within a time limit.
 
-
+Architecture: slam_toolbox + Nav2 + frontier explorer + YOLOE26-S open-vocabulary detector.
+Agent state / implementation notes: [`docs/AGENT_HANDOFF.md`](docs/AGENT_HANDOFF.md)
 
 ## Prerequisites
 
-- Ubuntu 24.04, ROS 2 Jazzy, Gazebo Harmonic (`ros-jazzy-ros-gz*`)
-- `robot_state_publisher`, `ros_gz_bridge`, `ros_gz_sim`, `teleop_twist_keyboard`
-- **Python 3.12** — `rclpy` is compiled for 3.12; `python3` may resolve to a different interpreter
-- **uv** — Python package/tool runner (`pip install uv` or see [docs.astral.sh/uv](https://docs.astral.sh/uv)): `uv venv` > source venv > `uv pip install -r requirements.txt`
-- **ast-grep** — structural code search (`npm install -g @ast-grep/cli`)
-- **Serena MCP** — symbol-level code navigation for AI agents (auto-installed via uv/uvx; see `~/.claude.json`)
+- Ubuntu 24.04, ROS 2 Jazzy
+- **uv** — `pip install uv` or [docs.astral.sh/uv](https://docs.astral.sh/uv)
+
+```bash
+# ROS packages
+sudo apt install \
+    ros-jazzy-slam-toolbox ros-jazzy-nav2-bringup ros-jazzy-nav2-mppi-controller \
+    ros-jazzy-cv-bridge ros-jazzy-tf2-ros ros-jazzy-tf2-geometry-msgs \
+    ros-jazzy-vision-msgs
+
+# Python venv
+uv venv
+source .venv/bin/activate
+uv pip install -r requirements.txt
+uv pip install "numpy<2"   # cv_bridge requires numpy 1.x
+```
+
+## Run
+
+Start the ARST simulator first, then:
+
+```bash
+# Terminal 1 — SLAM
+ros2 launch slam_toolbox online_async_launch.py \
+    slam_params_file:=$(pwd)/config/slam_toolbox_params.yaml use_sim_time:=true
+
+# Terminal 2 — Nav2
+ros2 launch $(pwd)/launch/navigation_launch.py \
+    params_file:=$(pwd)/config/derpbot_nav2_params.yaml use_sim_time:=true
+
+# Terminal 3 — Agent
+cd agent && python3 agent_node.py
+```
+
+Or use the combined launch file (starts all three with a 5 s delay between Nav2 and agent):
+
+```bash
+ros2 launch launch/derpbot_autonomy.launch.py
+```

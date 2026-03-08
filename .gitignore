@@ -58,3 +58,11 @@ debug/
 
 # MCP tools etc
 .serena
+
+# ROS stuff
+*.pdf 
+*.gv 
+
+# model files 
+agent/*.pt 
+agent/*.ts
