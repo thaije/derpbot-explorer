@@ -107,7 +107,16 @@ Publish your detections on `/derpbot_0/detections` as `vision_msgs/Detection2DAr
 ./scripts/run_scenario.sh config/scenarios/office_explore_detect/medium.yaml --headless --enable-pointcloud
 ```
 
-Available difficulty tiers (ascending): `easy` · `medium` · `hard` · `brutal` · `perception_stress`
+Available difficulty tiers (ascending):
+
+| Tier | Timeout |
+|---|---|
+| `easy` | 900 s |
+| `medium` | 600 s |
+| `hard` | 300 s |
+| `brutal` | 180 s |
+| `perception_stress` | 600 s |
+
 All YAML files are under `config/scenarios/office_explore_detect/`.
 
 Startup takes ~5 s. The scenario ends on `SUCCESS` or `TIME_LIMIT`; scorecard prints to stdout and JSON is written to `results/`.

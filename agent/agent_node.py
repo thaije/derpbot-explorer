@@ -16,7 +16,6 @@ Or via launch file:
 import logging
 import sys
 import threading
-
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
@@ -54,6 +53,7 @@ class AgentNode(Node):
         self.get_logger().info(
             f"AgentNode: mission received — targets: {mission.targets}, time_limit: {mission.time_limit}s"
         )
+        self._time_limit = mission.time_limit
 
         if not mission.targets:
             self.get_logger().warning("AgentNode: no targets in mission — will explore only.")
@@ -81,6 +81,12 @@ class AgentNode(Node):
         self.get_logger().info("AgentNode: EXPLORE — starting frontier exploration.")
         self._explorer.start()
 
+        # Enforce time limit — fire done_event when the clock runs out
+        self._time_limit_timer = threading.Timer(self._time_limit, self._on_time_limit)
+        self._time_limit_timer.daemon = True
+        self._time_limit_timer.start()
+        self.get_logger().info(f"AgentNode: time limit timer started ({self._time_limit}s).")
+
     # ------------------------------------------------------------------
     # Done callback (called from FrontierExplorer when no frontiers remain)
     # ------------------------------------------------------------------
@@ -88,6 +94,13 @@ class AgentNode(Node):
     def _on_exploration_done(self) -> None:
         self.get_logger().info("AgentNode: exploration complete — transitioning to DONE.")
         self._state = "DONE"
+        self._time_limit_timer.cancel()
+        self._done_event.set()
+
+    def _on_time_limit(self) -> None:
+        self.get_logger().info("AgentNode: time limit reached — stopping exploration.")
+        self._state = "DONE"
+        self._explorer.stop()
         self._done_event.set()
 
     # ------------------------------------------------------------------

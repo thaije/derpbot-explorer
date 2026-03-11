@@ -150,6 +150,7 @@ class FrontierExplorer:
         self._logger.info("FrontierExplorer: waiting for Nav2 action server…")
         if not self._nav_client.wait_for_server(timeout_sec=60.0):
             self._logger.error("NavigateToPose action server not available — aborting.")
+            self._done_callback()
             return
 
         self._logger.info("FrontierExplorer: Nav2 ready. Starting exploration.")

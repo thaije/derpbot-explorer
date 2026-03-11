@@ -28,9 +28,13 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import rclpy
-from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from vision_msgs.msg import Detection2D, Detection2DArray, ObjectHypothesisWithPose
+
+try:
+    import tf2_ros
+except ImportError:
+    raise ImportError("tf2_ros not found — install ros-jazzy-tf2-ros")
 
 from detector import Detector, DetectionResult
 from depth_projector import DepthProjector
@@ -103,15 +107,8 @@ class Tracker:
         self._next_id = 1
         self._lock = threading.Lock()
 
-        self._robot_x = 0.0
-        self._robot_y = 0.0
-
-        node.create_subscription(
-            Odometry,
-            "/derpbot_0/odom",
-            self._odom_cb,
-            rclpy.qos.QoSProfile(depth=10),
-        )
+        self._tf_buffer = tf2_ros.Buffer()
+        self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, node)
 
         self._pub = node.create_publisher(
             Detection2DArray, "/derpbot_0/detections", 10
@@ -126,12 +123,21 @@ class Tracker:
         t.start()
 
     # ------------------------------------------------------------------
-    # Callbacks
+    # Robot pose in map frame
     # ------------------------------------------------------------------
 
-    def _odom_cb(self, msg: Odometry) -> None:
-        self._robot_x = msg.pose.pose.position.x
-        self._robot_y = msg.pose.pose.position.y
+    def _get_robot_pose_in_map(self) -> Optional[tuple[float, float]]:
+        try:
+            t = self._tf_buffer.lookup_transform(
+                "map", "base_footprint", rclpy.time.Time()
+            )
+            return (t.transform.translation.x, t.transform.translation.y)
+        except (
+            tf2_ros.LookupException,
+            tf2_ros.ExtrapolationException,
+            tf2_ros.ConnectivityException,
+        ):
+            return None
 
     # ------------------------------------------------------------------
     # Detection processing
@@ -151,8 +157,12 @@ class Tracker:
             if world_pos is None:
                 continue
 
+            robot_pos = self._get_robot_pose_in_map()
+            if robot_pos is None:
+                continue
+
             wx, wy = world_pos
-            rx, ry = self._robot_x, self._robot_y
+            rx, ry = robot_pos
 
             with self._lock:
                 obj = self._find_match(det.class_name, wx, wy)
