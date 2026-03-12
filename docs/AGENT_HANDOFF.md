@@ -11,11 +11,11 @@ Task + robot spec: [`docs/AUTONOMOUS_AGENT_GUIDE.md`](AUTONOMOUS_AGENT_GUIDE.md)
 - **slam_toolbox**: publishing `/map` (TRANSIENT_LOCAL, 5 cm res, `base_footprint` frame)
 - **Nav2 stack**: all nodes active — SmacPlanner2D + MPPI controller + recovery behaviours + collision_monitor
 - **Mission client**: fetches targets from `http://localhost:7400/mission`; handles dict targets `{"type": "..."}` correctly
-- **Detector**: YOLOE26-S loaded on GPU 0 (~2 s from cache), running at ~5 Hz on RGB stream
-- **FrontierExplorer**: BFS frontiers detected on `/map`, goals sent to Nav2, robot navigating
+- **Detector**: Two-stage pipeline — YOLOE-11s region proposals (broad class set, conf=0.01) → CLIP ViT-B/32 re-classification. Runs in subprocess (spawn context). Verified detecting fire extinguisher + first aid kit on live sim frames. Root issue: YOLOE text embeddings don't match low-poly sim meshes; CLIP reranking fixes this generically without per-class prompt tuning. CLIP sim threshold=0.20.
+- **FrontierExplorer**: BFS frontiers detected on `/map`, goals sent to Nav2, robot navigating. 93-97% coverage per run.
 - **cmd_vel pipeline**: controller_server → velocity_smoother → collision_monitor → `/derpbot_0/cmd_vel` ✓
 
-Not yet verified: depth projection, tracker publishing detections, end-to-end scenario score.
+Not yet verified: depth projection, tracker publishing confirmed detections, end-to-end detection score.
 
 ---
 
@@ -35,6 +35,10 @@ Not yet verified: depth projection, tracker publishing detections, end-to-end sc
 - **Frontier goal point must be closest-to-centroid cell** — centroid can land in unknown/inflated space. "Closest-to-robot" causes immediate Nav2 success (robot already within tolerance) with no map update. "Closest-to-centroid" picks a free cell in the interior of the frontier, requiring actual navigation.
 - **Blacklist frontier centroids on success too** — with `xy_goal_tolerance=0.5 m`, Nav2 succeeds when robot is within 0.5 m. If the frontier cells still exist (unknown area behind a wall), the same cluster is re-selected every loop. Blacklisting on success prevents this. Legitimate frontiers disappear naturally once the map updates from the robot's new scans.
 - **SLAM smearing near furniture** — raise `link_match_minimum_response_fine` (now 0.35) to reject weak scan matches, and `minimum_travel_distance` (now 0.2 m) to skip map updates on jitter. Loop closure (`do_loop_closing: true`) corrects accumulated drift when the robot revisits known areas.
+- **Always restart slam_toolbox between scenario runs** — it keeps its old map after a scenario ends. If reused, FrontierExplorer sees an already-explored map with no frontiers and blacklists all goals within ~2 min.
+- **PyTorch/CUDA deadlocks in ROS2 executor threads** — calling `model.predict()` from any ROS2 executor callback or executor-managed thread causes an indefinite hang due to Python GIL starvation (8 executor threads starve inference thread; `time.sleep(0.01)` took ~10 s). Fix: run inference in a separate subprocess (`multiprocessing`, spawn context). Never call YOLOE/PyTorch from executor threads.
+- **Nav2 lifecycle DDS timeout at startup** — on first launch, `smoother_server` occasionally times out during lifecycle transition with "failed to send response to /smoother_server/change_state". Kill Nav2 and restart; second launch succeeds.
+- **inflation_radius 0.35 m blocks narrow corridors** — the office has corridors < 0.70 m wide; inflation ≥ 0.35 m makes them impassable and all goals get ABORTED. Keep at 0.25 m.
 
 ---
 

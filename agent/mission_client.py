@@ -47,7 +47,7 @@ def fetch_mission(url: str = MISSION_URL) -> MissionData:
                 t["type"] if isinstance(t, dict) else str(t)
                 for t in raw_targets
             ]
-            time_limit = int(data.get("time_limit", 300))
+            time_limit = int(data.get("time_limit_seconds", data.get("time_limit", 300)))
             mission = MissionData(targets=targets, time_limit=time_limit)
             logger.info("Mission fetched: %s", mission)
             return mission

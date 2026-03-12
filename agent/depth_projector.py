@@ -27,6 +27,7 @@ import numpy as np
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from sensor_msgs.msg import Image
 from geometry_msgs.msg import PointStamped
 
@@ -52,7 +53,7 @@ _CX = _WIDTH_PX / 2.0    # 320.0
 _CY = _HEIGHT_PX / 2.0   # 240.0
 
 DEPTH_MIN = 0.30   # metres — discard closer than this
-DEPTH_MAX = 3.00   # metres — discard beyond this (noisy)
+DEPTH_MAX = 5.00   # metres — sensor valid range up to 6 m; 5 m keeps noise manageable
 DEPTH_SAMPLE_HALF = 2  # sample a (2*half+1)×(2*half+1) = 5×5 patch
 
 # TF frames
@@ -77,11 +78,16 @@ class DepthProjector:
         self._tf_buffer = tf2_ros.Buffer()
         self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, node)
 
+        _sensor_qos = QoSProfile(
+            depth=5,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+        )
         node.create_subscription(
             Image,
             "/derpbot_0/rgbd/depth_image",
             self._depth_cb,
-            rclpy.qos.QoSProfile(depth=5),
+            _sensor_qos,
         )
 
     # ------------------------------------------------------------------
@@ -142,7 +148,10 @@ class DepthProjector:
         # Build a PointStamped in camera frame
         pt_cam = PointStamped()
         pt_cam.header.frame_id = CAMERA_FRAME
-        pt_cam.header.stamp = depth_stamp if depth_stamp else self._node.get_clock().now().to_msg()
+        # Use latest-available TF (rclpy.time.Time() = time 0 = "latest").
+        # Using the exact depth_stamp causes failures when sim-clock jitter
+        # triggers a TF buffer clear and the stamp predates the earliest entry.
+        pt_cam.header.stamp = rclpy.time.Time().to_msg()
         pt_cam.point.x = z_cam    # camera +Z is forward → world +X convention
         pt_cam.point.y = -x_cam   # camera +X is right → world -Y
         pt_cam.point.z = -y_cam   # camera +Y is down → world -Z (ignored for 2D)

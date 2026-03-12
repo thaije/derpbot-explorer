@@ -64,5 +64,6 @@ debug/
 *.gv 
 
 # model files 
-agent/*.pt 
-agent/*.ts
+*.pt 
+*.ts
+*.jpg
