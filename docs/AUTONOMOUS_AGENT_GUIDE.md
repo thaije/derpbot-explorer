@@ -80,7 +80,7 @@ Publish your detections on `/derpbot_0/detections` as `vision_msgs/Detection2DAr
 
 **Validation logic:** a detection is a **true positive** if the class matches a known target type, the claimed map-frame position converts to within 1.5 m of a real object of that type in world frame, and there is line of sight. Detections of unknown classes are silently ignored (no penalty). False positives, duplicate positives and localization error reduce your score.
 
-**Safety threshold:** a near-miss is any obstacle within **≤ 0.3 m** of the robot (as measured by LiDAR). Collisions and near-misses both reduce the Safety score. The robot body is 30 × 20 cm (LiDAR-to-surface offset ≈ 0.15 m front/back).
+**Safety threshold:** a near-miss is any obstacle within **≤ 0.2 m** of the robot (as measured by LiDAR). Collisions and near-misses both reduce the Safety score. The robot body is 30 × 20 cm (LiDAR-to-surface offset ≈ 0.15 m front/back).
 
 **Note:** a ground-truth oracle can be enabled with `--enable-oracle` (see §4). When active, the simulator bridges its bbox camera directly to `/derpbot_0/detections`, replacing the need for your own vision pipeline. **Off by default** — for scored runs you must publish your own detections using `/derpbot_0/rgbd` and `/derpbot_0/rgbd/depth_image`.
 

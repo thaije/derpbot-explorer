@@ -9,7 +9,8 @@
       "Bash(tmux new-window:*)",
       "Bash(tmux send-keys:*)",
       "Bash(ros2 topic:*)",
-      "Bash(tmux kill-session:*)"
+      "Bash(tmux kill-session:*)",
+      "Bash(tmux list-windows:*)"
     ]
   }
 }

@@ -18,3 +18,6 @@ Core pipeline is built and running. Remaining work:
 
 ### IMU-fused odometry (robot_localization EKF)
 If odometry angular accuracy degrades again (e.g. different sim versions or real hardware), add a `robot_localization` EKF node that fuses `/derpbot_0/imu` (100 Hz gyro, accurate angular rate) with `/derpbot_0/odom` (accurate linear, unreliable angular). The EKF publishes `/odom_fused`; point `slam_toolbox`'s `odom_frame` at it. This eliminates systematic wheel-baseline angular error at the source without touching SLAM params. Config: ~20 lines of YAML (`ekf.yaml`) + one launch node.
+
+### Other fixes
+- map takes 2min to become available. Find a way to speed this up.
