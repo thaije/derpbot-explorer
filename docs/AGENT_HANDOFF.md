@@ -39,6 +39,8 @@ Not yet verified: depth projection, tracker publishing confirmed detections, end
 - **PyTorch/CUDA deadlocks in ROS2 executor threads** — calling `model.predict()` from any ROS2 executor callback or executor-managed thread causes an indefinite hang due to Python GIL starvation (8 executor threads starve inference thread; `time.sleep(0.01)` took ~10 s). Fix: run inference in a separate subprocess (`multiprocessing`, spawn context). Never call YOLOE/PyTorch from executor threads.
 - **Nav2 lifecycle DDS timeout at startup** — on first launch, `smoother_server` occasionally times out during lifecycle transition with "failed to send response to /smoother_server/change_state". Kill Nav2 and restart; second launch succeeds.
 - **inflation_radius 0.35 m blocks narrow corridors** — the office has corridors < 0.70 m wide; inflation ≥ 0.35 m makes them impassable and all goals get ABORTED. Keep at 0.25 m.
+- **CLIP threshold must stay at 0.20** — raising it (e.g. to 0.28) eliminates fire extinguisher detections entirely. The red cylinder mesh in sim scores barely above 0.20 against "fire extinguisher"; the threshold is already at the floor. Prompts are `t.replace("_", " ")` (e.g. "fire extinguisher", "first aid kit", "hazard sign") — already optimized for low-poly sim meshes; more specific prompts were tested and did not improve recall.
+- **Frontier W_DIST must be high (≥ 4.0)** — at W_DIST=0.5 the robot picks the largest cluster regardless of distance, causing cross-map thrashing. This wastes time and means the robot visits each area only once, preventing tracker from getting the 2 diverse sightings needed to confirm objects. W_DIST=4.0 keeps the robot local.
 
 ---
 

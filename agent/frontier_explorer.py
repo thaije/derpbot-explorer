@@ -36,7 +36,7 @@ UNKNOWN = -1
 
 # Frontier scoring weights
 W_SIZE = 1.0    # prefer large frontier clusters
-W_DIST = 0.5    # penalise distance from robot
+W_DIST = 4.0    # penalise distance from robot (raised from 0.5 — keeps robot local, avoids cross-map thrashing)
 
 # Stuck detection
 STUCK_DIST_THRESHOLD = 0.10   # metres — robot must move this far
