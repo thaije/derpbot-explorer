@@ -10,6 +10,28 @@ completely avoid Python GIL contention with ROS2's MultiThreadedExecutor threads
 The ROS2 callback converts images and pushes them to a multiprocessing Queue; the
 inference subprocess pulls frames, runs model.predict(), and pushes results back.
 
+Pipeline (two-stage):
+  Stage 1 — YOLOE region proposals (conf=0.01, very low — just for bbox generation):
+    Classes: mission targets (underscores→spaces, e.g. "fire extinguisher") +
+             visual anchors: "red cylinder", "white box", "red object",
+             "container", "box", "sign".
+    Visual anchors exist because YOLOE won't propose "fire extinguisher" on a plain
+    red cylinder mesh, but will propose "red cylinder" — giving CLIP something to work with.
+
+  Stage 2 — CLIP ViT-B/32 re-classification (semantic label assignment):
+    Each YOLOE crop (+ top-half crop for tall/narrow boxes) is compared against
+    text embeddings of the mission target prompts only.
+    Accepted if: cosine_sim >= 0.20 (CLIP_SIM_THRESHOLD)
+             AND sim_best - sim_2nd >= 0.010 (CLIP_MARGIN_THRESHOLD).
+    Output class_name is always one of the mission targets.
+    The "X boxes" count in agent logs is post-CLIP (passed both thresholds).
+
+Tuning notes:
+  - CLIP_SIM_THRESHOLD=0.20 is at the floor for fire extinguisher (red cylinder mesh).
+    Raising it eliminates fire extinguisher detections entirely — do not increase.
+  - CLIP_MARGIN_THRESHOLD=0.010 is the main guard against ambiguous matches.
+  - Prompts are targets[i].replace("_", " ") — already optimised for low-poly sim meshes.
+
 Usage:
   detector = Detector(node, targets=["fire extinguisher", "hazard sign"])
   detector.start()

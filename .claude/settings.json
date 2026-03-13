@@ -10,7 +10,10 @@
       "Bash(tmux send-keys:*)",
       "Bash(ros2 topic:*)",
       "Bash(tmux kill-session:*)",
-      "Bash(tmux list-windows:*)"
+      "Bash(tmux list-windows:*)",
+      "Bash(python3 -c \"import clip; print\\(''clip ok''\\)\")",
+      "Bash(python3 -c \"import transformers; print\\(''transformers'', transformers.__version__\\)\")",
+      "Bash(python3 -c \"from groundingdino.util.inference import load_model; print\\(''gdino ok''\\)\")"
     ]
   }
 }
