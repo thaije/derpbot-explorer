@@ -37,9 +37,10 @@ from detector import Detector, DetectionResult
 from depth_projector import DepthProjector
 
 # ── Tracker parameters (mirror tracker.py) ────────────────────────────────────
-MATCH_RADIUS = 1.0          # m — same class within this radius → same object
+MATCH_RADIUS = 1.5          # m — same class within this radius → same object (was 1.0)
 MIN_SIGHTINGS = 2           # diverse sightings before confirmed
 MIN_POSE_DISTANCE = 0.5     # m — sightings must come from distinct robot poses
+REPUBLISH_SHIFT_M = 0.5     # republish if centroid moves more than this after first publish
 
 
 class _Track:
@@ -88,6 +89,7 @@ class PerceptionNode(Node):
         self._tracks: list[_Track] = []
         self._next_id = 1
         self._lock = threading.Lock()
+        self._last_published_pos: dict[str, tuple[float, float]] = {}  # track_id → last published (x, y)
 
         # ── Perception pipeline ───────────────────────────────────────────────
         self._detector = Detector(self, targets=targets)
@@ -229,17 +231,26 @@ class PerceptionNode(Node):
     # ── Publish ───────────────────────────────────────────────────────────────
 
     def _publish_confirmed(self) -> None:
+        """Publish confirmed tracks on first confirmation, and again if centroid
+        shifts more than REPUBLISH_SHIFT_M since the last publish."""
         with self._lock:
-            confirmed = [t for t in self._tracks if t.is_confirmed()]
+            to_publish = []
+            for t in self._tracks:
+                if not t.is_confirmed():
+                    continue
+                cx, cy = t.wx, t.wy
+                last = self._last_published_pos.get(t.tid)
+                if last is None or math.hypot(cx - last[0], cy - last[1]) >= REPUBLISH_SHIFT_M:
+                    to_publish.append(t)
 
-        if not confirmed:
+        if not to_publish:
             return
 
         msg = Detection2DArray()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = "map"
 
-        for t in confirmed:
+        for t in to_publish:
             d = Detection2D()
             d.id = t.tid
             hyp = ObjectHypothesisWithPose()
@@ -251,6 +262,7 @@ class PerceptionNode(Node):
             hyp.pose.pose.orientation.w = 1.0
             d.results.append(hyp)
             msg.detections.append(d)
+            self._last_published_pos[t.tid] = (t.wx, t.wy)
 
         self._pub.publish(msg)
 

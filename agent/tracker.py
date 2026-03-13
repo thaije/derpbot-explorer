@@ -39,10 +39,11 @@ except ImportError:
 from detector import Detector, DetectionResult
 from depth_projector import DepthProjector
 
-MATCH_RADIUS = 1.0          # metres — same class within this → same object
+MATCH_RADIUS = 1.5          # metres — same class within this → same object (was 1.0)
 MIN_SIGHTINGS = 2           # must be seen N times before publishing
 MIN_POSE_DISTANCE = 0.5     # metres — sightings must come from diverse robot poses
-PUBLISH_RATE_HZ = 5.0       # how often to re-publish confirmed objects
+PUBLISH_RATE_HZ = 5.0       # rate to check for newly confirmed objects
+REPUBLISH_SHIFT_M = 0.5     # republish if centroid moves more than this after first publish
 
 
 @dataclass
@@ -106,6 +107,7 @@ class Tracker:
         self._objects: list[TrackedObject] = []
         self._next_id = 1
         self._lock = threading.Lock()
+        self._last_published_pos: dict[str, tuple[float, float]] = {}  # track_id → last published (x, y)
 
         self._tf_buffer = tf2_ros.Buffer()
         self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, node)
@@ -191,17 +193,26 @@ class Tracker:
     # ------------------------------------------------------------------
 
     def _publish_confirmed(self) -> None:
+        """Publish confirmed tracks on first confirmation, and again if centroid
+        shifts more than REPUBLISH_SHIFT_M since the last publish."""
         with self._lock:
-            confirmed = [o for o in self._objects if o.is_confirmed()]
+            to_publish = []
+            for o in self._objects:
+                if not o.is_confirmed():
+                    continue
+                cx, cy = o.world_x, o.world_y
+                last = self._last_published_pos.get(o.track_id)
+                if last is None or math.hypot(cx - last[0], cy - last[1]) >= REPUBLISH_SHIFT_M:
+                    to_publish.append(o)
 
-        if not confirmed:
+        if not to_publish:
             return
 
         msg = Detection2DArray()
         msg.header.stamp = self._node.get_clock().now().to_msg()
         msg.header.frame_id = "map"
 
-        for obj in confirmed:
+        for obj in to_publish:
             det2d = Detection2D()
             det2d.id = obj.track_id
 
@@ -215,6 +226,7 @@ class Tracker:
 
             det2d.results.append(hyp)
             msg.detections.append(det2d)
+            self._last_published_pos[obj.track_id] = (obj.world_x, obj.world_y)
 
         self._pub.publish(msg)
 

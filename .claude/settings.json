@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(source /opt/ros/jazzy/setup.bash)",
+      "Bash(ros2 node:*)",
+      "Bash(tmux new-session:*)",
+      "Bash(tmux capture-pane:*)",
+      "Bash(tmux list-panes:*)",
+      "Bash(tmux new-window:*)",
+      "Bash(tmux send-keys:*)",
+      "Bash(ros2 topic:*)",
+      "Bash(tmux kill-session:*)"
+    ]
+  }
+}

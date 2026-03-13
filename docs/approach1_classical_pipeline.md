@@ -13,3 +13,8 @@ Core pipeline is built and running. Remaining work:
 | Depth projector + tracker → `/derpbot_0/detections` | ⚠️ untested | cv_bridge fixed, needs end-to-end verify |
 | End-to-end scenario score | ❌ not tested | Run `easy.yaml --seed 42 --timeout 300` |
 | `medium`/`hard` tier tuning | ❌ not started | May need SLAM loop-closure, smarter frontier scoring |
+
+## Potential future extensions
+
+### IMU-fused odometry (robot_localization EKF)
+If odometry angular accuracy degrades again (e.g. different sim versions or real hardware), add a `robot_localization` EKF node that fuses `/derpbot_0/imu` (100 Hz gyro, accurate angular rate) with `/derpbot_0/odom` (accurate linear, unreliable angular). The EKF publishes `/odom_fused`; point `slam_toolbox`'s `odom_frame` at it. This eliminates systematic wheel-baseline angular error at the source without touching SLAM params. Config: ~20 lines of YAML (`ekf.yaml`) + one launch node.
