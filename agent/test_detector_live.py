@@ -259,7 +259,7 @@ def main():
     parser.add_argument("--backend", default="yolo-world-s",
                         choices=list(YOLO_WORLD_WEIGHTS.keys()) + ["gdino", "owlv2"])
     parser.add_argument("--targets", nargs="+",
-                        default=["fire_extinguisher", "first_aid_kit", "hazard_sign"])
+                        default=["fire_extinguisher", "first_aid_kit", "exit_sign"])
     # parser.add_argument("--targets", nargs="+",
     #                     default=[
     #     "fire extinguisher",
