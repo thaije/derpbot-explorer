@@ -1,5 +1,5 @@
 """
-Detector — open-vocabulary object detection using YOLOE26-S (or YOLO-World-S fallback).
+Detector — open-vocabulary object detection using OWL-v2 (google/owlv2-base-patch16-ensemble).
 
 Runs inference on the RGB camera stream (/derpbot_0/rgbd/image) at ~5 Hz on GPU 0.
 Detected bounding boxes + class names are posted to an internal thread-safe queue
@@ -8,32 +8,24 @@ consumed by tracker.py.
 Architecture: inference runs in a *separate OS process* (via multiprocessing) to
 completely avoid Python GIL contention with ROS2's MultiThreadedExecutor threads.
 The ROS2 callback converts images and pushes them to a multiprocessing Queue; the
-inference subprocess pulls frames, runs model.predict(), and pushes results back.
+inference subprocess pulls frames, runs inference, and pushes results back.
 
-Pipeline (two-stage):
-  Stage 1 — YOLOE region proposals (conf=0.01, very low — just for bbox generation):
-    Classes: mission targets (underscores→spaces, e.g. "fire extinguisher") +
-             visual anchors: "red cylinder", "white box", "red object",
-             "container", "box", "sign".
-    Visual anchors exist because YOLOE won't propose "fire extinguisher" on a plain
-    red cylinder mesh, but will propose "red cylinder" — giving CLIP something to work with.
-
-  Stage 2 — CLIP ViT-B/32 re-classification (semantic label assignment):
-    Each YOLOE crop (+ top-half crop for tall/narrow boxes) is compared against
-    text embeddings of the mission target prompts only.
-    Accepted if: cosine_sim >= 0.20 (CLIP_SIM_THRESHOLD)
-             AND sim_best - sim_2nd >= 0.010 (CLIP_MARGIN_THRESHOLD).
+Pipeline (single-stage):
+  OWL-v2 (ViT-B/16) — text-to-bbox in one pass:
+    Takes mission target names as text queries (underscores→spaces).
+    Returns bboxes + confidence scores directly; no separate re-classification needed.
+    Accepted if: confidence >= 0.20 (OWL_CONF_THRESHOLD).
     Output class_name is always one of the mission targets.
-    The "X boxes" count in agent logs is post-CLIP (passed both thresholds).
 
 Tuning notes:
-  - CLIP_SIM_THRESHOLD=0.20 is at the floor for fire extinguisher (red cylinder mesh).
-    Raising it eliminates fire extinguisher detections entirely — do not increase.
-  - CLIP_MARGIN_THRESHOLD=0.010 is the main guard against ambiguous matches.
-  - Prompts are targets[i].replace("_", " ") — already optimised for low-poly sim meshes.
+  - OWL_CONF_THRESHOLD=0.20 validated on low-poly Gazebo sim: no false positives,
+    all three target types detected reliably. Do not lower (FP increase).
+  - Model weights (~850 MB) are downloaded from HuggingFace on first run.
+  - On RTX 2070 SUPER: ~10-15 FPS — comfortable at the 5 Hz processing rate.
+  - Compared alternatives on sim: see agent/test_detector_live.py for results.
 
 Usage:
-  detector = Detector(node, targets=["fire extinguisher", "hazard sign"])
+  detector = Detector(node, targets=["fire_extinguisher", "hazard_sign"])
   detector.start()
   # detector.detections is a queue.Queue of DetectionResult items
 """
@@ -67,15 +59,8 @@ except ImportError:
 PROCESS_EVERY_N_FRAMES = 2      # process every 2nd frame → ~5 Hz from 10 Hz stream
 GPU_DEVICE = 0                  # GPU index for inference
 
-# Two-stage detection: YOLOE region proposals → CLIP re-classification
-# YOLOE fires these extra "visual anchor" classes alongside mission targets
-# to reliably produce candidate bboxes for low-poly sim objects.
-PROPOSAL_EXTRA_CLASSES = [
-    "red cylinder", "white box", "red object", "container", "box", "sign",
-]
-PROPOSAL_CONF = 0.01            # very low — we just want region proposals
-CLIP_SIM_THRESHOLD = 0.20       # cosine similarity to accept a CLIP match
-CLIP_MARGIN_THRESHOLD = 0.010   # best-vs-second-best gap; rejects ambiguous / furniture hits
+OWL_MODEL_ID = "google/owlv2-base-patch16-ensemble"
+OWL_CONF_THRESHOLD = 0.20       # validated on low-poly sim — do not lower (FP increase)
 
 
 @dataclass
@@ -102,68 +87,42 @@ def _inference_worker(
     ready_event: mp.Event,
 ) -> None:
     """
-    Runs in a child process. Two-stage pipeline:
-      1. YOLOE: region proposals at very low conf (broad class set for recall).
-      2. CLIP (ViT-B/32): re-classify each crop against target class names.
-         This decouples localization (YOLOE) from semantics (CLIP), so any
-         target class name works without manual prompt tuning.
+    Runs in a child process. Single-stage OWL-v2 pipeline:
+      OWL-v2 takes text prompts (one per target) and returns bboxes + scores directly.
+      No separate re-classification stage needed.
     """
     try:
-        from ultralytics import YOLO
-        import clip as openai_clip
         import torch
         from PIL import Image as PILImage
         import cv2 as _cv2
+        from transformers import Owlv2Processor, Owlv2ForObjectDetection
     except ImportError as exc:
         result_queue.put({"error": f"missing dependency: {exc}"})
         return
 
-    import os as _os
-    _models_dir = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "models")
-    # ultralytics looks for mobileclip_blt.ts in CWD — point it at models/
-    _os.chdir(_models_dir)
-
     prompts = [t.replace("_", " ") for t in targets]
-    proposal_classes = prompts + PROPOSAL_EXTRA_CLASSES
+    queries = [prompts]  # batch of one image
 
-    # ── Load YOLOE ────────────────────────────────────────────────────────────
-    model = None
-    model_name = None
-    for weights, name in [
-        (_os.path.join(_models_dir, "yoloe-11s-seg.pt"), "yoloe-11s"),
-        (_os.path.join(_models_dir, "yolov8s-worldv2.pt"), "yolo-world-s"),
-    ]:
-        try:
-            model = YOLO(weights)
-            model.set_classes(proposal_classes)
-            model.to(f"cuda:{GPU_DEVICE}")
-            model.predict(
-                source=np.zeros((480, 640, 3), dtype=np.uint8),
-                conf=0.99, verbose=False,
-            )
-            model_name = name
-            break
-        except Exception:
-            model = None
-
-    if model is None:
-        result_queue.put({"error": "could not load YOLOE model"})
+    # ── Load OWL-v2 ───────────────────────────────────────────────────────────
+    try:
+        processor = Owlv2Processor.from_pretrained(OWL_MODEL_ID)
+        model = Owlv2ForObjectDetection.from_pretrained(OWL_MODEL_ID)
+        model = model.to(f"cuda:{GPU_DEVICE}").eval()
+    except Exception as exc:
+        result_queue.put({"error": f"could not load OWL-v2: {exc}"})
         return
 
-    # ── Load CLIP + precompute target text features ───────────────────────────
+    # Warmup pass
     try:
-        clip_model, clip_preprocess = openai_clip.load("ViT-B/32", device=f"cuda:{GPU_DEVICE}")
-        clip_model.eval()
+        _dummy = PILImage.fromarray(np.zeros((480, 640, 3), dtype=np.uint8))
+        _inputs = processor(text=queries, images=_dummy, return_tensors="pt")
+        _inputs = {k: v.to(f"cuda:{GPU_DEVICE}") for k, v in _inputs.items()}
         with torch.no_grad():
-            text_tokens = openai_clip.tokenize(prompts).to(f"cuda:{GPU_DEVICE}")
-            text_feats = clip_model.encode_text(text_tokens)
-            text_feats = text_feats / text_feats.norm(dim=-1, keepdim=True)
-        clip_ok = True
+            model(**_inputs)
     except Exception as exc:
-        result_queue.put({"warning": f"CLIP unavailable ({exc}), falling back to YOLOE-only"})
-        clip_ok = False
+        result_queue.put({"warning": f"OWL-v2 warmup failed: {exc}"})
 
-    result_queue.put({"ready": f"{model_name}+clip" if clip_ok else model_name})
+    result_queue.put({"ready": "owlv2"})
     ready_event.set()
 
     while True:
@@ -178,97 +137,39 @@ def _inference_worker(
         frame_bytes, shape, stamp_sec, stamp_nanosec = item
         frame = np.frombuffer(frame_bytes, dtype=np.uint8).reshape(shape)
 
-        # ── Stage 1: YOLOE region proposals ──────────────────────────────────
         try:
-            yoloe_results = model.predict(
-                source=frame,
-                conf=PROPOSAL_CONF,
-                verbose=False,
-            )
+            rgb = _cv2.cvtColor(frame, _cv2.COLOR_BGR2RGB)
+            pil_image = PILImage.fromarray(rgb)
+            inputs = processor(text=queries, images=pil_image, return_tensors="pt")
+            inputs = {k: v.to(f"cuda:{GPU_DEVICE}") for k, v in inputs.items()}
+
+            with torch.no_grad():
+                outputs = model(**inputs)
+
+            target_sizes = torch.tensor([(shape[0], shape[1])], device=f"cuda:{GPU_DEVICE}")
+            results = processor.post_process_grounded_object_detection(
+                outputs, target_sizes=target_sizes, threshold=OWL_CONF_THRESHOLD,
+            )[0]
         except Exception as exc:
             result_queue.put({"warning": f"inference error: {exc}"})
             continue
 
-        proposals = []
-        for result in yoloe_results:
-            if result.boxes is None:
-                continue
-            for i in range(len(result.boxes)):
-                yoloe_conf = float(result.boxes.conf[i])
-                cls_id = int(result.boxes.cls[i])
-                xywh = result.boxes.xywh[i].tolist()
-                proposals.append((yoloe_conf, cls_id, xywh[0], xywh[1], xywh[2], xywh[3]))
-
-        # ── Stage 2: CLIP re-classification ──────────────────────────────────
         detections = []
-        if clip_ok and proposals:
-            try:
-                for yoloe_conf, cls_id, cx, cy, w, h in proposals:
-                    pad = 0.15
-                    x1 = max(0, int(cx - w / 2 * (1 + pad)))
-                    y1 = max(0, int(cy - h / 2 * (1 + pad)))
-                    x2 = min(shape[1], int(cx + w / 2 * (1 + pad)))
-                    y2 = min(shape[0], int(cy + h / 2 * (1 + pad)))
-                    if x2 - x1 < 8 or y2 - y1 < 8:
-                        continue
-
-                    # Build candidate crops: always full bbox, plus top-half for
-                    # tall narrow bboxes (pole-mounted signs where YOLOE captures the
-                    # whole pole but the interesting region is at the top).
-                    crops = [(x1, y1, x2, y2)]
-                    if h > 2.5 * w:
-                        mid_y = y1 + (y2 - y1) // 2
-                        crops.append((x1, y1, x2, mid_y))  # top half
-
-                    best_sims = None
-                    for cx1, cy1, cx2, cy2 in crops:
-                        if cx2 - cx1 < 8 or cy2 - cy1 < 8:
-                            continue
-                        crop_bgr = frame[cy1:cy2, cx1:cx2]
-                        crop_rgb = _cv2.cvtColor(crop_bgr, _cv2.COLOR_BGR2RGB)
-                        pil_crop = PILImage.fromarray(crop_rgb)
-                        with torch.no_grad():
-                            img_input = clip_preprocess(pil_crop).unsqueeze(0).to(f"cuda:{GPU_DEVICE}")
-                            img_feats = clip_model.encode_image(img_input)
-                            img_feats = img_feats / img_feats.norm(dim=-1, keepdim=True)
-                            sims = (img_feats @ text_feats.T)[0].cpu().numpy()
-                        if best_sims is None or float(sims.max()) > float(best_sims.max()):
-                            best_sims = sims
-
-                    sims = best_sims
-                    sorted_idx = sims.argsort()[::-1]
-                    best_idx = int(sorted_idx[0])
-                    best_sim = float(sims[best_idx])
-                    margin = float(sims[best_idx] - sims[sorted_idx[1]])
-                    if best_sim < CLIP_SIM_THRESHOLD or margin < CLIP_MARGIN_THRESHOLD:
-                        continue
-
-                    detections.append({
-                        "class_name": targets[best_idx],
-                        "confidence": best_sim,
-                        "cx_px": cx,
-                        "cy_px": cy,
-                        "w_px": w,
-                        "h_px": h,
-                        "stamp_sec": stamp_sec,
-                        "stamp_nanosec": stamp_nanosec,
-                    })
-            except Exception as exc:
-                result_queue.put({"warning": f"CLIP re-rank error: {exc}"})
-
-        elif proposals:
-            # CLIP unavailable — fall back to YOLOE classification for target classes only
-            for yoloe_conf, cls_id, cx, cy, w, h in proposals:
-                if cls_id >= len(targets):
-                    continue  # visual-anchor proposal class, skip
-                if yoloe_conf < 0.10:
-                    continue
-                detections.append({
-                    "class_name": targets[cls_id],
-                    "confidence": yoloe_conf,
-                    "cx_px": cx, "cy_px": cy, "w_px": w, "h_px": h,
-                    "stamp_sec": stamp_sec, "stamp_nanosec": stamp_nanosec,
-                })
+        for score, label_idx, box in zip(results["scores"], results["labels"], results["boxes"]):
+            x1, y1, x2, y2 = box.tolist()
+            cx = (x1 + x2) / 2
+            cy = (y1 + y2) / 2
+            w = x2 - x1
+            h = y2 - y1
+            idx = int(label_idx)
+            if idx >= len(targets):
+                continue
+            detections.append({
+                "class_name": targets[idx],
+                "confidence": float(score),
+                "cx_px": cx, "cy_px": cy, "w_px": w, "h_px": h,
+                "stamp_sec": stamp_sec, "stamp_nanosec": stamp_nanosec,
+            })
 
         result_queue.put({"detections": detections})
 
