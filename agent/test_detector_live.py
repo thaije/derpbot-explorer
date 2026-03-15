@@ -29,6 +29,12 @@ Usage:
 
 Output format per detection:
     [HH:MM:SS] BACKEND  class_name          conf=0.42  bbox=(cx,cy wxh)
+
+
+Results on low poly Gazebo sim with fire extinguisher, hazard sign, first aid kit: 
+- yolo-world-s best of yolo-world models, specifically with extended labels. Fire extinguisher best. Hazard sign and first aid kit very inconsistent. Most scores not higher than 0.1.
+- gdino works for small target set. Confidence > 0.4 seems good threshold. Fdino many FP, even walls and furniture.
+- owlv2 no FP. Confidence lower. Confidence > 0.2 seems good threshold.
 """
 from __future__ import annotations
 
@@ -171,7 +177,7 @@ def load_gdino(targets: list[str]):
     def predict(frame):
         h, w = frame.shape[:2]
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        img_t = transform(rgb).unsqueeze(0).cuda()
+        img_t = transform(rgb).cuda()  # gdino_predict expects (C,H,W); it adds batch dim itself
         boxes, logits, phrases = gdino_predict(
             model=model, image=img_t,
             caption=text_prompt,
@@ -254,7 +260,29 @@ def main():
                         choices=list(YOLO_WORLD_WEIGHTS.keys()) + ["gdino", "owlv2"])
     parser.add_argument("--targets", nargs="+",
                         default=["fire_extinguisher", "first_aid_kit", "hazard_sign"])
+    # parser.add_argument("--targets", nargs="+",
+    #                     default=[
+    #     "fire extinguisher",
+    #     "red cylinder",
+    #     "red canister",
+    #     "red tank",
+    #     "red pressure vessel",
+    #     "first aid kit",
+    #     "white box with red cross",
+    #     "medical kit",
+    #     "green first aid box",
+    #     "medical supply box",
+    #     "hazard sign",
+    #     "warning sign",
+    #     "yellow triangle sign",
+    #     "caution sign",
+    #     "yellow warning label",
+    #     "danger sign",
+    # ])
+    
+
     parser.add_argument("--save", action="store_true", help="Save annotated frames to debug_frames/")
+    parser.add_argument("--view", action="store_true", help="Show live annotated frame in an OpenCV window")
     parser.add_argument("--hz", type=float, default=2.0, help="Inference rate (default 2 Hz)")
     args = parser.parse_args()
 
@@ -274,6 +302,14 @@ def main():
     if args.save:
         os.makedirs(SAVE_DIR, exist_ok=True)
         print(f"Saving frames to {SAVE_DIR}/", flush=True)
+
+    if args.view:
+        try:
+            cv2.namedWindow("detector", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("detector", 960, 540)
+        except cv2.error as e:
+            print(f"[WARN] --view disabled: {e}")
+            args.view = False
 
     grabber = FrameGrabber()
     interval = 1.0 / args.hz
@@ -298,10 +334,14 @@ def main():
             else:
                 print(f"[{ts}] {args.backend:14s}  (no detections)", flush=True)
 
-            if args.save:
+            if args.view or args.save:
                 vis = draw(frame, dets, args.backend)
-                cv2.imwrite(os.path.join(SAVE_DIR, f"frame_{frame_idx:05d}.jpg"), vis)
-                frame_idx += 1
+                if args.view:
+                    cv2.imshow("detector", vis)
+                    cv2.waitKey(1)
+                if args.save:
+                    cv2.imwrite(os.path.join(SAVE_DIR, f"frame_{frame_idx:05d}.jpg"), vis)
+                    frame_idx += 1
 
             elapsed = time.monotonic() - t0
             time.sleep(max(0.0, interval - elapsed))
@@ -309,6 +349,8 @@ def main():
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
+        if args.view:
+            cv2.destroyAllWindows()
         grabber.shutdown()
 
 

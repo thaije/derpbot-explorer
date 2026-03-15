@@ -13,7 +13,12 @@
       "Bash(tmux list-windows:*)",
       "Bash(python3 -c \"import clip; print\\(''clip ok''\\)\")",
       "Bash(python3 -c \"import transformers; print\\(''transformers'', transformers.__version__\\)\")",
-      "Bash(python3 -c \"from groundingdino.util.inference import load_model; print\\(''gdino ok''\\)\")"
+      "Bash(python3 -c \"from groundingdino.util.inference import load_model; print\\(''gdino ok''\\)\")",
+      "Bash(python3 -c \"import groundingdino; print\\(groundingdino.__version__\\)\")",
+      "Bash(python3 -c \"import transformers; print\\(transformers.__version__\\)\")",
+      "Bash(pip show:*)",
+      "Bash(python3 -c \"from transformers import BertModel; m = BertModel.from_pretrained.__doc__; import inspect; print\\([x for x in dir\\(BertModel\\) if ''mask'' in x.lower\\(\\)]\\)\")",
+      "Bash(grep -v \"^$\")"
     ]
   }
 }

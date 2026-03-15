@@ -66,4 +66,7 @@ debug/
 # model files 
 *.pt 
 *.ts
+*.pth
+
+# images
 *.jpg
