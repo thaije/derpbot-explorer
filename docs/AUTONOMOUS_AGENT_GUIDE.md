@@ -139,7 +139,7 @@ The response is JSON with both a **human-readable** `description` field and **st
   "targets": [
     {"type": "fire_extinguisher", "count": 3,   "count_exact": true},
     {"type": "first_aid_kit",     "count": 2,   "count_exact": true},
-    {"type": "hazard_sign",       "count_exact": false, "min_count": 1}
+    {"type": "exit_sign",       "count_exact": false, "min_count": 1}
   ],
   "status": "running",
   "description": "Explore the environment and locate all target objects within 600s. Targets: exactly 3 fire extinguisher(s), exactly 2 first aid kit(s), at least 1 hazard sign(s) (exact count unknown). Status: running."
