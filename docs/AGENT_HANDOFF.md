@@ -49,6 +49,8 @@ Not yet verified: depth projection, tracker publishing confirmed detections, end
 - **Ghost TF from previous run corrupts new run** — when a sim is killed and a new one started at t=0, DDS delivers cached TF messages from the old run (which had timestamps 800–900+s) before the new sim's data. The new run's TF buffer sees these future-timestamped transforms first; current transforms then look "old". Result: all Nav2 goals immediately abort (status 6), robot never moves. Fix: kill the ROS2 daemon (`ros2 daemon stop`) and restart it (`ros2 daemon start`) between runs, and kill ALL gz/ros2 processes by PID before restarting.
 - **RViz degrades RTF** — opening RViz subscribes to costmap, /map, and TF topics, spiking CPU. Can cause temporary RTF dips to ~1.25 at speed=2. Close RViz before measuring performance.
 - **Frontier W_DIST balance** — W_DIST=4.0 keeps the robot too local (62% coverage); W_DIST=0.5 causes cross-map thrashing. W_DIST=2.0 is currently used as a compromise.
+- **Starting SLAM/Nav2/agent late into a running sim causes TF flood** — if the stack starts 30+ sim-seconds after the sim, every Nav2 node gets flooded with TF_OLD_DATA warnings for wheel joint frames at ~56 Hz. This saturates CPU through the ROS2 DDS logging layer and drags RTF from ~2.0 to ~0.4. Always start SLAM → Nav2 → agent within 5 wall-seconds of the sim reporting ready. Never resume a session where the sim has been idle for minutes without restarting the entire stack from scratch.
+- **Upper half of map (y > 8) not reliably reached within 900 sim-seconds** — at W_DIST=2.0 the robot systematically explores the entire lower half (Offices A/B + lower corridors) before pushing through the doorways into the Meeting Room area. A number of objects are in the upper half and are consistently missed. Coverage stalls at ~52%. Known issue; tuning needed.
 
 ---
 
@@ -102,20 +104,18 @@ ros2 launch $(pwd)/launch/navigation_launch.py \
 numactl --cpunodebind=1 --membind=1 python3.12 agent/agent_node.py
 ```
 
-## Current performance (easy scenario, seed=42, speed=2)
+## Current performance (easy scenario, speed=2)
 
-| Metric | Value |
-|--------|-------|
-| Best score | 52.1 (D) |
-| Targets found | 4/6 (fire_ext ×2, first_aid ×1, person ×1) |
-| Safety | 86 — 1 collision (doorway brush) |
-| Exploration coverage | ~52% |
-| RTF with agent running | ~1.97 (healthy) |
-| Precision | 0.67 — 2 false positives at conf=0.20 |
+| Run | Seed | Score | Found | Coverage | RTF | Notes |
+|-----|------|-------|-------|----------|-----|-------|
+| Best (prev session) | 42 | 52.1 (D) | 4/6 | 52% | ~1.97 | 1 collision, 2 FP |
+| Today (seed=7) | 7 | N/A (aborted at 545s) | 3/6 | ~40% | 0.41 | Stack started 216s late → TF flood dragged RTF |
 
-**Primary bottleneck**: Exploration coverage ~52% — Meeting Room (top of map, has first_aid_kit #2) not consistently reached. Robot tends to over-explore already-covered lower areas before pushing into the Meeting Room.
+**Primary bottleneck**: Exploration coverage ~52% — upper half of map (Meeting Room, upper corridor, y > 8) not consistently reached within 900 sim-seconds. Robot over-explores lower half at W_DIST=2.0.
 
 **Secondary bottleneck**: 2 false positives per run at OWL_CONF_THRESHOLD=0.20. Tracker requires 2 diverse sightings before publishing, but false detections of the same non-target object from multiple poses still create false tracks.
+
+**Critical ops note**: Always start full stack (slam → nav2 → agent) within 5 wall-seconds of sim ready. Starting late causes TF flood that collapses RTF. If a session was interrupted mid-run, do a full restart (ros2 daemon stop/start + kill all gz/ros2 PIDs) rather than resuming.
 
 ## Development guidelines
 

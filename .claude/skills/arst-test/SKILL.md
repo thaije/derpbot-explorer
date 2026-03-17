@@ -30,12 +30,16 @@ Wait ~5 s. Sim is ready when `world_state.py` returns without error.
 
 **Check RTF after sim starts (before agent):**
 ```bash
-gz topic -e -t /stats | head -20
+python3.12 scripts/rtf_monitor.py --samples 5
 ```
-Look for `real_time_factor`. Should be at or near `1.0` (or near `--speed N` if set).
-A RTF of 1.0 is a minimum. If it is lower than that there is something still running on the computer hogging resources.
+Shows current, average, min, and max RTF. RTF should be at or near `1.0` (or near `--speed N` if set). If lower, something is hogging resources.
 
-After starting the agent, **check RTF again**. The sim and autonomy stack share the same hardware. A drop in RTF at this point means the agent is too compute-heavy; the sim will slow down, timing-dependent behaviour will break, and metrics will be skewed.
+```bash
+python3.12 scripts/rtf_monitor.py --once   # single value, e.g. for scripting
+python3.12 scripts/rtf_monitor.py          # run continuously until Ctrl+C
+```
+
+After starting the agent, **check RTF again** with `--samples 10`. RTF can vary significantly (observed: 0.15–1.9). A sustained drop below ~0.5× target means the agent is too compute-heavy and timing-dependent behaviour will break.
 
 ---
 
@@ -175,6 +179,6 @@ At `--speed 3`, 30 s wall = 90 s sim. Check more often for short timeouts.
 - **Python**: always `python3.12`. `python3` may resolve to a different venv.
 - **`world_state.py` requires a running sim** unless you pass `--no-ros --results <file>`.
 - **`robot_control.py status/snapshot` requires a running sim** (needs ROS topics).
-- **Elapsed time is in sim-seconds** — at `--speed 3`, wall time is ~3× faster.
+- **Timeout is in sim-seconds** — `timeout_seconds: 900` in the scenario config means 900 sim-seconds. At `--speed 2`, that's ~450 wall-clock seconds. At `--speed 3`, ~300 wall-clock seconds.
 - **Robot autonomy can significantly impact sim RTF**: minimum RTF is 1.0. Anything lower and the autonomy is too heavy, and needs to be made more efficient.
 
