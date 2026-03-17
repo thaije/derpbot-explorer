@@ -287,18 +287,61 @@ class Detector:
     # Relay loop — moves results from subprocess queue → self.detections
     # ------------------------------------------------------------------
 
+    def _restart_worker(self) -> None:
+        """Kill the stalled inference subprocess and start a fresh one."""
+        self._logger.warning("Detector: restarting stalled inference subprocess.")
+        try:
+            if self._worker.is_alive():
+                self._worker.terminate()
+                self._worker.join(timeout=5.0)
+                if self._worker.is_alive():
+                    self._worker.kill()
+                    self._worker.join(timeout=2.0)
+        except Exception as exc:
+            self._logger.warning(f"Detector: error terminating worker — {exc}")
+
+        # Drain old queues so they don't confuse the new worker
+        for q in (self._mp_frames, self._mp_results):
+            try:
+                while True:
+                    q.get_nowait()
+            except Exception:
+                pass
+
+        ctx = mp.get_context("spawn")
+        self._ready_event = ctx.Event()
+        self._worker = ctx.Process(
+            target=_inference_worker,
+            args=(self._targets, self._mp_frames, self._mp_results, self._ready_event),
+            daemon=True,
+            name="detector_worker",
+        )
+        self._worker.start()
+        self._logger.info("Detector: new inference subprocess started — waiting for ready.")
+
     def _relay_loop(self) -> None:
         import queue as _queue
         import time as _time
         inference_count = 0
+        last_result_time = _time.monotonic()
         last_heartbeat = _time.monotonic()
+        STALL_TIMEOUT = 90.0  # seconds — restart subprocess if no result in this time
         while self._running:
             try:
                 result = self._mp_results.get(timeout=0.5)
             except _queue.Empty:
-                # Heartbeat log every 30s to confirm loop is alive
                 now = _time.monotonic()
-                if now - last_heartbeat > 30.0:
+                # Watchdog: restart subprocess if it stalls (CUDA hang, OOM, etc.)
+                if now - last_result_time > STALL_TIMEOUT and self._worker.is_alive():
+                    self._logger.error(
+                        f"Detector: no inference results for {STALL_TIMEOUT:.0f}s — "
+                        f"subprocess hung, restarting."
+                    )
+                    self._restart_worker()
+                    last_result_time = _time.monotonic()
+                    last_heartbeat = last_result_time
+                # Heartbeat log every 30s to confirm loop is alive
+                elif now - last_heartbeat > 30.0:
                     self._logger.info(
                         f"Detector: relay alive, {inference_count} inferences so far, "
                         f"subprocess alive={self._worker.is_alive()}"
@@ -321,7 +364,8 @@ class Detector:
 
             dets = result.get("detections", [])
             inference_count += 1
-            last_heartbeat = _time.monotonic()  # reset heartbeat on activity
+            last_result_time = _time.monotonic()  # reset watchdog + heartbeat on activity
+            last_heartbeat = last_result_time
             if inference_count % 5 == 0:
                 self._logger.info(
                     f"Detector: inference #{inference_count}, {len(dets)} boxes"
