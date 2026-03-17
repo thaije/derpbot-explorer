@@ -60,8 +60,8 @@ controller_server:
       vx_std: 0.2
       vy_std: 0.0
       wz_std: 0.4
-      vx_max: 0.5      # DerpBot max linear
-      vx_min: -0.35
+      vx_max: 0.35     # reduced from 0.5 — more reaction time for collision_monitor
+      vx_min: -0.25
       vy_max: 0.0      # differential drive: no strafe
       wz_max: 2.0      # DerpBot max angular
       iteration_count: 1
@@ -236,7 +236,7 @@ planner_server:
       allow_unknown: true          # allow planning into unexplored space
       max_iterations: 1000000
       max_on_approach_iterations: 1000
-      max_planning_time: 2.0
+      max_planning_time: 5.0      # was 2.0 — needs more time for cross-building paths
       cost_travel_multiplier: 2.0
       use_final_approach_orientation: false
       smoother:
@@ -303,8 +303,8 @@ velocity_smoother:
     smoothing_frequency: 10.0
     scale_velocities: false
     feedback: "OPEN_LOOP"
-    max_velocity: [0.5, 0.0, 2.0]
-    min_velocity: [-0.5, 0.0, -2.0]
+    max_velocity: [0.35, 0.0, 2.0]
+    min_velocity: [-0.25, 0.0, -2.0]
     max_accel: [2.5, 0.0, 3.2]
     max_decel: [-2.5, 0.0, -3.2]
     odom_topic: /derpbot_0/odom
@@ -329,7 +329,7 @@ collision_monitor:
       type: "polygon"
       action_type: "approach"
       footprint_topic: /local_costmap/published_footprint
-      time_before_collision: 1.2
+      time_before_collision: 1.5
       simulation_time_step: 0.1
       min_points: 6
       visualize: false
@@ -338,7 +338,7 @@ collision_monitor:
     scan:
       type: "scan"
       topic: /derpbot_0/scan
-      min_height: 0.15
+      min_height: 0.05   # DerpBot LiDAR is at ~0.1m; was 0.15 which silently filtered all data
       max_height: 2.0
       enabled: true
 
