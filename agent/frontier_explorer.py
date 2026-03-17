@@ -86,7 +86,7 @@ class FrontierExplorer:
         # Last position used for stuck detection
         self._last_moved_x: float = 0.0
         self._last_moved_y: float = 0.0
-        self._last_move_time: float = time.time()
+        self._last_move_time: float = 0.0  # set to sim time when each goal starts
 
         self._blacklist: list[tuple[float, float]] = []  # world coords of failed goals
         self._active_goal_handle = None
@@ -335,6 +335,10 @@ class FrontierExplorer:
     # Nav2 goal dispatch
     # ------------------------------------------------------------------
 
+    def _sim_time(self) -> float:
+        """Return current ROS clock time in seconds (sim time when use_sim_time=True)."""
+        return self._node.get_clock().now().nanoseconds / 1e9
+
     def _send_goal_and_wait(
         self, goal_x: float, goal_y: float, frame_id: str
     ) -> Optional[bool]:
@@ -365,11 +369,17 @@ class FrontierExplorer:
         goal_handle = future.result()
 
         if not goal_handle or not goal_handle.accepted:
-            self._logger.warning("FrontierExplorer: goal rejected by Nav2.")
-            return False
+            # Rejection is NOT the same as an unreachable frontier — Nav2 may be
+            # temporarily busy (e.g. finishing a cancel/preempt cycle). Never
+            # blacklist on rejection; just pause and let the explore loop retry.
+            self._logger.warning(
+                "FrontierExplorer: goal rejected by Nav2 — not blacklisting, waiting to retry."
+            )
+            time.sleep(5.0)   # give Nav2 time to finish any cleanup
+            return None
 
         self._active_goal_handle = goal_handle
-        self._last_move_time = time.time()
+        self._last_move_time = self._sim_time()
 
         with self._odom_lock:
             self._last_moved_x = self._robot_x
@@ -380,15 +390,16 @@ class FrontierExplorer:
         while not result_future.done():
             time.sleep(0.2)
 
-            # Stuck detection
+            # Stuck detection — use sim clock so RTF oscillations don't cause
+            # false positives (wall-clock 30 s at RTF=0.1 = only 3 sim seconds).
             with self._odom_lock:
                 rx, ry = self._robot_x, self._robot_y
             moved = math.hypot(rx - self._last_moved_x, ry - self._last_moved_y)
             if moved > STUCK_DIST_THRESHOLD:
                 self._last_moved_x = rx
                 self._last_moved_y = ry
-                self._last_move_time = time.time()
-            elif time.time() - self._last_move_time > STUCK_TIME_THRESHOLD:
+                self._last_move_time = self._sim_time()
+            elif self._sim_time() - self._last_move_time > STUCK_TIME_THRESHOLD:
                 self._logger.warning(
                     "FrontierExplorer: stuck detected — cancelling goal."
                 )
