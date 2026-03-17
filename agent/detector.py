@@ -246,7 +246,7 @@ class Detector:
 
     def start(self) -> None:
         """Wait for subprocess warmup, then log ready."""
-        if self._ready_event.wait(timeout=30.0):
+        if self._ready_event.wait(timeout=60.0):
             self._logger.info(
                 f"Detector: subprocess ready ({self._model_name or 'unknown'})."
             )

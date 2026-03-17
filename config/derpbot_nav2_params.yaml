@@ -49,9 +49,9 @@ controller_server:
 
     FollowPath:
       plugin: "nav2_mppi_controller::MPPIController"
-      time_steps: 56
+      time_steps: 40
       model_dt: 0.05
-      batch_size: 2000
+      batch_size: 500
       ax_max: 3.0
       ax_min: -3.0
       ay_max: 3.0
@@ -135,8 +135,8 @@ local_costmap:
   local_costmap:
     ros__parameters:
       use_sim_time: true
-      update_frequency: 5.0
-      publish_frequency: 2.0
+      update_frequency: 3.0
+      publish_frequency: 1.0
       global_frame: odom
       robot_base_frame: base_link
       rolling_window: true
@@ -225,7 +225,7 @@ map_saver:
 planner_server:
   ros__parameters:
     use_sim_time: true
-    expected_planner_frequency: 20.0
+    expected_planner_frequency: 5.0
     planner_plugins: ["GridBased"]
     GridBased:
       plugin: "nav2_smac_planner::SmacPlanner2D"
@@ -297,7 +297,7 @@ waypoint_follower:
 velocity_smoother:
   ros__parameters:
     use_sim_time: true
-    smoothing_frequency: 20.0
+    smoothing_frequency: 10.0
     scale_velocities: false
     feedback: "OPEN_LOOP"
     max_velocity: [0.5, 0.0, 2.0]
