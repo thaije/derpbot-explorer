@@ -117,7 +117,7 @@ def main():
     rclpy.init()
     node = AgentNode()
 
-    executor = rclpy.executors.MultiThreadedExecutor(num_threads=8)
+    executor = rclpy.executors.MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)
 
     # Spin in background thread while we wait for exploration to finish

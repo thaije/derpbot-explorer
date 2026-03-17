@@ -57,7 +57,11 @@ except ImportError:
     raise ImportError("cv_bridge not found — install ros-jazzy-cv-bridge")
 
 PROCESS_EVERY_N_FRAMES = 2      # process every 2nd frame → ~5 Hz from 10 Hz stream
-GPU_DEVICE = 0                  # GPU index for inference
+# GPU index for inference within the subprocess's CUDA_VISIBLE_DEVICES scope.
+# CUDA_VISIBLE_DEVICES is set to "1" inside _inference_worker (before torch import)
+# so "cuda:0" here maps to nvidia-smi GPU 1 (RTX 2070 SUPER on NUMA node 1),
+# completely hiding GPU 0 (Gazebo's rendering GPU) from PyTorch.
+GPU_DEVICE = 0
 
 OWL_MODEL_ID = "google/owlv2-base-patch16-ensemble"
 OWL_CONF_THRESHOLD = 0.20       # validated on low-poly sim — do not lower (FP increase)
@@ -91,8 +95,18 @@ def _inference_worker(
       OWL-v2 takes text prompts (one per target) and returns bboxes + scores directly.
       No separate re-classification stage needed.
     """
+    # Isolate from Gazebo's GPU 0 — set BEFORE importing torch so PyTorch never
+    # initialises a CUDA context on GPU 0 (which is Gazebo's rendering device).
+    # "cuda:0" inside this worker maps to nvidia-smi GPU 1 (RTX 2070 SUPER,
+    # NUMA node 1), with no cross-GPU interference.
+    import os as _os
+    _os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    _os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+
     try:
         import torch
+        torch.set_num_threads(4)          # limit CPU threads; leaves NUMA-0 cores for Gazebo
+        torch.set_num_interop_threads(2)
         from PIL import Image as PILImage
         import cv2 as _cv2
         from transformers import Owlv2Processor, Owlv2ForObjectDetection
@@ -107,7 +121,7 @@ def _inference_worker(
     try:
         processor = Owlv2Processor.from_pretrained(OWL_MODEL_ID)
         model = Owlv2ForObjectDetection.from_pretrained(OWL_MODEL_ID)
-        model = model.to(f"cuda:{GPU_DEVICE}").eval()
+        model = model.to(f"cuda:{GPU_DEVICE}").half().eval()
     except Exception as exc:
         result_queue.put({"error": f"could not load OWL-v2: {exc}"})
         return
@@ -116,7 +130,7 @@ def _inference_worker(
     try:
         _dummy = PILImage.fromarray(np.zeros((480, 640, 3), dtype=np.uint8))
         _inputs = processor(text=queries, images=_dummy, return_tensors="pt")
-        _inputs = {k: v.to(f"cuda:{GPU_DEVICE}") for k, v in _inputs.items()}
+        _inputs = {k: (v.half() if v.dtype == torch.float32 else v).to(f"cuda:{GPU_DEVICE}") for k, v in _inputs.items()}
         with torch.no_grad():
             model(**_inputs)
     except Exception as exc:
@@ -141,12 +155,12 @@ def _inference_worker(
             rgb = _cv2.cvtColor(frame, _cv2.COLOR_BGR2RGB)
             pil_image = PILImage.fromarray(rgb)
             inputs = processor(text=queries, images=pil_image, return_tensors="pt")
-            inputs = {k: v.to(f"cuda:{GPU_DEVICE}") for k, v in inputs.items()}
+            inputs = {k: (v.half() if v.dtype == torch.float32 else v).to(f"cuda:{GPU_DEVICE}") for k, v in inputs.items()}
 
             with torch.no_grad():
                 outputs = model(**inputs)
 
-            target_sizes = torch.tensor([(shape[0], shape[1])], device=f"cuda:{GPU_DEVICE}")
+            target_sizes = torch.tensor([(shape[0], shape[1])], dtype=torch.int32, device=f"cuda:{GPU_DEVICE}")
             results = processor.post_process_grounded_object_detection(
                 outputs, target_sizes=target_sizes, threshold=OWL_CONF_THRESHOLD,
             )[0]
