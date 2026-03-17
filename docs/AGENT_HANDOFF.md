@@ -46,6 +46,8 @@ Not yet verified: depth projection, tracker publishing confirmed detections, end
 - **`transform_tolerance: 0.3` everywhere** — set in controller_server, local_costmap, global_costmap, behavior_server, and collision_monitor. Lower values cause TF timestamp age failures at non-nominal RTF.
 - **Nav2 goal rejection ≠ unreachable frontier** — `goal_handle.accepted == False` means Nav2 is temporarily busy (cancel/preempt in progress), not that the frontier is unreachable. Return `None` (retry, no blacklist) on rejection; only return `False` (blacklist) on `STATUS_ABORTED` or stuck detection.
 - **numactl for GPU inference** — run the agent with `numactl --cpunodebind=1 --membind=1` to pin the OWLv2 subprocess to the same NUMA node as the RTX 2070 SUPER (GPU 1). This avoids cross-NUMA memory latency and keeps RTF near 1.9 at speed=2.
+- **Ghost TF from previous run corrupts new run** — when a sim is killed and a new one started at t=0, DDS delivers cached TF messages from the old run (which had timestamps 800–900+s) before the new sim's data. The new run's TF buffer sees these future-timestamped transforms first; current transforms then look "old". Result: all Nav2 goals immediately abort (status 6), robot never moves. Fix: kill the ROS2 daemon (`ros2 daemon stop`) and restart it (`ros2 daemon start`) between runs, and kill ALL gz/ros2 processes by PID before restarting.
+- **RViz degrades RTF** — opening RViz subscribes to costmap, /map, and TF topics, spiking CPU. Can cause temporary RTF dips to ~1.25 at speed=2. Close RViz before measuring performance.
 - **Frontier W_DIST balance** — W_DIST=4.0 keeps the robot too local (62% coverage); W_DIST=0.5 causes cross-map thrashing. W_DIST=2.0 is currently used as a compromise.
 
 ---
@@ -104,16 +106,16 @@ numactl --cpunodebind=1 --membind=1 python3.12 agent/agent_node.py
 
 | Metric | Value |
 |--------|-------|
-| Best score | 41.4 (D) |
-| Targets found | 2–3 / 9 |
-| Safety | 100 (S) — 0 collisions |
-| exit_sign | 0 / 4 — undetectable with OWLv2 |
-| Exploration coverage | ~55% |
-| RTF with agent running | ~1.9 (healthy) |
+| Best score | 52.1 (D) |
+| Targets found | 4/6 (fire_ext ×2, first_aid ×1, person ×1) |
+| Safety | 86 — 1 collision (doorway brush) |
+| Exploration coverage | ~52% |
+| RTF with agent running | ~1.97 (healthy) |
+| Precision | 0.67 — 2 false positives at conf=0.20 |
 
-**Primary bottleneck**: exit_sign accounts for 4 of 9 targets and OWLv2 cannot detect them in this sim. Score ceiling with current detector is ~5/9 = 56% found_ratio. Needs either a CV-based fallback detector for exit signs (HSV + contour on the teal face?) or a fine-tuned model.
+**Primary bottleneck**: Exploration coverage ~52% — Meeting Room (top of map, has first_aid_kit #2) not consistently reached. Robot tends to over-explore already-covered lower areas before pushing into the Meeting Room.
 
-**Secondary bottleneck**: ~55% exploration coverage — Meeting Room (top of map) and deep Office B (right side) are not consistently reached due to Nav2 path planning failures through doorways.
+**Secondary bottleneck**: 2 false positives per run at OWL_CONF_THRESHOLD=0.20. Tracker requires 2 diverse sightings before publishing, but false detections of the same non-target object from multiple poses still create false tracks.
 
 ## Development guidelines
 
