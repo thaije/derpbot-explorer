@@ -40,8 +40,8 @@ from detector import Detector, DetectionResult
 from depth_projector import DepthProjector
 
 MATCH_RADIUS = 1.5          # metres — same class within this → same object (was 1.0)
-MIN_SIGHTINGS = 2           # must be seen N times before publishing
-MIN_POSE_DISTANCE = 0.5     # metres — sightings must come from diverse robot poses
+MIN_SIGHTINGS = 1           # single confirmed sighting is sufficient — OWLv2 at 0.20 threshold is precise
+MIN_POSE_DISTANCE = 0.0     # no diversity requirement with MIN_SIGHTINGS=1
 PUBLISH_RATE_HZ = 5.0       # rate to check for newly confirmed objects
 REPUBLISH_SHIFT_M = 0.5     # republish if centroid moves more than this after first publish
 
