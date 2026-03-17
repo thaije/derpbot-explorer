@@ -39,9 +39,9 @@ except ImportError:
 from detector import Detector, DetectionResult
 from depth_projector import DepthProjector
 
-MATCH_RADIUS = 1.5          # metres — same class within this → same object (was 1.0)
-MIN_SIGHTINGS = 1           # single confirmed sighting is sufficient — OWLv2 at 0.20 threshold is precise
-MIN_POSE_DISTANCE = 0.0     # no diversity requirement with MIN_SIGHTINGS=1
+MATCH_RADIUS = 2.0          # metres — same class within this → same object; wider to merge depth-noise duplicates
+MIN_SIGHTINGS = 2           # require 2 sightings to filter single-frame noise
+MIN_POSE_DISTANCE = 0.2     # reduced from 0.5 — robot only needs to move 0.2m between sightings
 PUBLISH_RATE_HZ = 5.0       # rate to check for newly confirmed objects
 REPUBLISH_SHIFT_M = 0.5     # republish if centroid moves more than this after first publish
 
