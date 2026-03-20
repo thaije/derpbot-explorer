@@ -22,30 +22,6 @@ Tasks in priority order. Each must be completed and verified before moving to th
 
 ---
 
-### Task 1 — RTF benchmarking ✅ DONE (2026-03-20)
-
-**Root cause**: NUMA node 0 (cores 0–9, 20–29) thermally throttled to ~230 MHz; NUMA node 1 runs at 2400–3100 MHz. `gz sim` landing on node 0 caused RTF collapse.
-
-**Fix**: `numactl --cpunodebind=1 --membind=1` applied to sim, SLAM, Nav2, and agent in `scripts/start_stack.sh`.
-
-**Results** (full table in `AGENT_HANDOFF.md`):
-
-| Config | Speed | RTF avg | Range |
-|--------|-------|---------|-------|
-| Sim only (no fix) | 2 | 0.78 | 0.49–1.27 |
-| Sim only (numactl) | 1 | 1.032 | 0.92–1.19 |
-| Sim only (numactl) | 2 | 2.065 | 1.63–2.53 |
-| Sim + SLAM + Nav2 (numactl) | 2 | 2.005 | 1.52–2.45 |
-| Full stack (numactl) | 2 | 1.891 | 1.28–2.29 |
-
-Full stack at speed=2 achieves RTF 1.89 — well within 10% of target. SLAM+Nav2 add negligible overhead (~0.06 RTF); agent adds ~0.11 RTF overhead (OWLv2 subprocess on GPU 1 via numactl).
-
-Speed limit not explicitly tested; speed=3 likely feasible (needs verification in Task 2).
-
-**Top CPU consumers (full stack)**: `gz sim` 183%, `scenario_runner` 48%, `clock_bridge` 28%, `parameter_bridge` 20%, Nav2 nodes combined ~80%, SLAM 7%.
-
----
-
 ### Task 2 — Clean baseline run
 
 **Goal:** As a developer, I want one complete, uninterrupted easy-scenario run with verified RTF within 10% of goal (>=1.0) throughout, so I have a reliable score to improve from.

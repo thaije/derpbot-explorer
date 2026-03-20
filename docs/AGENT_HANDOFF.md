@@ -160,37 +160,18 @@ numactl --cpunodebind=1 --membind=1 python3.12 agent/agent_node.py
 | Today (seed=7) | 7 | N/A (aborted at 545s) | 3/6 | ~40% | 0.41 | Stack started 216s late → TF flood dragged RTF |
 | 2026-03-20 (partial, agent started late) | 42 | 60.6 (C) | 3/6 | 97% | ~2.0 | Agent joined 502 sim-sec in; robot barely moved, coverage from stationary LiDAR |
 
-## RTF benchmarking (2026-03-20, RESOLVED — numactl fix)
+## RTF benchmarking (2026-03-20, RESOLVED)
 
-**Root cause found**: NUMA node 0 (cores 0–9, 20–29) thermally throttled to ~230 MHz while NUMA node 1 (cores 10–19, 30–39) runs at 2400–3100 MHz. Both sockets use `performance` governor but socket 0 hardware-throttles under load. `gz sim` landing on node 0 caused RTF collapse.
+**Root cause**: NUMA node 0 (cores 0–9, 20–29) thermally throttled to ~230 MHz; node 1 runs at 2400–3100 MHz. Fix: `numactl --cpunodebind=1 --membind=1` applied to sim, SLAM, Nav2, and agent in `scripts/start_stack.sh`.
 
-**Fix**: `numactl --cpunodebind=1 --membind=1` on all stack components. Applied in `scripts/start_stack.sh` for sim, SLAM, Nav2, and agent (agent was already pinned; now sim+SLAM+Nav2 also pinned).
+| Configuration (speed=2) | RTF avg | Range |
+|-------------------------|---------|-------|
+| Sim only — no numactl | 0.78 | 0.49–1.27 |
+| Sim only — numactl node 1 | 2.07 | 1.63–2.53 |
+| Sim + SLAM + Nav2 | 2.01 | 1.52–2.45 |
+| Full stack (+ agent) | 1.89 | 1.28–2.29 |
 
-| Configuration | Speed | RTF avg | RTF min–max | Notes |
-|---------------|-------|---------|-------------|-------|
-| Sim only (no numactl) | 1 | 0.83 | 0.54–1.11 | BROKEN — node 0 throttled |
-| Sim only (no numactl) | 2 | 0.78 | 0.49–1.27 | BROKEN |
-| Sim only (numactl node 1) | 1 | 1.032 | 0.92–1.19 | ✓ healthy |
-| Sim only (numactl node 1) | 2 | 2.065 | 1.63–2.53 | ✓ healthy |
-| Sim + SLAM + Nav2 (numactl node 1) | 2 | 2.005 | 1.52–2.45 | ✓ healthy; no overhead vs sim-only |
-| Full stack — sim+SLAM+Nav2+agent (numactl) | 2 | 1.891 | 1.28–2.29 | ✓ healthy; agent adds ~0.1 overhead |
-
-**CPU consumers (full stack, speed=2)**:
-- `gz sim`: 183%, `scenario_runner` (Python): 48%, `clock_bridge`: 28%, `parameter_bridge` (sensors): 20%
-- Nav2 nodes combined: ~80% (`bt_navigator` 14%, `controller_server` 14%, `planner_server` 13%, `behavior_server` 11%, `lifecycle_manager` 10%, `smoother_server` 9%, `collision_monitor` 8%)
-- `slam_toolbox`: ~7%
-
-**Note on `scenario_runner` CPU**: consistently 48–60% across all configurations. Suspect busy-loop in Python metrics collection. Not blocking RTF since everything runs on node 1 (20 fast cores).
-
-**DDS overhead**: `clock_bridge` jumps from 11% (sim-only) to 26–28% (SLAM+Nav2) — 8+ Nav2 nodes subscribing to `/clock` at 60 Hz. This was previously thought to be the bottleneck but is not: RTF stays healthy at 2.0 on node 1.
-
-**GPU**: RTX 2070 (GPU 0) at 14% — headless Ogre2 rendering. RTX 2070 SUPER (GPU 1) idle until agent starts OWLv2 inference. Bottleneck is CPU/NUMA, not GPU.
-
-**Primary bottleneck**: Frontier exploration — goals aborting with status 6 (ABORTED) in the upper map section (y > 4). Robot gets stuck/collides near upper area boundaries and Nav2 aborts subsequent goals. All 3/6 misses are in y > 7 area. Coverage: lower map well-explored, upper map (Meeting Room, person #1) not reached.
-
-**Secondary bottleneck**: 2 false positives per run at OWL_CONF_THRESHOLD=0.20.
-
-**Critical ops note**: Always use `scripts/start_stack.sh` — it pins all components to NUMA node 1 and handles correct startup timing. Never start without numactl; node 0 thermal throttling causes RTF collapse. Daemon restart between runs is essential (ghost TF prevention).
+SLAM+Nav2 and sensor subscriptions add negligible RTF overhead. Bottleneck is CPU/NUMA, not GPU or DDS fanout.
 
 ## Development guidelines
 
