@@ -165,14 +165,16 @@ numactl --cpunodebind=1 --membind=1 python3.12 agent/agent_node.py
 
 **Root cause**: NUMA node 0 (cores 0–9, 20–29) thermally throttled to ~230 MHz; node 1 runs at 2400–3100 MHz. Fix: `numactl --cpunodebind=1 --membind=1` applied to sim, SLAM, Nav2, and agent in `scripts/start_stack.sh`.
 
-| Configuration (speed=2) | RTF avg | Range |
-|-------------------------|---------|-------|
-| Sim only — no numactl | 0.78 | 0.49–1.27 |
-| Sim only — numactl node 1 | 2.07 | 1.63–2.53 |
-| Sim + SLAM + Nav2 | 2.01 | 1.52–2.45 |
-| Full stack (+ agent) | 1.89 | 1.28–2.29 |
+| Configuration | Speed setting | RTF avg | Range |
+|---------------|--------------|---------|-------|
+| Sim only — no numactl | 2 | 0.78 | 0.49–1.27 |
+| Sim only — numactl node 1 | 2 | 2.07 | 1.63–2.53 |
+| Sim + SLAM + Nav2 | 2 | 2.01 | 1.52–2.45 |
+| Full stack (+ agent) | 2 | 1.89 | 1.28–2.29 |
+| Sim only — numactl node 1 | 3 | 2.91 | 2.36–3.68 |
+| Sim only — numactl node 1 | 4 | 3.06 | 2.78–3.41 |
 
-SLAM+Nav2 and sensor subscriptions add negligible RTF overhead. Bottleneck is CPU/NUMA, not GPU or DDS fanout.
+**RTF ceiling: ~3× real-time** — the sim tops out at ~3.0 regardless of speed setting (speed=3 and speed=4 give near-identical RTF). SLAM+Nav2 and sensor subscriptions add negligible overhead. Full stack at speed=3 is impractical: DDS peer discovery takes ~2 wall-minutes = 6 sim-minutes wasted waiting for `/map`, leaving too little of the 900 sim-second budget. **Speed=2 is the recommended setting** (1.89 RTF, stable, full budget available).
 
 ## Development guidelines
 
