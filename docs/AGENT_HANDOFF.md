@@ -95,12 +95,24 @@ config/
 
 ## How to run
 
-Use `scripts/start_stack.sh` — see `/arst-test` skill for full startup and monitoring instructions.
+For sim startup and monitoring, use the `/arst-test` skill.
+
+### Agent (manual launch, debug only)
 
 ```bash
-./scripts/start_stack.sh --speed 2 --seed 42          # full stack
-./scripts/start_stack.sh --speed 2 --seed 42 --no-agent
+# From derpbot-explorer root:
+numactl --cpunodebind=1 --membind=1 python3.12 agent/agent_node.py
+
+# SLAM:
+ros2 launch slam_toolbox online_async_launch.py \
+    slam_params_file:=$(pwd)/config/slam_toolbox_params.yaml use_sim_time:=true
+
+# Nav2:
+ros2 launch $(pwd)/launch/navigation_launch.py \
+    params_file:=$(pwd)/config/derpbot_nav2_params.yaml use_sim_time:=true
 ```
+
+All three must start within 5 wall-seconds of sim ready. Use `scripts/start_stack.sh` to handle this automatically.
 
 Results land in `~/Projects/robot-sandbox/results/`. Key fields: `overall_score`, `overall_grade`, `raw_metrics.found_ratio`, `raw_metrics.exploration_coverage`, `raw_metrics.collision_count`.
 

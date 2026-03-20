@@ -22,6 +22,23 @@ Tasks in priority order. Each must be completed and verified before moving to th
 
 ---
 
+### Task 1 — FastDDS discovery server
+
+**Goal:** Eliminate the ~2 wall-minute `/map` delivery delay so the agent starts navigating immediately after launch.
+
+**Background:** FastDDS peer-to-peer multicast discovery is slow with many participants (8+ Nav2 nodes + SLAM + bridges + agent). The agent waits for `/map` (TRANSIENT_LOCAL) which requires full DDS participant discovery first. At speed=2 this costs ~4 sim-minutes; makes speed=3 impractical.
+
+**Plan:**
+- Start a `fastdds discovery` server before the stack. Add it as step 0 in `scripts/start_stack.sh`.
+- Set `ROS_DISCOVERY_SERVER=127.0.0.1:11811` and `FASTRTPS_DEFAULT_PROFILES_FILE` pointing to a SuperClient XML profile for all stack components.
+- Verify `/map` arrives within <30 sim-seconds of agent start on a fresh run.
+
+**Definition of done:**
+- Agent receives `/map` and begins navigating within 30 sim-seconds of start (vs current ~4 sim-minutes).
+- `AGENT_HANDOFF.md` gotcha updated.
+
+---
+
 ### Task 2 — Clean baseline run
 
 **Goal:** As a developer, I want one complete, uninterrupted easy-scenario run with verified RTF within 10% of goal (>=1.0) throughout, so I have a reliable score to improve from.
