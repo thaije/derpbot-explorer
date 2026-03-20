@@ -95,61 +95,14 @@ config/
 
 ## How to run
 
-### One-command startup (recommended)
-
-Use `scripts/start_stack.sh` — kills old processes, restarts ROS2 daemon, starts sim → SLAM → Nav2 → agent in the correct order with tight timing (within 5s of sim ready).
+Use `scripts/start_stack.sh` — see `/arst-test` skill for full startup and monitoring instructions.
 
 ```bash
-# Full stack (sim + SLAM + Nav2 + agent)
-./scripts/start_stack.sh --speed 2 --seed 42
-
-# Without agent (for benchmarking / manual testing)
+./scripts/start_stack.sh --speed 2 --seed 42          # full stack
 ./scripts/start_stack.sh --speed 2 --seed 42 --no-agent
-
-# Different scenario tier
-./scripts/start_stack.sh --speed 1 --seed 7 --scenario medium
-```
-
-Options: `--speed N` (default 2), `--seed N` (default 42), `--scenario TIER` (default easy), `--no-agent`.
-
-Creates tmux sessions: `sim`, `slam`, `nav2`, `agent`. Monitor with:
-```bash
-tmux capture-pane -t agent -p -S -50   # agent logs
-tmux capture-pane -t sim -p -S -30     # sim logs
-```
-
-### Monitoring (arst-test tools, run from ~/Projects/robot-sandbox)
-
-```bash
-# RTF (real-time factor)
-python3.12 scripts/rtf_monitor.py --samples 5   # 5-sample summary
-python3.12 scripts/rtf_monitor.py --once         # single value for scripting
-
-# World state map + status (requires running sim)
-python3.12 scripts/world_state.py                # writes arst_world_map.png
-python3.12 scripts/world_state.py --png /tmp/map_t0.png  # custom path
-
-# Robot pose & camera snapshot
-python3.12 scripts/robot_control.py status
-python3.12 scripts/robot_control.py snapshot     # saves /tmp/robot_snapshot.png
-
-# Post-run: render map from results JSON (no sim needed)
-python3.12 scripts/world_state.py --results results/<file>.json --no-ros
 ```
 
 Results land in `~/Projects/robot-sandbox/results/`. Key fields: `overall_score`, `overall_grade`, `raw_metrics.found_ratio`, `raw_metrics.exploration_coverage`, `raw_metrics.collision_count`.
-
-### Manual startup (debug, components separately)
-
-```bash
-ros2 launch slam_toolbox online_async_launch.py \
-    slam_params_file:=$(pwd)/config/slam_toolbox_params.yaml use_sim_time:=true
-
-ros2 launch $(pwd)/launch/navigation_launch.py \
-    params_file:=$(pwd)/config/derpbot_nav2_params.yaml use_sim_time:=true
-
-numactl --cpunodebind=1 --membind=1 python3.12 agent/agent_node.py
-```
 
 ---
 

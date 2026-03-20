@@ -20,26 +20,41 @@ See the AUTONOMOUS_AGENT_GUIDE.md file.
 
 ## 1. Start the simulation
 
-Run in a tmux session so it stays alive:
+**Recommended: use `start_stack.sh`** (from the derpbot-explorer repo). It kills stale processes, restarts the ROS2 daemon, pins all components to NUMA node 1, and starts sim → SLAM → Nav2 → agent in the correct order within 5s of sim ready.
+
 ```bash
-tmux new -s sim -d './scripts/run_scenario.sh config/scenarios/office_explore_detect/medium.yaml --headless [--seed N] [--speed N] [--timeout N]'
-tmux capture-pane -t sim -p -S -20   # check startup output
+cd ~/Projects/derpbot-explorer
+
+# Full stack (sim + SLAM + Nav2 + agent)
+./scripts/start_stack.sh --speed 2 --seed 42
+
+# Without agent (benchmarking)
+./scripts/start_stack.sh --speed 2 --seed 42 --no-agent
+
+# Options: --speed N (default 2), --seed N (default 42), --scenario TIER (default easy)
 ```
 
-Wait ~5 s. Sim is ready when `world_state.py` returns without error.
+Creates tmux sessions: `sim`, `slam`, `nav2`, `agent`. Then switch to `~/Projects/robot-sandbox` for monitoring.
 
-**Check RTF after sim starts (before agent):**
+**Manual sim-only** (if needed):
+```bash
+cd ~/Projects/robot-sandbox
+tmux new -s sim -d 'numactl --cpunodebind=1 --membind=1 ./scripts/run_scenario.sh config/scenarios/office_explore_detect/easy.yaml --headless --seed 42 --speed 2'
+tmux capture-pane -t sim -p -S -20   # check startup
+```
+
+Wait ~5 s. Sim is ready when output shows "Simulation ready".
+
+**Check RTF — run synchronously from `~/Projects/robot-sandbox`:**
 ```bash
 python3.12 scripts/rtf_monitor.py --samples 5
+python3.12 scripts/rtf_monitor.py --once   # single value
 ```
-Shows current, average, min, and max RTF. RTF should be at or near `1.0` (or near `--speed N` if set). If lower, something is hogging resources.
+RTF should be near `--speed N`. Full stack at speed=2 achieves ~1.9. Sim ceiling is ~3× regardless of speed setting.
 
-```bash
-python3.12 scripts/rtf_monitor.py --once   # single value, e.g. for scripting
-python3.12 scripts/rtf_monitor.py          # run continuously until Ctrl+C
-```
+> **Warning**: `rtf_monitor.py` produces empty output when run as a background shell task (Python stdout buffering). Always run it synchronously or use `--once` in a loop.
 
-After starting the agent, **check RTF again** with `--samples 10`. RTF can vary significantly (observed: 0.15–1.9). A sustained drop below ~0.5× target means the agent is too compute-heavy and timing-dependent behaviour will break.
+After starting the agent, check RTF again — a sustained drop below 0.5× target means something is wrong.
 
 ---
 
