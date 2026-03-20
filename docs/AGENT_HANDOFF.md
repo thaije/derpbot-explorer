@@ -45,7 +45,7 @@ Not yet verified: depth projection, tracker publishing confirmed detections, end
 - **`max_planning_time` must be ≥ 5.0 sim-seconds** — the default 2.0 s causes cross-building path plans to immediately timeout with `NO_PATH_FOUND` and abort the goal.
 - **`transform_tolerance: 0.3` everywhere** — set in controller_server, local_costmap, global_costmap, behavior_server, and collision_monitor. Lower values cause TF timestamp age failures at non-nominal RTF.
 - **Nav2 goal rejection ≠ unreachable frontier** — `goal_handle.accepted == False` means Nav2 is temporarily busy (cancel/preempt in progress), not that the frontier is unreachable. Return `None` (retry, no blacklist) on rejection; only return `False` (blacklist) on `STATUS_ABORTED` or stuck detection.
-- **numactl for GPU inference** — run the agent with `numactl --cpunodebind=1 --membind=1` to pin the OWLv2 subprocess to the same NUMA node as the RTX 2070 SUPER (GPU 1). This avoids cross-NUMA memory latency and keeps RTF near 1.9 at speed=2.
+- **numactl required for ALL stack components** — NUMA node 0 (cores 0–9, 20–29) is thermally throttled to ~230 MHz; node 1 (cores 10–19, 30–39) runs at 2400–3100 MHz. Without numactl, sim-only RTF at speed=2 drops to 0.78. Fix: `numactl --cpunodebind=1 --membind=1` applied in `scripts/start_stack.sh` for sim, SLAM, Nav2, and agent. Both GPUs are on node 1 as well. RTF with full stack at speed=2 = 1.89 (stable).
 - **Ghost TF from previous run corrupts new run** — when a sim is killed and a new one started at t=0, DDS delivers cached TF messages from the old run (which had timestamps 800–900+s) before the new sim's data. The new run's TF buffer sees these future-timestamped transforms first; current transforms then look "old". Result: all Nav2 goals immediately abort (status 6), robot never moves. Fix: kill the ROS2 daemon (`ros2 daemon stop`) and restart it (`ros2 daemon start`) between runs, and kill ALL gz/ros2 processes by PID before restarting.
 - **RViz degrades RTF** — opening RViz subscribes to costmap, /map, and TF topics, spiking CPU. Can cause temporary RTF dips to ~1.25 at speed=2. Close RViz before measuring performance.
 - **Frontier W_DIST balance** — W_DIST=4.0 keeps the robot too local (62% coverage); W_DIST=0.5 causes cross-map thrashing. W_DIST=2.0 is currently used as a compromise.
@@ -92,7 +92,53 @@ config/
 ## TF frames (confirmed)
 `map → odom → base_footprint → base_link → camera_link / lidar_link`
 
-## How to run (debug, components separately)
+## How to run
+
+### One-command startup (recommended)
+
+Use `scripts/start_stack.sh` — kills old processes, restarts ROS2 daemon, starts sim → SLAM → Nav2 → agent in the correct order with tight timing (within 5s of sim ready).
+
+```bash
+# Full stack (sim + SLAM + Nav2 + agent)
+./scripts/start_stack.sh --speed 2 --seed 42
+
+# Without agent (for benchmarking / manual testing)
+./scripts/start_stack.sh --speed 2 --seed 42 --no-agent
+
+# Different scenario tier
+./scripts/start_stack.sh --speed 1 --seed 7 --scenario medium
+```
+
+Options: `--speed N` (default 2), `--seed N` (default 42), `--scenario TIER` (default easy), `--no-agent`.
+
+Creates tmux sessions: `sim`, `slam`, `nav2`, `agent`. Monitor with:
+```bash
+tmux capture-pane -t agent -p -S -50   # agent logs
+tmux capture-pane -t sim -p -S -30     # sim logs
+```
+
+### Monitoring (arst-test tools, run from ~/Projects/robot-sandbox)
+
+```bash
+# RTF (real-time factor)
+python3.12 scripts/rtf_monitor.py --samples 5   # 5-sample summary
+python3.12 scripts/rtf_monitor.py --once         # single value for scripting
+
+# World state map + status (requires running sim)
+python3.12 scripts/world_state.py                # writes arst_world_map.png
+python3.12 scripts/world_state.py --png /tmp/map_t0.png  # custom path
+
+# Robot pose & camera snapshot
+python3.12 scripts/robot_control.py status
+python3.12 scripts/robot_control.py snapshot     # saves /tmp/robot_snapshot.png
+
+# Post-run: render map from results JSON (no sim needed)
+python3.12 scripts/world_state.py --results results/<file>.json --no-ros
+```
+
+Results land in `~/Projects/robot-sandbox/results/`. Key fields: `overall_score`, `overall_grade`, `raw_metrics.found_ratio`, `raw_metrics.exploration_coverage`, `raw_metrics.collision_count`.
+
+### Manual startup (debug, components separately)
 
 ```bash
 ros2 launch slam_toolbox online_async_launch.py \
@@ -104,18 +150,47 @@ ros2 launch $(pwd)/launch/navigation_launch.py \
 numactl --cpunodebind=1 --membind=1 python3.12 agent/agent_node.py
 ```
 
+---
+
 ## Current performance (easy scenario, speed=2)
 
 | Run | Seed | Score | Found | Coverage | RTF | Notes |
 |-----|------|-------|-------|----------|-----|-------|
 | Best (prev session) | 42 | 52.1 (D) | 4/6 | 52% | ~1.97 | 1 collision, 2 FP |
 | Today (seed=7) | 7 | N/A (aborted at 545s) | 3/6 | ~40% | 0.41 | Stack started 216s late → TF flood dragged RTF |
+| 2026-03-20 (partial, agent started late) | 42 | 60.6 (C) | 3/6 | 97% | ~2.0 | Agent joined 502 sim-sec in; robot barely moved, coverage from stationary LiDAR |
 
-**Primary bottleneck**: Exploration coverage ~52% — upper half of map (Meeting Room, upper corridor, y > 8) not consistently reached within 900 sim-seconds. Robot over-explores lower half at W_DIST=2.0.
+## RTF benchmarking (2026-03-20, RESOLVED — numactl fix)
 
-**Secondary bottleneck**: 2 false positives per run at OWL_CONF_THRESHOLD=0.20. Tracker requires 2 diverse sightings before publishing, but false detections of the same non-target object from multiple poses still create false tracks.
+**Root cause found**: NUMA node 0 (cores 0–9, 20–29) thermally throttled to ~230 MHz while NUMA node 1 (cores 10–19, 30–39) runs at 2400–3100 MHz. Both sockets use `performance` governor but socket 0 hardware-throttles under load. `gz sim` landing on node 0 caused RTF collapse.
 
-**Critical ops note**: Always start full stack (slam → nav2 → agent) within 5 wall-seconds of sim ready. Starting late causes TF flood that collapses RTF. If a session was interrupted mid-run, do a full restart (ros2 daemon stop/start + kill all gz/ros2 PIDs) rather than resuming.
+**Fix**: `numactl --cpunodebind=1 --membind=1` on all stack components. Applied in `scripts/start_stack.sh` for sim, SLAM, Nav2, and agent (agent was already pinned; now sim+SLAM+Nav2 also pinned).
+
+| Configuration | Speed | RTF avg | RTF min–max | Notes |
+|---------------|-------|---------|-------------|-------|
+| Sim only (no numactl) | 1 | 0.83 | 0.54–1.11 | BROKEN — node 0 throttled |
+| Sim only (no numactl) | 2 | 0.78 | 0.49–1.27 | BROKEN |
+| Sim only (numactl node 1) | 1 | 1.032 | 0.92–1.19 | ✓ healthy |
+| Sim only (numactl node 1) | 2 | 2.065 | 1.63–2.53 | ✓ healthy |
+| Sim + SLAM + Nav2 (numactl node 1) | 2 | 2.005 | 1.52–2.45 | ✓ healthy; no overhead vs sim-only |
+| Full stack — sim+SLAM+Nav2+agent (numactl) | 2 | 1.891 | 1.28–2.29 | ✓ healthy; agent adds ~0.1 overhead |
+
+**CPU consumers (full stack, speed=2)**:
+- `gz sim`: 183%, `scenario_runner` (Python): 48%, `clock_bridge`: 28%, `parameter_bridge` (sensors): 20%
+- Nav2 nodes combined: ~80% (`bt_navigator` 14%, `controller_server` 14%, `planner_server` 13%, `behavior_server` 11%, `lifecycle_manager` 10%, `smoother_server` 9%, `collision_monitor` 8%)
+- `slam_toolbox`: ~7%
+
+**Note on `scenario_runner` CPU**: consistently 48–60% across all configurations. Suspect busy-loop in Python metrics collection. Not blocking RTF since everything runs on node 1 (20 fast cores).
+
+**DDS overhead**: `clock_bridge` jumps from 11% (sim-only) to 26–28% (SLAM+Nav2) — 8+ Nav2 nodes subscribing to `/clock` at 60 Hz. This was previously thought to be the bottleneck but is not: RTF stays healthy at 2.0 on node 1.
+
+**GPU**: RTX 2070 (GPU 0) at 14% — headless Ogre2 rendering. RTX 2070 SUPER (GPU 1) idle until agent starts OWLv2 inference. Bottleneck is CPU/NUMA, not GPU.
+
+**Primary bottleneck**: Frontier exploration — goals aborting with status 6 (ABORTED) in the upper map section (y > 4). Robot gets stuck/collides near upper area boundaries and Nav2 aborts subsequent goals. All 3/6 misses are in y > 7 area. Coverage: lower map well-explored, upper map (Meeting Room, person #1) not reached.
+
+**Secondary bottleneck**: 2 false positives per run at OWL_CONF_THRESHOLD=0.20.
+
+**Critical ops note**: Always use `scripts/start_stack.sh` — it pins all components to NUMA node 1 and handles correct startup timing. Never start without numactl; node 0 thermal throttling causes RTF collapse. Daemon restart between runs is essential (ghost TF prevention).
 
 ## Development guidelines
 
