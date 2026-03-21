@@ -54,3 +54,7 @@ rviz2 -d config/derpbot_rviz.rviz
 ```
 
 Shows: occupancy map, global costmap, lidar scan, robot model, TF frames, planned path, goal pose, RGB camera feed. Use the **Nav2** panel or **2D Goal Pose** tool to send goals manually.
+
+
+Bugs: 
+- Can we prevent old TF frames from reaching nav2 or something? 

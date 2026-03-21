@@ -121,6 +121,7 @@ Report back to the main agent:
 - `raw_metrics.found_ratio`, `exploration_coverage`, `collision_count`, `near_miss_count`
 - Any abort conditions that fired during the run
 - Final world_state map (run `world_state.py --no-ros --results <file>` and read the PNG)
+- If there were multiple scenarios run, for instance to retry after an issue, and which one is the correct one. 
 
 ---
 
