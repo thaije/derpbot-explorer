@@ -4,8 +4,8 @@
 # Usage:
 #   ./scripts/start_stack.sh [--speed N] [--seed N] [--scenario TIER] [--no-agent]
 #
-# Starts: sim → (wait ready) → SLAM + Nav2 → agent (within 5s of sim ready).
-# Each component runs in its own tmux session: sim, slam, nav2, agent.
+# Starts: fastdds discovery server → sim → (wait ready) → SLAM + Nav2 → agent.
+# Each component runs in its own tmux session: fds, sim, slam, nav2, agent.
 #
 # The --no-agent flag skips the agent (useful for benchmarking SLAM+Nav2 RTF).
 set -euo pipefail
@@ -33,18 +33,27 @@ done
 
 SCENARIO_FILE="config/scenarios/office_explore_detect/${SCENARIO}.yaml"
 
+# FastDDS discovery server settings
+FDS_HOST="127.0.0.1"
+FDS_PORT="11811"
+
+# Env vars injected into every ROS2 session.
+# ROS_SUPER_CLIENT makes CLI tools (ros2 topic/node list) work correctly
+# when discovery server is active.
+ROS_ENV="export ROS_DISCOVERY_SERVER=${FDS_HOST}:${FDS_PORT}; export RMW_IMPLEMENTATION=rmw_fastrtps_cpp; export ROS_SUPER_CLIENT=1;"
+
 echo "=== DerpBot Stack Launcher ==="
 echo "  speed=$SPEED  seed=$SEED  scenario=$SCENARIO  agent=$START_AGENT"
 echo ""
 
 # --- Step 0: Kill everything from previous runs ---
-echo "[0/4] Cleaning up old processes..."
-for sess in agent nav2 slam sim; do
+echo "[0/5] Cleaning up old processes..."
+for sess in agent nav2 slam sim fds; do
     tmux kill-session -t "$sess" 2>/dev/null || true
 done
 sleep 1
 
-# Kill sim/bridge processes by name — two rounds to catch respawns
+# Kill sim/bridge/discovery processes by name — two rounds to catch respawns
 for _round in 1 2; do
     pkill -9 -f "gz sim" 2>/dev/null || true
     pkill -9 -f "parameter_bridge" 2>/dev/null || true
@@ -63,20 +72,50 @@ for _round in 1 2; do
     pkill -9 -f "map_publisher" 2>/dev/null || true
     pkill -9 -f "agent_node" 2>/dev/null || true
     pkill -9 -f "robot_state_publisher" 2>/dev/null || true
+    pkill -9 -f "fastdds discovery" 2>/dev/null || true
     sleep 1
 done
 fuser -k 7400/tcp 2>/dev/null || true
+fuser -k "${FDS_PORT}/udp" 2>/dev/null || true
 sleep 1
 
-# Restart ROS2 daemon to clear cached TF
+# --- Step 1: Start FastDDS discovery server ---
+# Must start before the ROS2 daemon so the daemon can register with it.
+echo "[1/5] Starting FastDDS discovery server (port ${FDS_PORT})..."
+tmux new -s fds -d "numactl --cpunodebind=1 --membind=1 fastdds discovery -i 0 -l ${FDS_HOST} -p ${FDS_PORT}"
+
+# Wait for discovery server port to open (max 5s)
+FDS_WAITED=0
+while [[ $FDS_WAITED -lt 5 ]]; do
+    if ss -ulnp 2>/dev/null | grep -q ":${FDS_PORT}"; then
+        break
+    fi
+    sleep 1
+    FDS_WAITED=$((FDS_WAITED + 1))
+done
+if [[ $FDS_WAITED -ge 5 ]]; then
+    echo "WARNING: FastDDS discovery server port ${FDS_PORT} not open after 5s — continuing anyway"
+else
+    echo "       Discovery server ready after ${FDS_WAITED}s."
+fi
+
+# --- Step 2: Restart ROS2 daemon with discovery env vars ---
+# The daemon must be restarted AFTER the discovery server starts and AFTER
+# ROS_DISCOVERY_SERVER is set so that it registers as a SuperClient.
+echo "[2/5] Restarting ROS2 daemon with discovery env vars..."
+export ROS_DISCOVERY_SERVER="${FDS_HOST}:${FDS_PORT}"
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export ROS_SUPER_CLIENT=1
 ros2 daemon stop 2>/dev/null || true
+sleep 1
 ros2 daemon start 2>/dev/null || true
 sleep 1
 
-echo "[1/4] Starting simulation (speed=$SPEED, seed=$SEED)..."
-tmux new -s sim -d "cd $SANDBOX_ROOT && numactl --cpunodebind=1 --membind=1 ./scripts/run_scenario.sh $SCENARIO_FILE --headless --seed $SEED --speed $SPEED"
+# --- Step 3: Start simulation ---
+echo "[3/5] Starting simulation (speed=$SPEED, seed=$SEED)..."
+tmux new -s sim -d "${ROS_ENV} cd $SANDBOX_ROOT && numactl --cpunodebind=1 --membind=1 ./scripts/run_scenario.sh $SCENARIO_FILE --headless --seed $SEED --speed $SPEED"
 
-# Wait for sim ready (poll world_state.py or check for "Simulation ready" in tmux)
+# Wait for sim ready (poll tmux output for "Simulation ready")
 echo "       Waiting for sim ready..."
 MAX_WAIT=30
 WAITED=0
@@ -94,23 +133,23 @@ if [[ $WAITED -ge $MAX_WAIT ]]; then
 fi
 echo "       Sim ready after ${WAITED}s. Starting SLAM + Nav2 immediately..."
 
-# --- Step 2: Start SLAM (must be within 5s of sim ready) ---
-echo "[2/4] Starting SLAM toolbox..."
-tmux new -s slam -d "cd $EXPLORER_ROOT && numactl --cpunodebind=1 --membind=1 ros2 launch slam_toolbox online_async_launch.py slam_params_file:=$(cd $EXPLORER_ROOT && pwd)/config/slam_toolbox_params.yaml use_sim_time:=true"
+# --- Step 4: Start SLAM (must be within 5s of sim ready) ---
+echo "[4/5] Starting SLAM toolbox..."
+tmux new -s slam -d "${ROS_ENV} cd $EXPLORER_ROOT && numactl --cpunodebind=1 --membind=1 ros2 launch slam_toolbox online_async_launch.py slam_params_file:=$(cd $EXPLORER_ROOT && pwd)/config/slam_toolbox_params.yaml use_sim_time:=true"
 
-# --- Step 3: Start Nav2 (immediately after SLAM) ---
-echo "[3/4] Starting Nav2..."
-tmux new -s nav2 -d "cd $EXPLORER_ROOT && numactl --cpunodebind=1 --membind=1 ros2 launch $(cd $EXPLORER_ROOT && pwd)/launch/navigation_launch.py params_file:=$(cd $EXPLORER_ROOT && pwd)/config/derpbot_nav2_params.yaml use_sim_time:=true"
+# Start Nav2 immediately after SLAM
+echo "      Starting Nav2..."
+tmux new -s nav2 -d "${ROS_ENV} cd $EXPLORER_ROOT && numactl --cpunodebind=1 --membind=1 ros2 launch $(cd $EXPLORER_ROOT && pwd)/launch/navigation_launch.py params_file:=$(cd $EXPLORER_ROOT && pwd)/config/derpbot_nav2_params.yaml use_sim_time:=true"
 
 # Wait briefly for Nav2 lifecycle to finish activating
 sleep 5
 
-# --- Step 4: Start agent (optional) ---
+# --- Step 5: Start agent (optional) ---
 if [[ $START_AGENT -eq 1 ]]; then
-    echo "[4/4] Starting agent..."
-    tmux new -s agent -d "cd $EXPLORER_ROOT && numactl --cpunodebind=1 --membind=1 python3.12 agent/agent_node.py"
+    echo "[5/5] Starting agent..."
+    tmux new -s agent -d "${ROS_ENV} cd $EXPLORER_ROOT && numactl --cpunodebind=1 --membind=1 python3.12 agent/agent_node.py"
 else
-    echo "[4/4] Skipping agent (--no-agent)"
+    echo "[5/5] Skipping agent (--no-agent)"
 fi
 
 echo ""
@@ -121,3 +160,4 @@ echo "  Monitor RTF:    cd $SANDBOX_ROOT && python3.12 scripts/rtf_monitor.py --
 echo "  World state:    cd $SANDBOX_ROOT && python3.12 scripts/world_state.py"
 echo "  Agent logs:     tmux capture-pane -t agent -p -S -50"
 echo "  Sim logs:       tmux capture-pane -t sim -p -S -30"
+echo "  FDS logs:       tmux capture-pane -t fds -p -S -20"
