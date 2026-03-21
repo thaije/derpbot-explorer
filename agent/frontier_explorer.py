@@ -35,14 +35,16 @@ UNKNOWN = -1
 # occupied: any value > 50
 
 # Frontier scoring weights
-# Score = reachable_unknown / 100 - W_DIST * dist
-# reachable_unknown: flood-fill of unknown cells accessible through this frontier
-# (captures info gain — prefers doorways into new rooms over thin wall-edge frontiers)
-W_DIST = 2.0    # penalise distance from robot
+# Score = W_SIZE * cluster.size - W_DIST * dist
+W_SIZE = 1.0    # prefer large frontier clusters (larger cluster = more open frontier edge)
+W_DIST = 1.5    # penalise distance from robot (lowered from 2.0 to push the robot
+                # toward distant unexplored areas; 4.0 is too local, 0.5 causes thrashing)
 
-# Info-gain flood fill: cap per frontier to bound computation time
-# At 5 cm resolution, 5000 cells ≈ a 11×11 m room; enough to distinguish large/small gains
-MAX_FLOOD_CELLS = 5000
+# Info-gain flood fill: disabled (replaced scoring approach; see git history)
+# The flood fill caused all frontiers to hit the cap early in exploration,
+# making scores equal and causing micro-stepping + Nav2 path failures.
+# Left in codebase for future investigation with proper connected-components normalization.
+MAX_FLOOD_CELLS = 5000  # kept for _flood_unknown method signature compatibility
 
 # Stuck detection
 STUCK_DIST_THRESHOLD = 0.10   # metres — robot must move this far
@@ -390,10 +392,7 @@ class FrontierExplorer:
             if self._is_blacklisted(cx, cy):
                 continue
             dist = math.hypot(cx - robot_x, cy - robot_y)
-            # Info-gain scoring: divide by 100 to bring into same order-of-magnitude
-            # as old cluster.size scoring (5000 cells / 100 = 50 vs typical size 5–100).
-            # Strongly rewards frontiers that open up new rooms over thin wall edges.
-            score = cluster.reachable_unknown / 100 - W_DIST * dist
+            score = W_SIZE * cluster.size - W_DIST * dist
             if score > best_score:
                 best_score = score
                 best_cluster = cluster
