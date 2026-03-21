@@ -162,6 +162,9 @@ class FrontierExplorer:
 
         self._logger.info("FrontierExplorer: Nav2 ready. Starting exploration.")
 
+        _t_last_goal_end: float = self._sim_time()  # sim time when last goal cycle ended
+        _goal_num: int = 0
+
         while self._exploring and rclpy.ok():
             with self._map_lock:
                 current_map = self._map
@@ -209,17 +212,25 @@ class FrontierExplorer:
                     goal_x = ox + (c + 0.5) * res
                     goal_y = oy + (r + 0.5) * res
 
+            _goal_num += 1
+            _t_idle = self._sim_time() - _t_last_goal_end  # BFS + selection overhead
+            _t_goal_start = self._sim_time()
             self._logger.info(
-                f"FrontierExplorer: goal ({goal_x:.2f}, {goal_y:.2f})"
+                f"FrontierExplorer: goal#{_goal_num} ({goal_x:.2f}, {goal_y:.2f})"
                 f" [centroid ({cx:.2f}, {cy:.2f})],"
-                f" size={best.size}, reachable_unknown={best.reachable_unknown}"
+                f" size={best.size}, reachable_unknown={best.reachable_unknown},"
+                f" idle_since_last={_t_idle:.1f}s"
             )
 
             result = self._send_goal_and_wait(goal_x, goal_y, current_map.header.frame_id)
 
+            _t_nav = self._sim_time() - _t_goal_start
+            _t_last_goal_end = self._sim_time()
+
             if result is True:
                 self._logger.info(
-                    f"FrontierExplorer: goal ({cx:.2f}, {cy:.2f}) SUCCEEDED — blacklisting."
+                    f"FrontierExplorer: goal#{_goal_num} ({cx:.2f}, {cy:.2f}) SUCCEEDED"
+                    f" nav_time={_t_nav:.1f}s — blacklisting."
                 )
                 # Blacklist centroid on success. If frontier cells persist after the
                 # robot visited (unknown area is behind a wall), blacklisting prevents
@@ -227,13 +238,18 @@ class FrontierExplorer:
                 self._blacklist.append((cx, cy))
             elif result is False:
                 self._logger.info(
-                    f"FrontierExplorer: goal ({cx:.2f}, {cy:.2f}) failed — blacklisting."
+                    f"FrontierExplorer: goal#{_goal_num} ({cx:.2f}, {cy:.2f}) FAILED"
+                    f" nav_time={_t_nav:.1f}s — blacklisting."
                 )
                 self._blacklist.append((cx, cy))
                 # Brief pause — give Nav2 time to finish cancellation/cleanup
                 # before we send the next goal (avoids acceptance future delays).
                 time.sleep(3.0)
             elif result is None:
+                self._logger.info(
+                    f"FrontierExplorer: goal#{_goal_num} TIMEOUT (acceptance)"
+                    f" nav_time={_t_nav:.1f}s — not blacklisting, retrying."
+                )
                 # Acceptance timed out — Nav2 busy, don't blacklist, just retry.
                 time.sleep(3.0)
 
@@ -416,6 +432,7 @@ class FrontierExplorer:
         pose.pose.orientation.w = 1.0
         goal_msg.pose = pose
 
+        _t_send = self._sim_time()
         future = self._nav_client.send_goal_async(goal_msg)
         # Poll — do NOT call spin_until_future_complete here; the node is already
         # spinning in a MultiThreadedExecutor in agent_node.py.
@@ -436,6 +453,9 @@ class FrontierExplorer:
             )
             time.sleep(5.0)   # give Nav2 time to finish any cleanup
             return None
+
+        _t_accept = self._sim_time()
+        self._logger.debug(f"FrontierExplorer: TIMING accept={_t_accept - _t_send:.1f}s")
 
         self._active_goal_handle = goal_handle
         self._last_move_time = self._sim_time()
