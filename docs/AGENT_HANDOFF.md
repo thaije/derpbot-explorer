@@ -38,7 +38,7 @@ Not yet verified: depth projection, tracker publishing confirmed detections, end
 - **Always restart slam_toolbox between scenario runs** — it keeps its old map after a scenario ends. If reused, FrontierExplorer sees an already-explored map with no frontiers and blacklists all goals within ~2 min.
 - **PyTorch/CUDA deadlocks in ROS2 executor threads** — calling `model.predict()` from any ROS2 executor callback or executor-managed thread causes an indefinite hang due to Python GIL starvation (8 executor threads starve inference thread; `time.sleep(0.01)` took ~10 s). Fix: run inference in a separate subprocess (`multiprocessing`, spawn context). Never call YOLOE/PyTorch from executor threads.
 - **Nav2 lifecycle DDS timeout at startup** — on first launch, `smoother_server` occasionally times out during lifecycle transition with "failed to send response to /smoother_server/change_state". Kill Nav2 and restart; second launch succeeds.
-- **inflation_radius must be ≤ 0.15 m to keep office doors navigable** — OfficeA door is 1.0m wide (x=2.0–3.0 at y=6.5). SLAM wall thickness ≈ 0.10m per side, robot_radius=0.22m per side. With inflation≥0.20: door blocked in costmap → planner routes through OfficeB door (x=14–15, far east) → long detour → cascading nav failures. Current: global inflation=0.12m (path planning), local inflation=0.05m (MPPI execution — wider navigable zone in tight corridors). Do not raise global above 0.15m. Old 0.35m warning superseded.
+- **inflation=0.25 empirically optimal despite theoretically blocking 1m doors** — With inflation=0.25: OfficeA door (1m wide) is theoretically blocked (1.0 - 2*(0.10+0.22+0.25) = -0.14m), but in practice the robot navigates through via recovery behaviors (spin+backup) which inadvertently push it through. Result: 0 near-misses, 97.8% coverage. With inflation=0.12: door always open in costmap but MPPI execution fails in tight areas → more slow ABORTS → blacklist fills → 33-43% coverage. Root cause: high inflation causes FAST rejection of bad goals (planner fails immediately) while low inflation causes SLOW rejection (MPPI execution fails). Fast rejection = robot moves on quickly = better coverage. Use inflation=0.25 for both global and local. GOAL_CLEARANCE_M=0.50m to match (robot_radius+inflation=0.47m).
 - **Frontier goals selected adjacent to furniture cause stuck nav** — "closest free cell to centroid" can pick cells right next to desk edges (e.g. desk_b1 at y=1.85, goal selected at y=1.87). With robot_radius+inflation < 0.34m clearance, MPPI can't execute. Fix: GOAL_CLEARANCE_M=0.36m in frontier_explorer.py filters candidates within 0.36m of any obstacle; falls back to unchecked best if no clear cell found.
 - **OWL_CONF_THRESHOLD: currently 0.15** — Tuning table: 0.10=3FP/3real; 0.12=3FP/3real (no improvement vs 0.10); 0.15=1FP/4real (best). Use 0.15. fire_ext#2 detection at 0.15 is marginal (confidence near threshold) but found when coverage is good.
 - **exit_sign is not detectable by OWLv2 in this sim** — the model is a realistic 3D mesh (black housing, teal face, white "EXIT" text) mounted high on walls. DerpBot's camera is at ground level; the sign appears as a tiny dark rectangle near the top of the image. OWLv2 produces near-zero confidence at any reasonable threshold. Even with threshold=0.10, zero exit signs were found across multiple runs. The 4 exit signs account for 4/9 targets in the easy scenario — this is the primary bottleneck to a good score.
@@ -94,7 +94,7 @@ agent/
 
 config/
   slam_toolbox_params.yaml   — base_frame: base_footprint, scan_topic: /derpbot_0/scan
-  derpbot_nav2_params.yaml   — robot_radius: 0.22, global inflation=0.12/local=0.05, cost_scaling=3.5 (global for planning, local small for MPPI tight corridor execution)
+  derpbot_nav2_params.yaml   — robot_radius: 0.22, inflation=0.25 (both global+local), cost_scaling=3.0. GOAL_CLEARANCE_M=0.50m in frontier_explorer.py
 ```
 
 ## TF frames (confirmed)
@@ -139,7 +139,7 @@ Results land in `~/Projects/robot-sandbox/results/`. Key fields: `overall_score`
 | 2026-03-21 OWL=0.12 run1 | 42 | 50.5 (D) | 3/6 | **29%** | ~1.97 | 3 FP, 5 collisions (t=99-109s). Nav failure: robot explored only east side, never reached y>7. OWL=0.12 is NOT better than 0.15 — same FP rate 0.10 level. Reverted to 0.15. |
 | 2026-03-21 infl=0.20 | 42 | 29.1 (F) | 2/6 | 28% | ~1.97 | 13 collisions. Root cause: infl=0.20 still blocks 1m OfficeA door → planner reroutes through OfficeB (x=14-15) → long detour → collisions. |
 | 2026-03-21 infl=0.12 | 42 | 45.2 (D) | 3/6 | 43% | ~1.97 | 0 collisions! 49 near-misses (recovery spins). Found lower section only. OfficeA door theoretically open but robot kept trying east section (x=9 wall). Goal clearance fix not yet active. |
-| 2026-03-21 infl=0.12+0.05+clearance | 42 | *in progress* | — | — | — | global infl=0.12, local infl=0.05. Goal clearance 0.36m. All three fixes together. |
+| 2026-03-21 infl=0.12+0.05+clearance | 42 | 56.8 (C) | 4/6 | 33% | ~1.97 | 1 collision, 11 near-misses, 1 FP. efficiency=100 (S)! Coverage REGRESSION vs 66.1 run. Root cause: low inflation = slow Nav2 rejection = blacklist fills at 33% coverage. Reverted to 0.25/0.25. |
 
 ## RTF benchmarking (2026-03-20, RESOLVED)
 

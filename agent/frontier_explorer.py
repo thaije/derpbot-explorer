@@ -63,10 +63,11 @@ PATROL_STEP_M = 1.0       # metres — coarse grid sampling resolution for patro
 MIN_FRONTIER_SIZE = 5         # cells
 
 # Goal clearance: nav goals must be this far from any occupied cell.
-# robot_radius(0.22) + inflation(0.12) = 0.34m → 7 cells at 5cm.
+# robot_radius(0.22) + inflation(0.25) = 0.47m → 9 cells at 5cm → round to 10 cells (0.50m).
 # Frontier cells adjacent to furniture (desks, cabinets) are filtered out;
-# if no frontier cell passes, the best (minimum centroid-distance) cell is used.
-GOAL_CLEARANCE_M = 0.36       # metres
+# if no frontier cell passes, the best (minimum centroid-distance) cell is pushed
+# into a clear direction (see push logic below).
+GOAL_CLEARANCE_M = 0.50       # metres
 
 
 @dataclass
@@ -238,9 +239,30 @@ class FrontierExplorer:
                         min_d = d
                         goal_x = ox + (c + 0.5) * res
                         goal_y = oy + (r + 0.5) * res
-                # If no cell passed clearance, fall back to best without check
+                # If no cell passed clearance: push goal away from nearest obstacle.
+                # Frontier clusters adjacent to walls (e.g. just above a horizontal wall)
+                # have ALL cells in the lethal zone. Push the best unchecked goal in
+                # each cardinal direction until we find a clear spot. allow_unknown=True
+                # lets SmacPlanner2D route there even if the cell is not yet explored.
                 if min_d == math.inf:
-                    goal_x, goal_y = goal_x_any, goal_y_any
+                    goal_r = int(round((goal_y_any - oy) / res - 0.5))
+                    goal_c = int(round((goal_x_any - ox) / res - 0.5))
+                    pushed = False
+                    for dr, dc in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+                        nr = goal_r + dr * clearance_cells
+                        nc = goal_c + dc * clearance_cells
+                        if 0 <= nr < _height and 0 <= nc < _width:
+                            nrlo = max(0, nr - clearance_cells)
+                            nrhi = min(_height, nr + clearance_cells + 1)
+                            nclo = max(0, nc - clearance_cells)
+                            nchi = min(_width, nc + clearance_cells + 1)
+                            if not np.any(_map_data[nrlo:nrhi, nclo:nchi] > 50):
+                                goal_x = ox + (nc + 0.5) * res
+                                goal_y = oy + (nr + 0.5) * res
+                                pushed = True
+                                break
+                    if not pushed:
+                        goal_x, goal_y = goal_x_any, goal_y_any  # last resort
             else:
                 # Frontier exhausted — switch to patrol mode.
                 # LIDAR coverage (98%+) does NOT mean camera coverage: the robot must
