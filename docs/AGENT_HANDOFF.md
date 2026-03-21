@@ -144,6 +144,20 @@ Results land in `~/Projects/robot-sandbox/results/`. Key fields: `overall_score`
 
 **RTF ceiling: ~3× real-time** — the sim tops out at ~3.0 regardless of speed setting (speed=3 and speed=4 give near-identical RTF). SLAM+Nav2 and sensor subscriptions add negligible overhead. Full stack at speed=3 is impractical: DDS peer discovery takes ~2 wall-minutes = 6 sim-minutes wasted waiting for `/map`, leaving too little of the 900 sim-second budget. **Speed=2 is the recommended setting** (1.89 RTF, stable, full budget available).
 
+**FastDDS note**: with discovery server active, speed=3 may now be viable (map arrives in <30s instead of ~4 sim-min). Test after a few speed=2 baselines establish the new baseline score.
+
+---
+
+## Questions for Tjalling (2026-03-21)
+
+1. **exit_sign detection**: OWLv2 gives near-zero confidence on exit signs in this sim (tiny dark rectangle high on walls). 4 out of 9 targets in easy are exit signs. Options: (a) OCR/template match on "EXIT" text in RGB image, (b) train/fine-tune a small detector, (c) treat exit signs as out-of-scope and target B-grade on remaining 5 objects. Recommendation: (a) — EasyOCR or PaddleOCR on cropped top-of-frame region, no GPU needed. **Decision needed before Task 5.**
+
+2. **W_DIST tuning after info-gain scoring**: new frontier scoring uses `reachable_unknown / 100 - 2.0 * dist`. This may cause thrashing if the robot chases the same large room repeatedly. Wait for 2–3 runs to see coverage improvement before tuning. If coverage hits 90%+ without thrashing, no change needed. If thrashing observed, raise W_DIST to 5.0.
+
+3. **Task ordering after Task 4**: proceed to Task 5 (detection-aware exploration) or move directly to `medium` scenario? My recommendation: Task 5 first — the easy scenario still has untapped score in confirmed detections.
+
+---
+
 ## Development guidelines
 
 Test new features before marking complete. Prefer Python unit tests where possible.

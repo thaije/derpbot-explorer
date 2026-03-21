@@ -8,9 +8,10 @@ Core pipeline is built and running. Remaining work:
 
 | Item | Status | Notes |
 |------|--------|-------|
-| End-to-end easy scenario score | ⚠️ partial | Best: 60.6 (C), 3/6 found — latest run, agent started late, not representative |
+| End-to-end easy scenario score | ⚠️ in progress | Best honest run: 52.1 (D), 4/6. Baseline run in progress (2026-03-21) |
 | RTF stability | ✅ resolved | Root cause: NUMA node 0 thermal throttling. Fix: numactl applied in start_stack.sh |
-| Exploration coverage | ⚠️ insufficient | ~52% coverage; upper map section not reached — fix in Task 3–4 |
+| FastDDS discovery | ✅ resolved | /map now arrives in <30s instead of ~4 sim-min; agent navigates immediately |
+| Exploration coverage | ⚠️ in progress | ~52% coverage; upper map section not reached. Info-gain scoring deployed (Task 4b) |
 | Detection-aware exploration | ❌ not started | Task 5 |
 | `medium`/`hard` tier | ❌ not started | After easy scenario is solved |
 
@@ -22,20 +23,9 @@ Tasks in priority order. Each must be completed and verified before moving to th
 
 ---
 
-### Task 1 — FastDDS discovery server
+### Task 1 — FastDDS discovery server ✅ DONE
 
-**Goal:** Eliminate the ~2 wall-minute `/map` delivery delay so the agent starts navigating immediately after launch.
-
-**Background:** FastDDS peer-to-peer multicast discovery is slow with many participants (8+ Nav2 nodes + SLAM + bridges + agent). The agent waits for `/map` (TRANSIENT_LOCAL) which requires full DDS participant discovery first. At speed=2 this costs ~4 sim-minutes; makes speed=3 impractical.
-
-**Plan:**
-- Start a `fastdds discovery` server before the stack. Add it as step 0 in `scripts/start_stack.sh`.
-- Set `ROS_DISCOVERY_SERVER=127.0.0.1:11811` and `FASTRTPS_DEFAULT_PROFILES_FILE` pointing to a SuperClient XML profile for all stack components.
-- Verify `/map` arrives within <30 sim-seconds of agent start on a fresh run.
-
-**Definition of done:**
-- Agent receives `/map` and begins navigating within 30 sim-seconds of start (vs current ~4 sim-minutes).
-- `AGENT_HANDOFF.md` gotcha updated.
+**Result:** `fastdds discovery -i 0 -l 127.0.0.1 -p 11811` started in `fds` tmux session before ROS2 daemon. All sessions get `ROS_DISCOVERY_SERVER=127.0.0.1:11811 RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_SUPER_CLIENT=1`. Agent started navigating "almost immediately" on first test run (verified 2026-03-21). Source `scripts/ros_env.sh` before any `ros2` CLI/monitoring command.
 
 ---
 
@@ -80,9 +70,10 @@ Tasks in priority order. Each must be completed and verified before moving to th
 **4a — Reduce idle time (if overhead is the bottleneck):**
 - Identify the dominant idle source (goal acceptance delay, Nav2 cleanup between goals, BFS frontier scan frequency). Implement the minimal fix — e.g. reduce inter-goal pause, cache frontier clusters between ticks, pipeline goal sending with map update.
 
-**4b — Improve frontier scoring (if poor goal selection is the bottleneck):**
-- Replace frontier edge size (`cluster.size`) with estimated reachable unknown area: flood-fill unknown cells reachable through the frontier in the map. This directly rewards frontiers that open up large unexplored regions (e.g. the upper section doorway) rather than long thin frontier edges.
-- Tune W_DIST if needed after scoring change.
+**4b — Improve frontier scoring (if poor goal selection is the bottleneck):** ✅ DEPLOYED
+- Replaced `cluster.size` with `reachable_unknown`: BFS flood through unknown cells accessible through the frontier, capped at MAX_FLOOD_CELLS=5000. Score = `reachable_unknown / 100 - W_DIST * dist`.
+- Deployed 2026-03-21 in `agent/frontier_explorer.py`. Needs verification run before claiming done.
+- If thrashing observed, raise W_DIST from 2.0 to 5.0.
 
 **Definition of done:**
 - A complete easy-scenario run achieves ≥ 90% exploration coverage within 900 sim-seconds.
