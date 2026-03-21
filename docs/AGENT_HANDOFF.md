@@ -52,6 +52,7 @@ Not yet verified: depth projection, tracker publishing confirmed detections, end
 - **Frontier W_DIST balance** — W_DIST=4.0 keeps the robot too local (62% coverage); W_DIST=0.5 causes cross-map thrashing. W_DIST=2.0 is currently used as a compromise.
 - **Starting SLAM/Nav2/agent late into a running sim causes TF flood** — if the stack starts 30+ sim-seconds after the sim, every Nav2 node gets flooded with TF_OLD_DATA warnings for wheel joint frames at ~56 Hz. This saturates CPU through the ROS2 DDS logging layer and drags RTF from ~2.0 to ~0.4. Always start SLAM → Nav2 → agent within 5 wall-seconds of the sim reporting ready. Never resume a session where the sim has been idle for minutes without restarting the entire stack from scratch.
 - **Upper half of map (y > 8) not reliably reached within 900 sim-seconds** — at W_DIST=2.0 the robot systematically explores the entire lower half (Offices A/B + lower corridors) before pushing through the doorways into the Meeting Room area. A number of objects are in the upper half and are consistently missed. Coverage stalls at ~52%. Known issue; tuning needed.
+- **FastDDS discovery server required for monitoring scripts** — after adding `ROS_DISCOVERY_SERVER`, all `ros2` CLI subprocesses (including inside `rtf_monitor.py`) must also have the var set or they see no topics. Source `scripts/ros_env.sh` before any ROS2 command outside the stack sessions. The discovery server runs in tmux session `fds`; kill it with `pkill -f "fastdds discovery"`. `ROS_SUPER_CLIENT=1` required for `ros2 node/topic list` to show the full graph.
 
 ---
 
@@ -95,7 +96,9 @@ config/
 
 ## How to run
 
-For sim startup and monitoring, use the `/arst-test` skill.
+Delegate to the `arst-runner` subagent — it handles atomic startup, RTF/TF-flood checks, monitoring, and score reporting. Never start the stack manually; timing constraints make that unreliable.
+
+For interactive observation during a run, `/arst-test` skill has the monitoring commands.
 
 ### Agent (manual launch, debug only)
 

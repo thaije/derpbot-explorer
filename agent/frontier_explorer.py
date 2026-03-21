@@ -35,8 +35,14 @@ UNKNOWN = -1
 # occupied: any value > 50
 
 # Frontier scoring weights
-W_SIZE = 1.0    # prefer large frontier clusters
-W_DIST = 2.0    # penalise distance from robot (compromise: 4.0 too local, 0.5 causes thrashing)
+# Score = reachable_unknown / 100 - W_DIST * dist
+# reachable_unknown: flood-fill of unknown cells accessible through this frontier
+# (captures info gain — prefers doorways into new rooms over thin wall-edge frontiers)
+W_DIST = 2.0    # penalise distance from robot
+
+# Info-gain flood fill: cap per frontier to bound computation time
+# At 5 cm resolution, 5000 cells ≈ a 11×11 m room; enough to distinguish large/small gains
+MAX_FLOOD_CELLS = 5000
 
 # Stuck detection
 STUCK_DIST_THRESHOLD = 0.10   # metres — robot must move this far
@@ -53,6 +59,7 @@ MIN_FRONTIER_SIZE = 5         # cells
 class FrontierCluster:
     cells: list[tuple[int, int]]    # (row, col) in grid frame
     centroid_world: tuple[float, float]  # (x, y) in map frame (metres)
+    reachable_unknown: int = 0      # flood-fill info gain (unknown cells accessible through frontier)
 
     @property
     def size(self) -> int:
@@ -204,7 +211,8 @@ class FrontierExplorer:
 
             self._logger.info(
                 f"FrontierExplorer: goal ({goal_x:.2f}, {goal_y:.2f})"
-                f" [centroid ({cx:.2f}, {cy:.2f})], cluster size={best.size}"
+                f" [centroid ({cx:.2f}, {cy:.2f})],"
+                f" size={best.size}, reachable_unknown={best.reachable_unknown}"
             )
 
             result = self._send_goal_and_wait(goal_x, goal_y, current_map.header.frame_id)
@@ -296,9 +304,57 @@ class FrontierExplorer:
             wx = ox + (mean_c + 0.5) * res
             wy = oy + (mean_r + 0.5) * res
 
-            clusters.append(FrontierCluster(cells=cells, centroid_world=(wx, wy)))
+            cluster = FrontierCluster(cells=cells, centroid_world=(wx, wy))
+            cluster.reachable_unknown = self._flood_unknown(cluster, data, height, width)
+            clusters.append(cluster)
 
         return clusters
+
+    def _flood_unknown(
+        self,
+        cluster: FrontierCluster,
+        data: np.ndarray,
+        height: int,
+        width: int,
+    ) -> int:
+        """
+        Flood-fill through unknown cells reachable from the unexplored side of
+        this frontier cluster.  Returns the count of reachable unknown cells,
+        capped at MAX_FLOOD_CELLS to bound computation time.
+
+        This is the information-gain estimate: a frontier along a thin wall edge
+        scores near 0; a frontier through a doorway into an unmapped room scores
+        proportional to room size.
+        """
+        unknown = data == UNKNOWN
+
+        # Seeds: unknown cells immediately adjacent to frontier cells
+        visited_local = np.zeros((height, width), dtype=bool)
+        q: deque[tuple[int, int]] = deque()
+        for r, c in cluster.cells:
+            for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < height and 0 <= nc < width:
+                    if unknown[nr, nc] and not visited_local[nr, nc]:
+                        visited_local[nr, nc] = True
+                        q.append((nr, nc))
+
+        if not q:
+            return cluster.size  # fallback: no unknown neighbours (shouldn't happen)
+
+        # BFS through unknown cells only
+        count = 0
+        while q and count < MAX_FLOOD_CELLS:
+            r, c = q.popleft()
+            count += 1
+            for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < height and 0 <= nc < width:
+                    if unknown[nr, nc] and not visited_local[nr, nc]:
+                        visited_local[nr, nc] = True
+                        q.append((nr, nc))
+
+        return count
 
     # ------------------------------------------------------------------
     # Frontier selection — scoring
@@ -318,7 +374,10 @@ class FrontierExplorer:
             if self._is_blacklisted(cx, cy):
                 continue
             dist = math.hypot(cx - robot_x, cy - robot_y)
-            score = W_SIZE * cluster.size - W_DIST * dist
+            # Info-gain scoring: divide by 100 to bring into same order-of-magnitude
+            # as old cluster.size scoring (5000 cells / 100 = 50 vs typical size 5–100).
+            # Strongly rewards frontiers that open up new rooms over thin wall edges.
+            score = cluster.reachable_unknown / 100 - W_DIST * dist
             if score > best_score:
                 best_score = score
                 best_cluster = cluster
