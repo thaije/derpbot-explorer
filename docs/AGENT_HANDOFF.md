@@ -49,10 +49,13 @@ Not yet verified: depth projection, tracker publishing confirmed detections, end
 - **numactl required for ALL stack components** — NUMA node 0 (cores 0–9, 20–29) is thermally throttled to ~230 MHz; node 1 (cores 10–19, 30–39) runs at 2400–3100 MHz. Without numactl, sim-only RTF at speed=2 drops to 0.78. Fix: `numactl --cpunodebind=1 --membind=1` applied in `scripts/start_stack.sh` for sim, SLAM, Nav2, and agent. Both GPUs are on node 1 as well. RTF with full stack at speed=2 = 1.89 (stable).
 - **Ghost TF from previous run corrupts new run** — when a sim is killed and a new one started at t=0, DDS delivers cached TF messages from the old run (which had timestamps 800–900+s) before the new sim's data. The new run's TF buffer sees these future-timestamped transforms first; current transforms then look "old". Result: all Nav2 goals immediately abort (status 6), robot never moves. Fix: kill the ROS2 daemon (`ros2 daemon stop`) and restart it (`ros2 daemon start`) between runs, and kill ALL gz/ros2 processes by PID before restarting.
 - **RViz degrades RTF** — opening RViz subscribes to costmap, /map, and TF topics, spiking CPU. Can cause temporary RTF dips to ~1.25 at speed=2. Close RViz before measuring performance.
-- **Frontier W_DIST balance** — W_DIST=4.0 keeps the robot too local (62% coverage); W_DIST=0.5 causes cross-map thrashing. W_DIST=2.0 is currently used as a compromise.
+- **Frontier W_DIST balance** — W_DIST=4.0 keeps the robot too local (62% coverage); W_DIST=0.5 causes cross-map thrashing. W_DIST=2.0 gave 84% coverage (with FastDDS). Now trying W_DIST=1.5 to push toward 90%+. Never go below 1.0 without testing.
 - **Starting SLAM/Nav2/agent late into a running sim causes TF flood** — if the stack starts 30+ sim-seconds after the sim, every Nav2 node gets flooded with TF_OLD_DATA warnings for wheel joint frames at ~56 Hz. This saturates CPU through the ROS2 DDS logging layer and drags RTF from ~2.0 to ~0.4. Always start SLAM → Nav2 → agent within 5 wall-seconds of the sim reporting ready. Never resume a session where the sim has been idle for minutes without restarting the entire stack from scratch.
 - **Upper half of map (y > 8) not reliably reached within 900 sim-seconds** — at W_DIST=2.0 the robot systematically explores the entire lower half (Offices A/B + lower corridors) before pushing through the doorways into the Meeting Room area. A number of objects are in the upper half and are consistently missed. Coverage stalls at ~52%. Known issue; tuning needed.
+- **Info-gain frontier scoring fails early in exploration** — flood-filling unknown cells through frontiers gives all frontiers the same score (cap=5000 cells) when the map is mostly unexplored (all unknown regions are one connected blob). W_DIST then dominates, robot picks tiny nearby clusters → micro-stepping → Nav2 path failures → blacklist fills → robot stuck. Coverage collapsed from 84% → 32%. Fix: revert to cluster.size scoring. Future work: scipy connected-components normalization so frontiers in separate unknown pockets get different scores. Never re-enable without connected-components normalization.
 - **FastDDS discovery server required for monitoring scripts** — after adding `ROS_DISCOVERY_SERVER`, all `ros2` CLI subprocesses (including inside `rtf_monitor.py`) must also have the var set or they see no topics. Source `scripts/ros_env.sh` before any ROS2 command outside the stack sessions. The discovery server runs in tmux session `fds`; kill it with `pkill -f "fastdds discovery"`. `ROS_SUPER_CLIENT=1` required for `ros2 node/topic list` to show the full graph.
+- **Robot avg_speed is ~0.022 m/s (mostly idle)** — robot's actual travel speed averaged across full 900s run is ~0.022 m/s vs max 0.5 m/s. Robot spends most time waiting on Nav2 goal acceptance, cleanup between goals, and rotation. 19.72m path in 900s. Coverage (84%) comes from LiDAR sweeps during rotation at waypoints, not from path length. Reducing idle time is the primary win for higher coverage (Task 3/4a).
+- **seed=42 has no exit_sign as mission targets** — the 4 exit_sign objects in the world are labelled but NOT in the mission target list for seed=42. Mission targets are fire_extinguisher(3), first_aid_kit(2), person(1) = 6 total. exit_sign concern may be seed-specific.
 
 ---
 
@@ -126,8 +129,8 @@ Results land in `~/Projects/robot-sandbox/results/`. Key fields: `overall_score`
 | Run | Seed | Score | Found | Coverage | RTF | Notes |
 |-----|------|-------|-------|----------|-----|-------|
 | Best (prev session) | 42 | 52.1 (D) | 4/6 | 52% | ~1.97 | 1 collision, 2 FP |
-| Today (seed=7) | 7 | N/A (aborted at 545s) | 3/6 | ~40% | 0.41 | Stack started 216s late → TF flood dragged RTF |
-| 2026-03-20 (partial, agent started late) | 42 | 60.6 (C) | 3/6 | 97% | ~2.0 | Agent joined 502 sim-sec in; robot barely moved, coverage from stationary LiDAR |
+| 2026-03-21 FastDDS baseline | 42 | **55.4 (C)** | 3/6 | **84%** | ~1.89 | 10 near-miss, 2 collision, 1 FP. FastDDS = +32% coverage vs old multicast. avg_speed=0.022 m/s (mostly idle). Targets: fire_ext(3), first_aid(2), person(1); seed=42 has NO exit_signs as mission targets |
+| 2026-03-21 info-gain scoring (FAILED) | 42 | 41.3 (D) | 3/6 | 32% | ~1.89 | 12 collision, 7 FP, 0.674m travel. Info-gain scoring reverted (see gotcha below) |
 
 ## RTF benchmarking (2026-03-20, RESOLVED)
 
@@ -152,7 +155,7 @@ Results land in `~/Projects/robot-sandbox/results/`. Key fields: `overall_score`
 
 1. **exit_sign detection**: OWLv2 gives near-zero confidence on exit signs in this sim (tiny dark rectangle high on walls). 4 out of 9 targets in easy are exit signs. Options: (a) OCR/template match on "EXIT" text in RGB image, (b) train/fine-tune a small detector, (c) treat exit signs as out-of-scope and target B-grade on remaining 5 objects. Recommendation: (a) — EasyOCR or PaddleOCR on cropped top-of-frame region, no GPU needed. **Decision needed before Task 5.**
 
-2. **W_DIST tuning after info-gain scoring**: new frontier scoring uses `reachable_unknown / 100 - 2.0 * dist`. This may cause thrashing if the robot chases the same large room repeatedly. Wait for 2–3 runs to see coverage improvement before tuning. If coverage hits 90%+ without thrashing, no change needed. If thrashing observed, raise W_DIST to 5.0.
+2. **W_DIST tuning**: currently at 1.5 (reduced from 2.0, which gave 84% coverage). Lower values risk thrashing. Next run will test if 1.5 pushes coverage to 90%+. If not, look at directional bias or other approaches.
 
 3. **Task ordering after Task 4**: proceed to Task 5 (detection-aware exploration) or move directly to `medium` scenario? My recommendation: Task 5 first — the easy scenario still has untapped score in confirmed detections.
 
