@@ -56,7 +56,8 @@ BLACKLIST_RADIUS = 0.5        # metres
 # Patrol mode: kicks in after all LIDAR frontiers are exhausted.
 # Selects free cells that are far from any previously visited goal (LIDAR coverage
 # does not imply camera coverage; the robot must physically visit all regions).
-PATROL_MIN_DIST = 3.0     # metres — patrol target must be > this far from all visited goals
+PATROL_MIN_DIST = 2.0     # metres — patrol target must be > this far from all visited goals
+                          # 3.0m excluded fire_ext#2 at (1.7,4.7) which is ~2.7m from robot start
 PATROL_STEP_M = 1.0       # metres — coarse grid sampling resolution for patrol targets
 
 # Minimum cluster size to be considered a meaningful frontier
