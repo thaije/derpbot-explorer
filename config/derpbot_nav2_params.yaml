@@ -141,8 +141,8 @@ local_costmap:
       global_frame: odom
       robot_base_frame: base_link
       rolling_window: true
-      width: 3
-      height: 3
+      width: 5
+      height: 5
       resolution: 0.05
       robot_radius: 0.22          # DerpBot half-diagonal ~18cm + margin
       transform_tolerance: 0.3
@@ -168,9 +168,11 @@ local_costmap:
           clearing: true
           marking: true
           data_type: "LaserScan"
-          raytrace_max_range: 3.0
+          raytrace_max_range: 3.5   # 3.0→3.5: desk furniture near fire_ext#3 is ~3.08m from start
+                                    # with 3.0m raytrace it was just outside range → not in costmap → near-misses
+                                    # with 3.5m it's in costmap from startup → robot plans around it
           raytrace_min_range: 0.0
-          obstacle_max_range: 2.5
+          obstacle_max_range: 3.0   # was 2.5 — increased to match extended raytrace
           obstacle_min_range: 0.0
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
