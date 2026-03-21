@@ -119,6 +119,9 @@ class Tracker:
         # Periodic publish timer
         node.create_timer(1.0 / PUBLISH_RATE_HZ, self._publish_confirmed)
 
+        # Periodic status log (every 30s): shows confirmed + pending objects
+        node.create_timer(30.0, self._log_status)
+
         # Detection processing thread
         self._running = True
         t = threading.Thread(target=self._process_loop, daemon=True)
@@ -229,6 +232,25 @@ class Tracker:
             self._last_published_pos[obj.track_id] = (obj.world_x, obj.world_y)
 
         self._pub.publish(msg)
+
+    def _log_status(self) -> None:
+        """Log confirmed and pending objects every 30 sim-seconds for diagnostics."""
+        with self._lock:
+            confirmed = [o for o in self._objects if o.is_confirmed()]
+            pending = [o for o in self._objects if not o.is_confirmed()]
+        if confirmed:
+            self._logger.info(
+                f"Tracker: confirmed={len(confirmed)} "
+                + ", ".join(f"{o.class_name}({o.world_x:.1f},{o.world_y:.1f})" for o in confirmed)
+            )
+        if pending:
+            self._logger.info(
+                f"Tracker: pending={len(pending)} "
+                + ", ".join(
+                    f"{o.class_name}[{o.sighting_count}sighting@({o.world_x:.1f},{o.world_y:.1f})]"
+                    for o in pending
+                )
+            )
 
     def stop(self) -> None:
         self._running = False
