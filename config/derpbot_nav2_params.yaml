@@ -149,8 +149,9 @@ local_costmap:
       plugins: ["voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.25
+        cost_scaling_factor: 3.5
+        inflation_radius: 0.05      # local costmap: keep small so MPPI has wide navigable zone in tight corridors
+                                    # global costmap uses 0.12m for path planning; local is execution-only
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: true
@@ -208,8 +209,8 @@ global_costmap:
         map_subscribe_transient_local: true
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.25
+        cost_scaling_factor: 3.5
+        inflation_radius: 0.12      # same as local: must be ≤0.15 to keep 1m doors navigable
       always_send_full_costmap: true
 
 map_server:

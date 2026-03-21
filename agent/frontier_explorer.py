@@ -62,6 +62,12 @@ PATROL_STEP_M = 1.0       # metres — coarse grid sampling resolution for patro
 # Minimum cluster size to be considered a meaningful frontier
 MIN_FRONTIER_SIZE = 5         # cells
 
+# Goal clearance: nav goals must be this far from any occupied cell.
+# robot_radius(0.22) + inflation(0.12) = 0.34m → 7 cells at 5cm.
+# Frontier cells adjacent to furniture (desks, cabinets) are filtered out;
+# if no frontier cell passes, the best (minimum centroid-distance) cell is used.
+GOAL_CLEARANCE_M = 0.36       # metres
+
 
 @dataclass
 class FrontierCluster:
@@ -207,12 +213,34 @@ class FrontierExplorer:
                 centroid_c = (cx - ox) / res - 0.5
                 goal_x, goal_y = cx, cy  # fallback
                 min_d = math.inf
+                min_d_any = math.inf  # best without clearance check (fallback)
+                goal_x_any, goal_y_any = cx, cy
+                clearance_cells = max(1, round(GOAL_CLEARANCE_M / res))
+                _map_data = np.array(
+                    current_map.data, dtype=np.int8
+                ).reshape((current_map.info.height, current_map.info.width))
+                _height, _width = _map_data.shape
                 for r, c in best.cells:
                     d = math.hypot(r - centroid_r, c - centroid_c)
+                    # Track best without clearance (fallback)
+                    if d < min_d_any:
+                        min_d_any = d
+                        goal_x_any = ox + (c + 0.5) * res
+                        goal_y_any = oy + (r + 0.5) * res
+                    # Clearance check: no occupied cell within clearance_cells
+                    r_lo = max(0, r - clearance_cells)
+                    r_hi = min(_height, r + clearance_cells + 1)
+                    c_lo = max(0, c - clearance_cells)
+                    c_hi = min(_width, c + clearance_cells + 1)
+                    if np.any(_map_data[r_lo:r_hi, c_lo:c_hi] > 50):
+                        continue  # too close to obstacle — skip
                     if d < min_d:
                         min_d = d
                         goal_x = ox + (c + 0.5) * res
                         goal_y = oy + (r + 0.5) * res
+                # If no cell passed clearance, fall back to best without check
+                if min_d == math.inf:
+                    goal_x, goal_y = goal_x_any, goal_y_any
             else:
                 # Frontier exhausted — switch to patrol mode.
                 # LIDAR coverage (98%+) does NOT mean camera coverage: the robot must
