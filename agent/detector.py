@@ -64,7 +64,7 @@ PROCESS_EVERY_N_FRAMES = 2      # process every 2nd frame → ~5 Hz from 10 Hz s
 GPU_DEVICE = 0
 
 OWL_MODEL_ID = "google/owlv2-base-patch16-ensemble"
-OWL_CONF_THRESHOLD = 0.10       # lowered from 0.20 — exit_sign in low-poly sim has confidence < 0.20; MIN_SIGHTINGS=2 filter keeps precision acceptable
+OWL_CONF_THRESHOLD = 0.15       # raised from 0.10 — 0.10 caused 3 FPs in run 20260321T161950; exit_sign still misses at 0.15 but is not always a mission target
 
 
 @dataclass

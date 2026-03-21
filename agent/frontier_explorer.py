@@ -53,6 +53,12 @@ STUCK_TIME_THRESHOLD = 30.0   # seconds (Nav2 rotates first; give it time to sta
 # Blacklist radius: frontiers within this distance of a failed goal are blacklisted
 BLACKLIST_RADIUS = 0.5        # metres
 
+# Patrol mode: kicks in after all LIDAR frontiers are exhausted.
+# Selects free cells that are far from any previously visited goal (LIDAR coverage
+# does not imply camera coverage; the robot must physically visit all regions).
+PATROL_MIN_DIST = 3.0     # metres — patrol target must be > this far from all visited goals
+PATROL_STEP_M = 1.0       # metres — coarse grid sampling resolution for patrol targets
+
 # Minimum cluster size to be considered a meaningful frontier
 MIN_FRONTIER_SIZE = 5         # cells
 
@@ -98,6 +104,7 @@ class FrontierExplorer:
         self._last_move_time: float = 0.0  # set to sim time when each goal starts
 
         self._blacklist: list[tuple[float, float]] = []  # world coords of failed goals
+        self._visited_goals: list[tuple[float, float]] = []  # all goal positions attempted
         self._active_goal_handle = None
         self._exploring = False
 
@@ -180,54 +187,67 @@ class FrontierExplorer:
                 rx, ry = self._robot_x, self._robot_y
 
             frontiers = self._detect_frontiers(current_map)
-            if not frontiers:
-                self._logger.info("FrontierExplorer: no frontiers remain — exploration DONE.")
-                self._done_callback()
-                return
+            best = self._select_best_frontier(frontiers, rx, ry) if frontiers else None
 
-            best = self._select_best_frontier(frontiers, rx, ry)
-            if best is None:
-                self._logger.info("FrontierExplorer: all frontiers blacklisted — DONE.")
-                self._done_callback()
-                return
+            is_patrol = False
+            if best is not None:
+                cx, cy = best.centroid_world  # used for scoring/blacklisting
 
-            cx, cy = best.centroid_world  # used for scoring/blacklisting
-
-            # Navigate to the cluster cell closest to the centroid, not to the robot.
-            # - All frontier cells are free (value == 0), so this is always navigable.
-            # - Centroid can land outside free cells (average may fall in unknown/
-            #   inflated space). Closest-to-centroid picks a real free cell near the
-            #   geometric interior of the frontier.
-            # - Unlike closest-to-robot, this requires the robot to actually travel
-            #   toward the unexplored area.
-            res = current_map.info.resolution
-            ox = current_map.info.origin.position.x
-            oy = current_map.info.origin.position.y
-            centroid_r = (cy - oy) / res - 0.5
-            centroid_c = (cx - ox) / res - 0.5
-            goal_x, goal_y = cx, cy  # fallback
-            min_d = math.inf
-            for r, c in best.cells:
-                d = math.hypot(r - centroid_r, c - centroid_c)
-                if d < min_d:
-                    min_d = d
-                    goal_x = ox + (c + 0.5) * res
-                    goal_y = oy + (r + 0.5) * res
+                # Navigate to the cluster cell closest to the centroid, not to the robot.
+                # - All frontier cells are free (value == 0), so this is always navigable.
+                # - Centroid can land outside free cells (average may fall in unknown/
+                #   inflated space). Closest-to-centroid picks a real free cell near the
+                #   geometric interior of the frontier.
+                # - Unlike closest-to-robot, this requires the robot to actually travel
+                #   toward the unexplored area.
+                res = current_map.info.resolution
+                ox = current_map.info.origin.position.x
+                oy = current_map.info.origin.position.y
+                centroid_r = (cy - oy) / res - 0.5
+                centroid_c = (cx - ox) / res - 0.5
+                goal_x, goal_y = cx, cy  # fallback
+                min_d = math.inf
+                for r, c in best.cells:
+                    d = math.hypot(r - centroid_r, c - centroid_c)
+                    if d < min_d:
+                        min_d = d
+                        goal_x = ox + (c + 0.5) * res
+                        goal_y = oy + (r + 0.5) * res
+            else:
+                # Frontier exhausted — switch to patrol mode.
+                # LIDAR coverage (98%+) does NOT mean camera coverage: the robot must
+                # physically visit all map regions so the detector can see objects that
+                # were only LIDAR-scanned from afar.
+                patrol = self._select_patrol_target(current_map)
+                if patrol is None:
+                    self._logger.info("FrontierExplorer: exploration and patrol DONE.")
+                    self._done_callback()
+                    return
+                goal_x, goal_y = patrol
+                cx, cy = patrol
+                is_patrol = True
 
             _goal_num += 1
             _t_idle = self._sim_time() - _t_last_goal_end  # BFS + selection overhead
             _t_goal_start = self._sim_time()
-            self._logger.info(
-                f"FrontierExplorer: goal#{_goal_num} ({goal_x:.2f}, {goal_y:.2f})"
-                f" [centroid ({cx:.2f}, {cy:.2f})],"
-                f" size={best.size}, reachable_unknown={best.reachable_unknown},"
-                f" idle_since_last={_t_idle:.1f}s"
-            )
+            if not is_patrol:
+                self._logger.info(
+                    f"FrontierExplorer: goal#{_goal_num} ({goal_x:.2f}, {goal_y:.2f})"
+                    f" [centroid ({cx:.2f}, {cy:.2f})],"
+                    f" size={best.size}, reachable_unknown={best.reachable_unknown},"
+                    f" idle_since_last={_t_idle:.1f}s"
+                )
+            else:
+                self._logger.info(
+                    f"FrontierExplorer: PATROL#{_goal_num} ({goal_x:.2f}, {goal_y:.2f})"
+                    f" idle_since_last={_t_idle:.1f}s"
+                )
 
             result = self._send_goal_and_wait(goal_x, goal_y, current_map.header.frame_id)
 
             _t_nav = self._sim_time() - _t_goal_start
             _t_last_goal_end = self._sim_time()
+            self._visited_goals.append((cx, cy))
 
             if result is True:
                 self._logger.info(
@@ -404,6 +424,54 @@ class FrontierExplorer:
             if math.hypot(x - bx, y - by) < BLACKLIST_RADIUS:
                 return True
         return False
+
+    def _select_patrol_target(
+        self, grid: OccupancyGrid
+    ) -> Optional[tuple[float, float]]:
+        """
+        Find the free cell farthest from all previously visited goal positions.
+        Samples on a coarse grid (PATROL_STEP_M resolution) for efficiency.
+        Returns world (x, y) of the best unvisited cell, or None if all free
+        cells are within PATROL_MIN_DIST of a visited goal.
+        """
+        data = np.array(grid.data, dtype=np.int8).reshape(
+            (grid.info.height, grid.info.width)
+        )
+        res = grid.info.resolution
+        ox = grid.info.origin.position.x
+        oy = grid.info.origin.position.y
+        step = max(1, round(PATROL_STEP_M / res))
+
+        best_pos: Optional[tuple[float, float]] = None
+        best_dist = PATROL_MIN_DIST  # must exceed threshold to qualify
+
+        for r in range(0, grid.info.height, step):
+            for c in range(0, grid.info.width, step):
+                if data[r, c] != FREE:
+                    continue
+                wx = ox + (c + 0.5) * res
+                wy = oy + (r + 0.5) * res
+                if self._is_blacklisted(wx, wy):
+                    continue
+                if not self._visited_goals:
+                    with self._odom_lock:
+                        rx, ry = self._robot_x, self._robot_y
+                    min_d = math.hypot(wx - rx, wy - ry)
+                else:
+                    min_d = min(
+                        math.hypot(wx - px, wy - py)
+                        for px, py in self._visited_goals
+                    )
+                if min_d > best_dist:
+                    best_dist = min_d
+                    best_pos = (wx, wy)
+
+        if best_pos is not None:
+            self._logger.info(
+                f"FrontierExplorer: patrol target selected ({best_pos[0]:.2f}, {best_pos[1]:.2f})"
+                f" min_dist_from_visited={best_dist:.1f}m"
+            )
+        return best_pos
 
     # ------------------------------------------------------------------
     # Nav2 goal dispatch
