@@ -8,11 +8,12 @@ Core pipeline is built and running. Remaining work:
 
 | Item | Status | Notes |
 |------|--------|-------|
-| End-to-end easy scenario score | ⚠️ in progress | Best honest run: 52.1 (D), 4/6. Baseline run in progress (2026-03-21) |
+| End-to-end easy scenario score | ⚠️ in progress | Best: 57.6 (C), 3/6 real+3FP. Patrol mode run in progress (2026-03-21) |
 | RTF stability | ✅ resolved | Root cause: NUMA node 0 thermal throttling. Fix: numactl applied in start_stack.sh |
 | FastDDS discovery | ✅ resolved | /map now arrives in <30s instead of ~4 sim-min; agent navigates immediately |
-| Exploration coverage | ⚠️ in progress | ~52% coverage; upper map section not reached. Info-gain scoring deployed (Task 4b) |
-| Detection-aware exploration | ❌ not started | Task 5 |
+| Exploration coverage | ✅ resolved | 98.12% with W_DIST=1.5. Root cause was LIDAR coverage ≠ camera coverage |
+| Physical camera coverage | ⚠️ in progress | Patrol mode deployed: navigates to physically unvisited regions after frontier exhaustion |
+| Detection-aware exploration | ❌ not started | Task 5 — after patrol mode verified |
 | `medium`/`hard` tier | ❌ not started | After easy scenario is solved |
 
 ---
@@ -70,10 +71,9 @@ Tasks in priority order. Each must be completed and verified before moving to th
 **4a — Reduce idle time (if overhead is the bottleneck):**
 - Identify the dominant idle source (goal acceptance delay, Nav2 cleanup between goals, BFS frontier scan frequency). Implement the minimal fix — e.g. reduce inter-goal pause, cache frontier clusters between ticks, pipeline goal sending with map update.
 
-**4b — Improve frontier scoring (if poor goal selection is the bottleneck):** ✅ DEPLOYED
-- Replaced `cluster.size` with `reachable_unknown`: BFS flood through unknown cells accessible through the frontier, capped at MAX_FLOOD_CELLS=5000. Score = `reachable_unknown / 100 - W_DIST * dist`.
-- Deployed 2026-03-21 in `agent/frontier_explorer.py`. Needs verification run before claiming done.
-- If thrashing observed, raise W_DIST from 2.0 to 5.0.
+**4b — Improve frontier scoring (if poor goal selection is the bottleneck):** ✅ DEPLOYED + REVERTED
+- Info-gain scoring failed (all frontiers hit MAX_FLOOD_CELLS=5000 cap early → equal scores → micro-stepping). Reverted to cluster.size. W_DIST lowered 2.0→1.5.
+- **Root problem was different**: 98% LIDAR coverage achieved but 3 mission objects (y>7.5) never visited by camera. Fix: patrol mode (navigate to physically unvisited free cells after frontier exhaustion).
 
 **Definition of done:**
 - A complete easy-scenario run achieves ≥ 90% exploration coverage within 900 sim-seconds.
