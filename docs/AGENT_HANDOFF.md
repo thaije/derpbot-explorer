@@ -45,7 +45,6 @@ Task + robot spec: [`docs/AUTONOMOUS_AGENT_GUIDE.md`](AUTONOMOUS_AGENT_GUIDE.md)
 - **`transform_tolerance: 0.3` everywhere** — set in controller_server, local_costmap, global_costmap, behavior_server, and collision_monitor. Lower values cause TF timestamp age failures at non-nominal RTF.
 - **Nav2 goal rejection ≠ unreachable frontier** — `goal_handle.accepted == False` means Nav2 is temporarily busy (cancel/preempt in progress), not that the frontier is unreachable. Return `None` (retry, no blacklist) on rejection; only return `False` (blacklist) on `STATUS_ABORTED` or stuck detection.
 - **OWLv2 must not touch GPU 0 (Gazebo's rendering device)** — PyTorch initialising on GPU 0 starves Gazebo's Ogre2 renderer, collapsing RTF. Fix: `CUDA_VISIBLE_DEVICES=1` set in `detector.py`'s subprocess worker *before* torch is imported, so PyTorch only ever sees GPU 1 (RTX 2070 SUPER). This is already in the code; don't remove it.
-- **numactl required for ALL stack components** — NUMA node 0 (cores 0–9, 20–29) is thermally throttled to ~230 MHz; node 1 (cores 10–19, 30–39) runs at 2400–3100 MHz. Without numactl, sim-only RTF at speed=2 drops to 0.78. Fix: `numactl --cpunodebind=1 --membind=1` in `scripts/start_stack.sh` for sim, SLAM, Nav2, and agent. Both GPUs are on node 1. RTF ceiling: ~3× real-time regardless of speed setting (speed=3 and speed=4 give near-identical ~3.0). Full stack at speed=2 = 1.89 (stable, recommended). Speed=3 saves wall-time but risks instability under load.
 - **Ghost TF from previous run corrupts new run** — when a sim is killed and a new one started at t=0, DDS delivers cached TF messages from the old run (which had timestamps 800–900+s) before the new sim's data. The new run's TF buffer sees these future-timestamped transforms first; current transforms then look "old". Result: all Nav2 goals immediately abort (status 6), robot never moves. Fix: kill the ROS2 daemon (`ros2 daemon stop`) and restart it (`ros2 daemon start`) between runs, and kill ALL gz/ros2 processes by PID before restarting.
 - **RViz degrades RTF** — opening RViz subscribes to costmap, /map, and TF topics, spiking CPU. Can cause temporary RTF dips to ~1.25 at speed=2. Close RViz before measuring performance.
 - **Frontier W_DIST balance** — W_DIST=1.5 gives 98% coverage (current). Higher (4.0) keeps robot too local; lower (0.5) causes cross-map thrashing. Never go below 1.0 without testing.
@@ -82,7 +81,7 @@ Nav2 stack (launch/navigation_launch.py — trimmed, no docking/route server)
 agent/
   mission_client.py    — GET http://localhost:7400/mission → targets[]
   frontier_explorer.py — BFS /map frontiers → NavigateToPose goals, stuck detection
-  detector.py          — OWLv2 (google/owlv2-base-patch16-ensemble) on GPU 1 via numactl, subprocess, 5 Hz, conf=0.20; 90s watchdog
+  detector.py          — OWLv2 (google/owlv2-base-patch16-ensemble) on GPU 1, subprocess, 5 Hz, conf=0.20; 90s watchdog
   depth_projector.py   — bbox centre + depth image + TF2 → world (x, y)
   tracker.py           — multi-sighting fusion, persistent IDs, publishes /derpbot_0/detections
   agent_node.py        — INIT → EXPLORE → DONE state machine, MultiThreadedExecutor
@@ -105,7 +104,7 @@ For interactive observation during a run, `/arst-test` skill has the monitoring 
 
 ```bash
 # From derpbot-explorer root:
-numactl --cpunodebind=1 --membind=1 python3.12 agent/agent_node.py
+python3.12 agent/agent_node.py
 
 # SLAM:
 ros2 launch slam_toolbox online_async_launch.py \

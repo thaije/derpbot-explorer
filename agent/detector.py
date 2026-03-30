@@ -59,7 +59,7 @@ except ImportError:
 PROCESS_EVERY_N_FRAMES = 2      # process every 2nd frame → ~5 Hz from 10 Hz stream
 # GPU index for inference within the subprocess's CUDA_VISIBLE_DEVICES scope.
 # CUDA_VISIBLE_DEVICES is set to "1" inside _inference_worker (before torch import)
-# so "cuda:0" here maps to nvidia-smi GPU 1 (RTX 2070 SUPER on NUMA node 1),
+# so "cuda:0" here maps to nvidia-smi GPU 1 (RTX 2070 SUPER),
 # completely hiding GPU 0 (Gazebo's rendering GPU) from PyTorch.
 GPU_DEVICE = 0
 
@@ -97,15 +97,15 @@ def _inference_worker(
     """
     # Isolate from Gazebo's GPU 0 — set BEFORE importing torch so PyTorch never
     # initialises a CUDA context on GPU 0 (which is Gazebo's rendering device).
-    # "cuda:0" inside this worker maps to nvidia-smi GPU 1 (RTX 2070 SUPER,
-    # NUMA node 1), with no cross-GPU interference.
+    # "cuda:0" inside this worker maps to nvidia-smi GPU 1 (RTX 2070 SUPER),
+    # with no cross-GPU interference.
     import os as _os
     _os.environ["CUDA_VISIBLE_DEVICES"] = "1"
     _os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 
     try:
         import torch
-        torch.set_num_threads(4)          # limit CPU threads; leaves NUMA-0 cores for Gazebo
+        torch.set_num_threads(4)
         torch.set_num_interop_threads(2)
         from PIL import Image as PILImage
         import cv2 as _cv2

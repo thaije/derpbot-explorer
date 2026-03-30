@@ -82,7 +82,7 @@ sleep 1
 # --- Step 1: Start FastDDS discovery server ---
 # Must start before the ROS2 daemon so the daemon can register with it.
 echo "[1/5] Starting FastDDS discovery server (port ${FDS_PORT})..."
-tmux new -s fds -d "numactl --cpunodebind=1 --membind=1 fastdds discovery -i 0 -l ${FDS_HOST} -p ${FDS_PORT}"
+tmux new -s fds -d "fastdds discovery -i 0 -l ${FDS_HOST} -p ${FDS_PORT}"
 
 # Wait for discovery server port to open (max 5s)
 FDS_WAITED=0
@@ -113,11 +113,11 @@ sleep 1
 
 # --- Step 3: Start simulation ---
 echo "[3/5] Starting simulation (speed=$SPEED, seed=$SEED)..."
-tmux new -s sim -d "${ROS_ENV} cd $SANDBOX_ROOT && numactl --cpunodebind=1 --membind=1 ./scripts/run_scenario.sh $SCENARIO_FILE --headless --seed $SEED --speed $SPEED"
+tmux new -s sim -d "${ROS_ENV} cd $SANDBOX_ROOT && ./scripts/run_scenario.sh $SCENARIO_FILE --headless --seed $SEED --speed $SPEED"
 
 # Wait for sim ready (poll tmux output for "Simulation ready")
 echo "       Waiting for sim ready..."
-MAX_WAIT=30
+MAX_WAIT=60
 WAITED=0
 while [[ $WAITED -lt $MAX_WAIT ]]; do
     if tmux capture-pane -t sim -p -S -50 2>/dev/null | grep -q "Simulation ready"; then
@@ -131,15 +131,20 @@ if [[ $WAITED -ge $MAX_WAIT ]]; then
     echo "ERROR: Sim did not become ready within ${MAX_WAIT}s"
     exit 1
 fi
-echo "       Sim ready after ${WAITED}s. Starting SLAM + Nav2 immediately..."
+# Brief pause: let the ros_gz_bridge publish its first /clock messages before
+# Nav2 starts — the lifecycle manager's bond check fires immediately at startup
+# and needs sim clock to be flowing or it hits the 4s wall-clock timeout.
+echo "       Sim ready after ${WAITED}s. Waiting 3s for clock bridge to settle..."
+sleep 3
+echo "       Starting SLAM + Nav2..."
 
 # --- Step 4: Start SLAM (must be within 5s of sim ready) ---
 echo "[4/5] Starting SLAM toolbox..."
-tmux new -s slam -d "${ROS_ENV} cd $EXPLORER_ROOT && numactl --cpunodebind=1 --membind=1 ros2 launch slam_toolbox online_async_launch.py slam_params_file:=$(cd $EXPLORER_ROOT && pwd)/config/slam_toolbox_params.yaml use_sim_time:=true"
+tmux new -s slam -d "${ROS_ENV} cd $EXPLORER_ROOT && ros2 launch slam_toolbox online_async_launch.py slam_params_file:=$(cd $EXPLORER_ROOT && pwd)/config/slam_toolbox_params.yaml use_sim_time:=true"
 
 # Start Nav2 immediately after SLAM
 echo "      Starting Nav2..."
-tmux new -s nav2 -d "${ROS_ENV} cd $EXPLORER_ROOT && numactl --cpunodebind=1 --membind=1 ros2 launch $(cd $EXPLORER_ROOT && pwd)/launch/navigation_launch.py params_file:=$(cd $EXPLORER_ROOT && pwd)/config/derpbot_nav2_params.yaml use_sim_time:=true"
+tmux new -s nav2 -d "${ROS_ENV} cd $EXPLORER_ROOT && ros2 launch $(cd $EXPLORER_ROOT && pwd)/launch/navigation_launch.py params_file:=$(cd $EXPLORER_ROOT && pwd)/config/derpbot_nav2_params.yaml use_sim_time:=true"
 
 # Wait briefly for Nav2 lifecycle to finish activating
 sleep 5
@@ -147,7 +152,7 @@ sleep 5
 # --- Step 5: Start agent (optional) ---
 if [[ $START_AGENT -eq 1 ]]; then
     echo "[5/5] Starting agent..."
-    tmux new -s agent -d "${ROS_ENV} cd $EXPLORER_ROOT && numactl --cpunodebind=1 --membind=1 python3.12 agent/agent_node.py"
+    tmux new -s agent -d "${ROS_ENV} cd $EXPLORER_ROOT && python3.12 agent/agent_node.py"
 else
     echo "[5/5] Skipping agent (--no-agent)"
 fi

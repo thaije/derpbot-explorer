@@ -20,7 +20,7 @@ See the AUTONOMOUS_AGENT_GUIDE.md file.
 
 ## 1. Start the simulation
 
-**Recommended: use `start_stack.sh`** (from the derpbot-explorer repo). It kills stale processes, restarts the ROS2 daemon, pins all components to NUMA node 1, and starts sim → SLAM → Nav2 → agent in the correct order within 5s of sim ready.
+**Recommended: use `start_stack.sh`** (from the derpbot-explorer repo). It kills stale processes, restarts the ROS2 daemon, and starts sim → SLAM → Nav2 → agent in the correct order within 5s of sim ready.
 
 ```bash
 cd ~/Projects/derpbot-explorer
@@ -39,7 +39,7 @@ Creates tmux sessions: `sim`, `slam`, `nav2`, `agent`. Then switch to `~/Project
 **Manual sim-only** (if needed):
 ```bash
 cd ~/Projects/robot-sandbox
-tmux new -s sim -d 'numactl --cpunodebind=1 --membind=1 ./scripts/run_scenario.sh config/scenarios/office_explore_detect/easy.yaml --headless --seed 42 --speed 2'
+tmux new -s sim -d './scripts/run_scenario.sh config/scenarios/office_explore_detect/easy.yaml --headless --seed 42 --speed 2'
 tmux capture-pane -t sim -p -S -20   # check startup
 ```
 

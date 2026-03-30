@@ -3,10 +3,10 @@
 ## Session start
 
 Read in order before doing anything:
-1. `agent-scripts/AGENTS.MD` — working style + tool catalogue
+1. `agent-scripts/AGENTS.MD` — working style + tool catalogue. 
 2. `docs/AGENT_HANDOFF.md` — what's built, gotchas, current performance
 3. `docs/approach1_classical_pipeline.md` — current plan + open tasks
-
+Do NOT skip reading these files!
 ---
 
 ## Hard rules
@@ -25,7 +25,7 @@ Web-search first for any nav, perception, ROS 2, or ML approach. Quote exact err
 No band-aids or workarounds that mask the real problem. If the same approach fails twice: stop, summarise what you know, list ≥ 3 alternative approaches, and ask Tjalling before continuing.
 
 **Environment is changeable**
-The sim, launch files, config, and hardware setup are all fair game. If something is a fundamental bottleneck (CPU, GPU, broken config, sim bug), flag it explicitly — don't silently work around it. Hardware issues (e.g. thermal throttling on NUMA node 0) should be escalated to Tjalling.
+The sim, launch files, config, and hardware setup are all fair game. If something is a fundamental bottleneck (CPU, GPU, broken config, sim bug), flag it explicitly — don't silently work around it. Hardware issues should be escalated to Tjalling.
 
 ---
 
