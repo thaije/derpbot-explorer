@@ -21,7 +21,8 @@
       "Bash(python3 -c \"from transformers import BertModel; m = BertModel.from_pretrained.__doc__; import inspect; print\\([x for x in dir\\(BertModel\\) if ''mask'' in x.lower\\(\\)]\\)\")",
       "Bash(grep -v \"^$\")",
       "Bash(python3 -c \":*)",
-      "Bash(tmux rename-window:*)"
+      "Bash(tmux rename-window:*)",
+      "Edit(/.claude/skills/arst-test/**)"
     ]
   }
 }

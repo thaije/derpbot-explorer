@@ -58,3 +58,9 @@ Shows: occupancy map, global costmap, lidar scan, robot model, TF frames, planne
 
 Bugs: 
 - Can we prevent old TF frames from reaching nav2 or something? 
+- RTF doesn't seem to work for agent: 
+    - Input: 
+        . ~/Projects/derpbot-explorer/scripts/ros_env.sh && cd ~/Projects/robot-sandbox && python3.12 scripts/rtf_monitor.py --once 2>&1
+    - Output:
+        Exit code 1
+        ERROR: could not read RTF

@@ -9,7 +9,7 @@ Core pipeline is built and running. Remaining work:
 | Item | Status | Notes |
 |------|--------|-------|
 | End-to-end easy scenario score | ⚠️ in progress | Best: 66.1 (C), 4/6, 98% coverage (patrol+OWL=0.15). Target: ≥70 (B). |
-| Reduce inter-goal idle time | ⚠️ not started | Speed score is grade F (avg 0.022 m/s). Task 3. |
+| Reduce inter-goal idle time | ⚠️ in progress | Goal orientation → travel dir + yaw_goal_tolerance=3.14 + removed _flood_unknown. Need run to verify. |
 | Detection-aware exploration | ❌ not started | Task 5 |
 | `medium`/`hard` tier | ❌ not started | After easy scenario ≥ B |
 
@@ -29,7 +29,9 @@ Tasks in priority order. Each must be completed and verified before moving to th
 - Instrument `frontier_explorer.py`: log timestamps at goal selected / sent / accepted / completed. Compute avg time-to-accept, avg navigation time, avg idle between goals.
 - Identify dominant source (acceptance latency, inter-goal pause, BFS scan frequency) and implement the minimal fix.
 
-**Definition of done:** Measurable improvement in `avg_speed_kmh` in results JSON without coverage regression.
+**Definition of done:** 
+- A table with average metrics per step in the navigation stack, and what constitutes the main bottleneck for improving robot speed. 
+- Measurable improvement in `avg_speed_kmh` in results JSON without coverage regression.
 
 ---
 
