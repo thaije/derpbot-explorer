@@ -44,7 +44,7 @@ Task + robot spec: [`docs/AUTONOMOUS_AGENT_GUIDE.md`](AUTONOMOUS_AGENT_GUIDE.md)
 - **`max_planning_time` must be ≥ 5.0 sim-seconds** — the default 2.0 s causes cross-building path plans to immediately timeout with `NO_PATH_FOUND` and abort the goal.
 - **`transform_tolerance: 0.3` everywhere** — set in controller_server, local_costmap, global_costmap, behavior_server, and collision_monitor. Lower values cause TF timestamp age failures at non-nominal RTF.
 - **Nav2 goal rejection ≠ unreachable frontier** — `goal_handle.accepted == False` means Nav2 is temporarily busy (cancel/preempt in progress), not that the frontier is unreachable. Return `None` (retry, no blacklist) on rejection; only return `False` (blacklist) on `STATUS_ABORTED` or stuck detection.
-- **OWLv2 must not touch GPU 0 (Gazebo's rendering device)** — PyTorch initialising on GPU 0 starves Gazebo's Ogre2 renderer, collapsing RTF. Fix: `CUDA_VISIBLE_DEVICES=1` set in `detector.py`'s subprocess worker *before* torch is imported, so PyTorch only ever sees GPU 1 (RTX 2070 SUPER). This is already in the code; don't remove it.
+- **OWLv2 and Gazebo share GPU 0 (single-GPU hardware)** — previously `CUDA_VISIBLE_DEVICES=1` kept PyTorch off Gazebo's rendering GPU; now only GPU 0 exists so both share it (`CUDA_VISIBLE_DEVICES=0`). Expect lower RTF vs. 3-GPU baseline. If RTF collapses: consider reducing OWLv2 inference rate or switching to a lighter model.
 - **Ghost TF from previous run corrupts new run** — when a sim is killed and a new one started at t=0, DDS delivers cached TF messages from the old run (which had timestamps 800–900+s) before the new sim's data. The new run's TF buffer sees these future-timestamped transforms first; current transforms then look "old". Result: all Nav2 goals immediately abort (status 6), robot never moves. Fix: kill the ROS2 daemon (`ros2 daemon stop`) and restart it (`ros2 daemon start`) between runs, and kill ALL gz/ros2 processes by PID before restarting.
 - **RViz degrades RTF** — opening RViz subscribes to costmap, /map, and TF topics, spiking CPU. Can cause temporary RTF dips to ~1.25 at speed=2. Close RViz before measuring performance.
 - **Frontier W_DIST balance** — W_DIST=1.5 gives 98% coverage (current). Higher (4.0) keeps robot too local; lower (0.5) causes cross-map thrashing. Never go below 1.0 without testing.
@@ -53,6 +53,8 @@ Task + robot spec: [`docs/AUTONOMOUS_AGENT_GUIDE.md`](AUTONOMOUS_AGENT_GUIDE.md)
 - **Info-gain frontier scoring fails early in exploration** — flood-filling unknown cells through frontiers gives all frontiers the same score (cap=5000 cells) when the map is mostly unexplored (all unknown regions are one connected blob). W_DIST then dominates, robot picks tiny nearby clusters → micro-stepping → Nav2 path failures → blacklist fills → robot stuck. Coverage collapsed from 84% → 32%. Fix: revert to cluster.size scoring. Future work: scipy connected-components normalization so frontiers in separate unknown pockets get different scores. Never re-enable without connected-components normalization.
 - **FastDDS discovery server required for monitoring scripts** — after adding `ROS_DISCOVERY_SERVER`, all `ros2` CLI subprocesses (including inside `rtf_monitor.py`) must also have the var set or they see no topics. Source `scripts/ros_env.sh` before any ROS2 command outside the stack sessions. The discovery server runs in tmux session `fds`; kill it with `pkill -f "fastdds discovery"`. `ROS_SUPER_CLIENT=1` required for `ros2 node/topic list` to show the full graph.
 - **Robot avg_speed is ~0.022 m/s (mostly idle)** — most time is spent waiting on Nav2 goal acceptance and rotating at waypoints. Coverage comes from LiDAR sweeps during rotation, not path length. Reducing inter-goal idle time is the primary win for speed score.
+- **Nav2 timing benchmark (seed=42, easy, 2026-04-06)** — 15 goals, 4 accepted, 1 success. Phase breakdown: BFS+selection 2.6%, Nav2 accept 7.4% (mean 3.8s), rotation/spin-up 30.1% (median 22s **per waypoint** — Nav2 rotates to face goal direction before every translate), travel 45.4%. Two dominant failures: (a) rejected 11× in a row on same frontier `(16.88, 3.89)` — no blacklist on rejection so selector re-picks it indefinitely, burned ~160/300 sim-s; (b) 22s pre-travel rotation per goal.
+- **Repeated rejection = blacklist bug** — `result=None` (Nav2 rejected) never blacklists the frontier. Same bad frontier can loop forever consuming the entire run. Fix: blacklist after N consecutive rejections of the same goal position.
 
 ---
 
@@ -81,7 +83,7 @@ Nav2 stack (launch/navigation_launch.py — trimmed, no docking/route server)
 agent/
   mission_client.py    — GET http://localhost:7400/mission → targets[]
   frontier_explorer.py — BFS /map frontiers → NavigateToPose goals, stuck detection
-  detector.py          — OWLv2 (google/owlv2-base-patch16-ensemble) on GPU 1, subprocess, 5 Hz, conf=0.20; 90s watchdog
+  detector.py          — OWLv2 (google/owlv2-base-patch16-ensemble) on GPU 0 (shared w/ Gazebo), subprocess, 5 Hz, conf=0.20; 90s watchdog
   depth_projector.py   — bbox centre + depth image + TF2 → world (x, y)
   tracker.py           — multi-sighting fusion, persistent IDs, publishes /derpbot_0/detections
   agent_node.py        — INIT → EXPLORE → DONE state machine, MultiThreadedExecutor

@@ -56,11 +56,31 @@ rviz2 -d config/derpbot_rviz.rviz
 Shows: occupancy map, global costmap, lidar scan, robot model, TF frames, planned path, goal pose, RGB camera feed. Use the **Nav2** panel or **2D Goal Pose** tool to send goals manually.
 
 
-Bugs: 
-- Can we prevent old TF frames from reaching nav2 or something? 
-- RTF doesn't seem to work for agent: 
-    - Input: 
-        . ~/Projects/derpbot-explorer/scripts/ros_env.sh && cd ~/Projects/robot-sandbox && python3.12 scripts/rtf_monitor.py --once 2>&1
-    - Output:
-        Exit code 1
-        ERROR: could not read RTF
+## Cleanup between runs
+
+The stack uses tmux sessions (`fds`, `sim`, `slam`, `nav2`, `agent`). Leftover processes from a previous run will corrupt the next one (stale TF, inactive Nav2 lifecycle, etc.).
+
+```bash
+# List running tmux sessions
+tmux ls
+
+# Kill all stack sessions
+for s in agent nav2 slam sim fds; do tmux kill-session -t "$s" 2>/dev/null; done
+
+# Nuclear option — kill all stack processes by name + reset ROS2 daemon
+pkill -9 -f "gz sim|parameter_bridge|scenario_runner|run_scenario"
+pkill -9 -f "slam_toolbox|controller_server|planner_server|bt_navigator"
+pkill -9 -f "behavior_server|velocity_smoother|collision_monitor|lifecycle_manager"
+pkill -9 -f "smoother_server|agent_node|fastdds discovery"
+ros2 daemon stop && ros2 daemon start
+
+# Verify nothing is left
+tmux ls                          # should say "no server running"
+ps aux | grep -E "gz sim|slam_toolbox|bt_navigator" | grep -v grep
+```
+
+`start_stack.sh` does this cleanup automatically before each launch.
+
+## Known issues
+
+- Old TF frames from a killed sim can corrupt a new run — always kill the ROS2 daemon between runs (see above).

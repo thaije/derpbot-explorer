@@ -188,6 +188,10 @@ class FrontierExplorer:
 
         _t_last_goal_end: float = self._sim_time()  # sim time when last goal cycle ended
         _goal_num: int = 0
+        _reject_streak: int = 0          # consecutive rejections of the same centroid
+        _last_reject_cx: float = math.nan
+        _last_reject_cy: float = math.nan
+        MAX_REJECT_STREAK: int = 3       # blacklist after this many consecutive rejections
 
         while self._exploring and rclpy.ok():
             with self._map_lock:
@@ -288,11 +292,26 @@ class FrontierExplorer:
                 # before we send the next goal (avoids acceptance future delays).
                 time.sleep(3.0)
             elif result is None:
-                self._logger.info(
-                    f"FrontierExplorer: goal#{_goal_num} TIMEOUT/REJECT"
-                    f" nav={_t_nav:.1f}s — not blacklisting, retrying."
-                )
-                # Nav2 busy or acceptance timed out — don't blacklist, just retry.
+                # Track consecutive rejections of the same centroid.
+                if math.hypot(cx - _last_reject_cx, cy - _last_reject_cy) < BLACKLIST_RADIUS:
+                    _reject_streak += 1
+                else:
+                    _reject_streak = 1
+                _last_reject_cx, _last_reject_cy = cx, cy
+
+                if _reject_streak >= MAX_REJECT_STREAK:
+                    self._logger.warning(
+                        f"FrontierExplorer: goal#{_goal_num} ({cx:.2f}, {cy:.2f})"
+                        f" rejected {_reject_streak}× in a row — blacklisting."
+                    )
+                    self._blacklist.append((cx, cy))
+                    _reject_streak = 0
+                else:
+                    self._logger.info(
+                        f"FrontierExplorer: goal#{_goal_num} TIMEOUT/REJECT"
+                        f" nav={_t_nav:.1f}s — streak={_reject_streak}/{MAX_REJECT_STREAK}, retrying."
+                    )
+                # Nav2 busy or acceptance timed out — brief pause before retry.
                 time.sleep(5.0)
 
             _t_last_goal_end = self._sim_time()

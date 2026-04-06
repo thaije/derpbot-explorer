@@ -1,7 +1,7 @@
 """
 Detector — open-vocabulary object detection using OWL-v2 (google/owlv2-base-patch16-ensemble).
 
-Runs inference on the RGB camera stream (/derpbot_0/rgbd/image) at ~5 Hz on GPU 0.
+Runs inference on the RGB camera stream (/derpbot_0/rgbd/image) at ~5 Hz on GPU 0 (shared with Gazebo renderer).
 Detected bounding boxes + class names are posted to an internal thread-safe queue
 consumed by tracker.py.
 
@@ -95,12 +95,11 @@ def _inference_worker(
       OWL-v2 takes text prompts (one per target) and returns bboxes + scores directly.
       No separate re-classification stage needed.
     """
-    # Isolate from Gazebo's GPU 0 — set BEFORE importing torch so PyTorch never
-    # initialises a CUDA context on GPU 0 (which is Gazebo's rendering device).
-    # "cuda:0" inside this worker maps to nvidia-smi GPU 1 (RTX 2070 SUPER),
-    # with no cross-GPU interference.
+    # Only 1 GPU available — PyTorch and Gazebo share GPU 0.
+    # (Previously CUDA_VISIBLE_DEVICES=1 kept PyTorch off Gazebo's rendering GPU;
+    # that GPU no longer exists. RTF may be lower than the 3-GPU baseline.)
     import os as _os
-    _os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    _os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     _os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 
     try:
