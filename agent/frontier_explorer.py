@@ -25,7 +25,9 @@ import rclpy
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import OccupancyGrid, Odometry
-from nav2_msgs.action import NavigateToPose
+from geometry_msgs.msg import Point
+from nav2_msgs.action import BackUp, NavigateToPose
+from nav2_msgs.srv import ClearEntireCostmap
 from rclpy.action import ActionClient
 from rclpy.node import Node
 
@@ -144,6 +146,25 @@ class FrontierExplorer:
 
         # Nav2 action client
         self._nav_client = ActionClient(node, NavigateToPose, "navigate_to_pose")
+
+        # Service client to clear global costmap once after a failed goal.
+        # Prevents "Start occupied" cascade: robot arrives at frontier → SLAM
+        # maps new walls → inflation marks robot's cell as LETHAL → planner
+        # refuses every subsequent goal. One-shot clear per failure (not a loop).
+        self._clear_global_costmap = node.create_client(
+            ClearEntireCostmap, "/global_costmap/clear_entirely_global_costmap"
+        )
+
+        # Backup action: physically moves robot ~0.3m backward after a failure
+        # so its cell is no longer inside an inflation zone before replanning.
+        self._backup_client = ActionClient(node, BackUp, "backup")
+
+        # Local costmap clear — safe to call after failure (rebuilds from LiDAR
+        # within one update cycle). Clears stale obstacle data so MPPI gets a
+        # fresh view and can generate forward commands.
+        self._clear_local_costmap = node.create_client(
+            ClearEntireCostmap, "/local_costmap/clear_entirely_local_costmap"
+        )
 
     # ------------------------------------------------------------------
     # Callbacks
@@ -288,6 +309,10 @@ class FrontierExplorer:
                     f" accept={_accept_str} first_move={_move_str} nav={_t_nav:.1f}s — blacklisting."
                 )
                 self._blacklist.append((cx, cy))
+                # Back up + clear costmap after failure to prevent "Start occupied"
+                # cascade: robot may be inside an inflation zone after a stuck/abort;
+                # backing up first moves it to free space before the costmap rebuilds.
+                self._recover_from_occupied_start()
                 # Brief pause — give Nav2 time to finish cancellation/cleanup
                 # before we send the next goal (avoids acceptance future delays).
                 time.sleep(3.0)
@@ -533,6 +558,45 @@ class FrontierExplorer:
     # Nav2 goal dispatch
     # ------------------------------------------------------------------
 
+    def _recover_from_occupied_start(self) -> None:
+        """
+        Recovery after a failed goal when the robot may be in an inflation zone.
+        1. Back up 0.3 m so the robot's cell is no longer LETHAL.
+        2. Clear the global costmap so the planner sees the updated free space.
+        Without the backup, costmap clear is ineffective: SLAM immediately
+        re-inflates the same cell from the current LiDAR scan.
+        """
+        # Step 1: back up 0.3 m
+        if self._backup_client.wait_for_server(timeout_sec=1.0):
+            goal = BackUp.Goal()
+            goal.target = Point(x=0.30, y=0.0, z=0.0)  # back up 0.3 m
+            goal.speed = 0.10                            # m/s (slow, safe)
+            goal.time_allowance.sec = 10
+            future = self._backup_client.send_goal_async(goal)
+            deadline = time.time() + 12.0
+            while not future.done() and time.time() < deadline:
+                time.sleep(0.1)
+            if future.done() and future.result() and future.result().accepted:
+                result_future = future.result().get_result_async()
+                deadline = time.time() + 10.0
+                while not result_future.done() and time.time() < deadline:
+                    time.sleep(0.1)
+            self._logger.info("FrontierExplorer: backup complete.")
+        else:
+            self._logger.warning("FrontierExplorer: backup server not available — skipping backup.")
+
+        # Step 2: clear both costmaps
+        for svc, name in [
+            (self._clear_local_costmap, "local"),
+            (self._clear_global_costmap, "global"),
+        ]:
+            if svc.wait_for_service(timeout_sec=1.0):
+                future = svc.call_async(ClearEntireCostmap.Request())
+                deadline = time.time() + 3.0
+                while not future.done() and time.time() < deadline:
+                    time.sleep(0.05)
+        self._logger.info("FrontierExplorer: local+global costmaps cleared.")
+
     def _log_timing_table(self) -> None:
         """Log a per-phase timing summary for the completed exploration run."""
         stats = self._goal_stats
@@ -665,6 +729,13 @@ class FrontierExplorer:
 
         while not result_future.done():
             time.sleep(0.2)
+
+            # Re-check immediately after sleep — goal may have completed while we
+            # were sleeping. Doing this BEFORE the stuck check avoids a race where
+            # the stuck timer fires in the same iteration the goal succeeds, causing
+            # a false-positive FAILED result (and spurious blacklist).
+            if result_future.done():
+                break
 
             # Stuck detection — use sim clock so RTF oscillations don't cause
             # false positives (wall-clock 30 s at RTF=0.1 = only 3 sim seconds).

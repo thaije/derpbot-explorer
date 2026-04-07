@@ -1,0 +1,35 @@
+<!--
+  Custom BT for derpbot:
+  - Replans at 1Hz when path becomes invalid
+  - On controller (MPPI) failure: clear LOCAL costmap once, retry follow
+  - If still failing: spin 90deg, replan, retry full pipeline once
+  - On planner failure: abort immediately
+  - NO ClearEntireCostmap on the GLOBAL costmap — that caused the
+    DDS flooding that killed the collision_monitor bond heartbeat.
+  - Local costmap clear is safe: 3600-cell grid, rebuilds from LiDAR within
+    one costmap update cycle (0.5s at 2Hz).
+-->
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="1" name="NavigateWithSpinRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <ControllerSelector selected_controller="{selected_controller}" default_controller="FollowPath" topic_name="controller_selector"/>
+        <PlannerSelector selected_planner="{selected_planner}" default_planner="GridBased" topic_name="planner_selector"/>
+        <RateController hz="1.0">
+          <Fallback>
+            <ReactiveSequence>
+              <Inverter><GlobalUpdatedGoal/></Inverter>
+              <IsPathValid path="{path}"/>
+            </ReactiveSequence>
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="{selected_planner}" error_code_id="{compute_path_error_code}"/>
+          </Fallback>
+        </RateController>
+        <RecoveryNode number_of_retries="1" name="FollowPathWithLocalClear">
+          <FollowPath path="{path}" controller_id="{selected_controller}" error_code_id="{follow_path_error_code}"/>
+          <ClearEntireCostmap name="ClearLocalCostmap" service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+      <Spin spin_dist="1.57"/>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>
