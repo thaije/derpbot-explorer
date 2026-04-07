@@ -25,9 +25,26 @@ Tasks in priority order. Each must be completed and verified before moving to th
 
 **Goal:** Speed score is currently grade F (avg 0.022 m/s over full run). Robot spends most time waiting on Nav2 goal acceptance and rotating at waypoints, not moving. Improving this raises the speed score and leaves more time budget for detections.
 
-**Plan:**
-- Instrument `frontier_explorer.py`: log timestamps at goal selected / sent / accepted / completed. Compute avg time-to-accept, avg navigation time, avg idle between goals.
-- Identify dominant source (acceptance latency, inter-goal pause, BFS scan frequency) and implement the minimal fix.
+**Benchmark results (2026-04-07, seed=42):**
+
+| Phase | N | Mean | % total |
+|---|---|---|---|
+| BFS + selection | 15 | 0.3s | 2.6% |
+| Nav2 accept | 4 | 3.8s | 7.4% |
+| Rotation/spin-up | 3 | 22s median | 30.1% |
+| Travel to goal | 3 | 30.8s | 45.4% |
+| Post-goal pause | 4 | 0.0s | 0% |
+
+**Bottlenecks identified:**
+1. **Pre-travel rotation (30% of time, 22s median per waypoint)** — Nav2 rotates the robot to face the goal direction before translating, on every single goal. Fix candidates:
+   - Set `yaw_goal_tolerance: 3.14` in the goal checker (accept any heading at goal → skip final rotation)
+   - Orient the goal pose toward the travel direction (not identity quaternion) so Nav2 doesn't need to rotate first
+2. **Nav2 acceptance latency (3.8s mean)** — minor relative to rotation; not the primary target.
+3. **Rejection loops** — now fixed (streak blacklisting after 3× same centroid).
+
+**Next steps to try:**
+- Set `yaw_goal_tolerance: 3.14` in `controller_server.general_goal_checker` params and re-run benchmark. Expected: 22s rotation → near-zero, coverage + speed both improve.
+- Set goal pose orientation toward travel direction (compute yaw from robot→goal vector) in `_explore_loop` before sending the `NavigateToPose` goal.
 
 **Definition of done:** 
 - A table with average metrics per step in the navigation stack, and what constitutes the main bottleneck for improving robot speed. 
