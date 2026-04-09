@@ -155,12 +155,14 @@ local_costmap:
       plugins: ["voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        # Task 1 — differential inflation: narrow radius + steep decay on LOCAL
-        # costmap so MPPI can find low-cost trajectories through 1m doors.
-        # At 0.28m from wall (half of 1m door), cost = 253*e^(-8*(0.28-0.22)) ≈ 157,
-        # well below 253 threshold. Global costmap uses wider inflation (0.55m)
-        # for centered planning + soft-zone padding against SLAM corrections.
-        cost_scaling_factor: 8.0
+        # Task 1 — differential inflation: narrow radius + moderate decay on LOCAL
+        # costmap so MPPI can find low-cost trajectories through 1m doors without
+        # hitting a steep-gradient convergence failure. Cost at 0.28m from wall:
+        # 253*e^(-5*(0.28-0.22)) ≈ 187, below 253 threshold → door passable.
+        # Initially set to 8.0 per deep research but point-cost MPPI (consider_footprint:false)
+        # had "Failed to make progress" aborts with control loop dropping to 4.5Hz.
+        # Steep 8.0 needs Task 4's consider_footprint:true + tighter sampling stds.
+        cost_scaling_factor: 5.0
         inflation_radius: 0.35
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"

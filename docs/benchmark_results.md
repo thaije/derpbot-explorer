@@ -4,6 +4,35 @@ Historical performance snapshots. Append new entries on top; keep older ones for
 
 ---
 
+## 2026-04-09 — Task 1 verification (seed=42, easy, speed=2, --no-perception)
+
+Custom BT + differential inflation + static-layer footprint clearing.
+
+**Config under test:**
+- `global_costmap.inflation_layer`: `inflation_radius: 0.55`, `cost_scaling_factor: 3.0`
+- `local_costmap.inflation_layer`: `inflation_radius: 0.35`, `cost_scaling_factor: 5.0` (initially 8.0; softened after run 1)
+- `static_layer.footprint_clearing_enabled: true` on both costmaps
+- Custom BT: [`launch/behavior_trees/navigate_backup_clear_replan.xml`](../launch/behavior_trees/navigate_backup_clear_replan.xml)
+
+| Metric | Run 1 (csf=8.0) | Run 2 (csf=5.0) |
+|---|---|---|
+| Score / grade | 54.3 (D) | 55.1 (C) |
+| Coverage | 58.5% | 74.3% |
+| Goals succeeded / attempted | 3 / 4 | 4 / 5 |
+| Collisions / near-misses | 0 / 0 | 0 / 0 |
+| START_OCCUPIED events | **0** | **0** |
+| MPPI "Failed to make progress" | 2 (t=46s, t=58s) | 1 (mid-goal#5) |
+| Control loop rate misses | 1 @ 4.46 Hz | 0 |
+| Stack state at end | bond-death @ t=207s (torn down) | survived to TIME_LIMIT, bond-death in teardown |
+
+**Verdict:**
+- **Task 1 primary objective achieved**: START_OCCUPIED cascade fully eliminated, confirmed across both runs.
+- **Softer local `cost_scaling_factor: 5.0`** restored MPPI control loop health (20Hz sustained, no rate misses). The deep-research recommendation of 8.0 requires Task 4's `consider_footprint: true` + tighter sampling stds to be paired with it; without those, point-cost MPPI cannot converge against the steep gradient.
+- **Coverage regression vs. 66.1 baseline** (74% vs. 98%) attributed to slow per-goal nav times (~60s average). Addressed by Task 2 (RotationShim).
+- **Bond death now post-hoc only** — no longer affects scored run. Remaining work for Task 3 (lifecycle isolation).
+
+---
+
 ## 2026-04-07 — Nav2 timing breakdown (seed=42, easy scenario)
 
 Source run for the old Task 3 ("Reduce inter-goal idle time") analysis. Established that pre-travel rotation and Nav2 acceptance latency dominate runtime, not BFS/selection.

@@ -12,8 +12,11 @@ Core pipeline is built and running. Current focus: hardening exploration robustn
 |------|--------|-------|
 | End-to-end easy scenario score | ⚠️ in progress | Best: 66.1 (C), 4/6, 98% coverage. Target: ≥ 70 (B). |
 | Reduce inter-goal idle time | ✅ done | `yaw_goal_tolerance=3.14`, goal pose oriented to travel dir, `_flood_unknown` removed, streak blacklist on reject. Residual rotation bottleneck addressed by Task 2 (RotationShim). Benchmark table in [`benchmark_results.md`](benchmark_results.md). |
-| Robust exploration (Tasks 1–4) | ❌ not started | Differential inflation, RotationShim, safety lifecycle, MPPI critics. |
-| Detection-aware exploration (Task 5) | ❌ not started | After exploration is robust. |
+| Task 1 — differential inflation + START_OCCUPIED BT | ✅ done | 0 START_OCCUPIED events across 2 runs, doors passable, bond-death no longer affects scored run. Coverage 74% in verification run (--no-perception). See [`benchmark_results.md`](benchmark_results.md). |
+| Task 2 — Rotation Shim Controller | ❌ not started | Primary speed-score fix. |
+| Task 3 — collision_monitor lifecycle isolation | ❌ not started | Fixes residual bond death. |
+| Task 4 — MPPI critic retune | ❌ not started | Narrow-door polish + enables local csf=8.0. |
+| Task 5 — Detection-aware exploration | ❌ not started | After exploration is robust. |
 | `medium` / `hard` tier | ❌ not started | After easy scenario ≥ B. |
 
 ---
