@@ -1,0 +1,65 @@
+<!--
+  Custom BT for derpbot-explorer (Task 1 — START_OCCUPIED recovery).
+
+  Design goals:
+  - Replan only when path invalidates (no continuous 1 Hz re-plan storm that
+    previously flooded DDS and killed collision_monitor bond).
+  - Contextual planner recovery handles START_OCCUPIED: BackUp first (moves
+    robot out of lethal cell), then ClearGlobalCostmap, then retry plan.
+    The Nav2 default gates this recovery behind WouldAPlannerRecoveryHelp
+    which does NOT match START_OCCUPIED — our tree removes that gate.
+  - NO system-level RoundRobin ClearCostmap loop: in the default BT this
+    causes repeated global clears under load, saturating DDS enough to kill
+    the collision_monitor lifecycle bond. Contextual clears already fire
+    inside the pipeline; duplicating them at the system level is the bug.
+  - Bounded retries: outer RecoveryNode number_of_retries=2 so failures
+    propagate back to frontier_explorer quickly instead of burning budget.
+-->
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="2" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <ControllerSelector selected_controller="{selected_controller}" default_controller="FollowPath" topic_name="controller_selector"/>
+        <PlannerSelector selected_planner="{selected_planner}" default_planner="GridBased" topic_name="planner_selector"/>
+
+        <!-- Replan only when path invalidates (not a continuous 1 Hz re-plan). -->
+        <RateController hz="1.0" name="RateControllerComputePath">
+          <RecoveryNode number_of_retries="2" name="RecoveryComputePath">
+            <Fallback name="FallbackComputePath">
+              <ReactiveSequence name="CheckIfNewPathNeeded">
+                <Inverter>
+                  <GlobalUpdatedGoal/>
+                </Inverter>
+                <IsPathValid path="{path}"/>
+              </ReactiveSequence>
+              <ComputePathToPose goal="{goal}" path="{path}" planner_id="{selected_planner}" error_code_id="{compute_path_error_code}"/>
+            </Fallback>
+            <!-- Contextual planner recovery: BackUp first, then clear.
+                 NOT gated on WouldAPlannerRecoveryHelp so START_OCCUPIED triggers it. -->
+            <Sequence name="PlannerRecovery">
+              <BackUp name="BackUpOutOfLethal" backup_dist="0.15" backup_speed="0.10"/>
+              <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
+            </Sequence>
+          </RecoveryNode>
+        </RateController>
+
+        <!-- Controller pipeline: contextual local-costmap clear on follow failure. -->
+        <RecoveryNode number_of_retries="1" name="RecoveryFollowPath">
+          <FollowPath path="{path}" controller_id="{selected_controller}" error_code_id="{follow_path_error_code}"/>
+          <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+
+      <!-- System-level recovery: single spin + wait on goal updated.
+           NO ClearCostmap actions here (they already fire contextually and
+           duplicating them at system level is what caused the DDS storm). -->
+      <ReactiveFallback name="FallbackRecoveries">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <Spin name="SpinRecovery" spin_dist="1.57"/>
+          <Wait name="WaitRecovery" wait_duration="3.0"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

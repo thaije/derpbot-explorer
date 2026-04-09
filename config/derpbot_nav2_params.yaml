@@ -15,11 +15,11 @@ bt_navigator:
     default_server_timeout: 20
     wait_for_service_timeout: 1000
     action_server_result_timeout: 900.0
-    # No recovery BT: aborts immediately on planning failure instead of entering
-    # a ClearGlobalCostmap→replan loop. The default BT's recovery storm saturated
-    # DDS long enough to kill collision_monitor's bond → entire Nav2 stack
-    # deactivated mid-run. Our frontier_explorer stuck-detection handles recovery.
-    default_nav_to_pose_bt_xml: "/opt/ros/jazzy/share/nav2_bt_navigator/behavior_trees/navigate_w_replanning_only_if_path_becomes_invalid.xml"
+    # Custom BT (Task 1): contextual BackUp→ClearGlobalCostmap recovery for
+    # START_OCCUPIED, bounded retries, NO system-level RoundRobin clearing
+    # (that's what caused the DDS storm that killed collision_monitor in the
+    # default BT). See launch/behavior_trees/navigate_backup_clear_replan.xml.
+    default_nav_to_pose_bt_xml: "/home/plip/Projects/derpbot-explorer/launch/behavior_trees/navigate_backup_clear_replan.xml"
     navigators: ["navigate_to_pose", "navigate_through_poses"]
     navigate_to_pose:
       plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
@@ -155,9 +155,13 @@ local_costmap:
       plugins: ["voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.25      # local costmap: matches global (0.25m) — MPPI tracks further from walls → 0 near-misses
-                                    # 0.05m caused 11 near-misses; 0.25m empirically gives 0 near-misses + 98% coverage
+        # Task 1 — differential inflation: narrow radius + steep decay on LOCAL
+        # costmap so MPPI can find low-cost trajectories through 1m doors.
+        # At 0.28m from wall (half of 1m door), cost = 253*e^(-8*(0.28-0.22)) ≈ 157,
+        # well below 253 threshold. Global costmap uses wider inflation (0.55m)
+        # for centered planning + soft-zone padding against SLAM corrections.
+        cost_scaling_factor: 8.0
+        inflation_radius: 0.35
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: true
@@ -181,6 +185,7 @@ local_costmap:
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: true
+        footprint_clearing_enabled: true   # Jazzy PR #4282: clear robot footprint from static layer
       always_send_full_costmap: true
 
 global_costmap:
@@ -213,11 +218,16 @@ global_costmap:
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: true
+        footprint_clearing_enabled: true   # Jazzy PR #4282: clear robot footprint from static layer
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
+        # Task 1 — wide global inflation (0.55m ≈ 2.5× robot_radius) gives a
+        # ~0.33m soft zone so SLAM corrections don't instantly place the robot
+        # in a LETHAL cell and trigger a START_OCCUPIED cascade. With the old
+        # 0.25m radius the soft zone was only 3cm, which was the root cause of
+        # the post-arrival planning failures.
         cost_scaling_factor: 3.0
-        inflation_radius: 0.25      # 0.25m empirically gives 0 near-misses + 98% coverage + 66.1 best score
-                                    # door navigation works non-deterministically via recovery behaviors through OfficeA door
+        inflation_radius: 0.55
       always_send_full_costmap: true
 
 map_server:

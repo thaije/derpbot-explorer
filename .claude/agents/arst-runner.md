@@ -36,7 +36,9 @@ cd ~/Projects/derpbot-explorer
 ./scripts/start_stack.sh --speed 2 --seed 42 --scenario easy
 ```
 
-Accepts: `--speed N`, `--seed N`, `--scenario TIER` (easy/medium/hard/brutal/perception_stress).
+Accepts: `--speed N`, `--seed N`, `--scenario TIER` (easy/medium/hard/brutal/perception_stress),
+`--no-perception` (disables OWLv2 detector/depth projector/tracker — nav-only benchmarking,
+found_ratio will be 0).
 Use the arguments passed to you by the main agent. Default: speed=2, seed=42, scenario=easy.
 
 The script handles cleanup, FastDDS discovery server startup, ROS2 daemon restart,

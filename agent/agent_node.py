@@ -13,6 +13,7 @@ Or via launch file:
   ros2 launch derpbot_autonomy.launch.py
 """
 
+import argparse
 import logging
 import sys
 import threading
@@ -34,12 +35,13 @@ logger = logging.getLogger("agent_node")
 
 
 class AgentNode(Node):
-    def __init__(self):
+    def __init__(self, no_perception: bool = False):
         super().__init__("derpbot_agent", parameter_overrides=[
             rclpy.parameter.Parameter("use_sim_time", rclpy.parameter.Parameter.Type.BOOL, True)
         ])
         self._state = "INIT"
         self._done_event = threading.Event()
+        self._no_perception = no_perception
 
         self.get_logger().info("AgentNode: INIT — fetching mission…")
 
@@ -58,18 +60,24 @@ class AgentNode(Node):
         if not mission.targets:
             self.get_logger().warning("AgentNode: no targets in mission — will explore only.")
 
-        # --- Wire up perception pipeline ---
-        self._detector = Detector(self, targets=mission.targets)
-        self._detector.start()
+        # --- Wire up perception pipeline (skipped when --no-perception) ---
+        if no_perception:
+            self.get_logger().info("AgentNode: perception disabled (--no-perception).")
+            self._detector = None
+            self._depth_projector = None
+            self._tracker = None
+        else:
+            self._detector = Detector(self, targets=mission.targets)
+            self._detector.start()
 
-        self._depth_projector = DepthProjector(self)
+            self._depth_projector = DepthProjector(self)
 
-        self._tracker = Tracker(
-            node=self,
-            detector=self._detector,
-            depth_projector=self._depth_projector,
-            targets=mission.targets,
-        )
+            self._tracker = Tracker(
+                node=self,
+                detector=self._detector,
+                depth_projector=self._depth_projector,
+                targets=mission.targets,
+            )
 
         # --- Frontier explorer ---
         self._explorer = FrontierExplorer(
@@ -110,12 +118,22 @@ class AgentNode(Node):
     def shutdown(self) -> None:
         self.get_logger().info("AgentNode: shutting down.")
         self._explorer.stop()
-        self._tracker.stop()
+        if self._tracker is not None:
+            self._tracker.stop()
 
 
 def main():
+    parser = argparse.ArgumentParser(description="DerpBot agent")
+    parser.add_argument(
+        "--no-perception",
+        action="store_true",
+        default=False,
+        help="Disable OWLv2 detector/tracker; run nav+exploration only.",
+    )
+    args, _ = parser.parse_known_args()
+
     rclpy.init()
-    node = AgentNode()
+    node = AgentNode(no_perception=args.no_perception)
 
     executor = rclpy.executors.MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)

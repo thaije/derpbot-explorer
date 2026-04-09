@@ -31,7 +31,11 @@ cd ~/Projects/derpbot-explorer
 # Without agent (benchmarking)
 ./scripts/start_stack.sh --speed 2 --seed 42 --no-agent
 
-# Options: --speed N (default 2), --seed N (default 42), --scenario TIER (default easy)
+# Nav-only mode — agent runs without OWLv2 detector/tracker (found_ratio=0; isolates Nav2)
+./scripts/start_stack.sh --speed 2 --seed 42 --no-perception
+
+# Options: --speed N (default 2), --seed N (default 42), --scenario TIER (default easy),
+#          --no-agent, --no-perception
 ```
 
 Creates tmux sessions: `sim`, `slam`, `nav2`, `agent`. Then switch to `~/Projects/robot-sandbox` for monitoring.

@@ -3,6 +3,7 @@
 Plan for current Nav2 ROS2 approach: [`docs/approach1_classical_pipeline.md`](approach1_classical_pipeline.md)
 Architecture survey (all 5 approaches): [`docs/five approaches to robot autonomy.md`](five%20approaches%20to%20robot%20autonomy.md)  
 Task + robot spec: [`docs/AUTONOMOUS_AGENT_GUIDE.md`](AUTONOMOUS_AGENT_GUIDE.md)
+Benchmark results: [`docs/benchmark_results.md`](benchmark_results.md)
 
 ---
 
@@ -53,8 +54,6 @@ Task + robot spec: [`docs/AUTONOMOUS_AGENT_GUIDE.md`](AUTONOMOUS_AGENT_GUIDE.md)
 - **Info-gain frontier scoring fails early in exploration** — flood-filling unknown cells through frontiers gives all frontiers the same score (cap=5000 cells) when the map is mostly unexplored (all unknown regions are one connected blob). W_DIST then dominates, robot picks tiny nearby clusters → micro-stepping → Nav2 path failures → blacklist fills → robot stuck. Coverage collapsed from 84% → 32%. Fix: revert to cluster.size scoring. Future work: scipy connected-components normalization so frontiers in separate unknown pockets get different scores. Never re-enable without connected-components normalization.
 - **FastDDS discovery server required for monitoring scripts** — after adding `ROS_DISCOVERY_SERVER`, all `ros2` CLI subprocesses (including inside `rtf_monitor.py`) must also have the var set or they see no topics. Source `scripts/ros_env.sh` before any ROS2 command outside the stack sessions. The discovery server runs in tmux session `fds`; kill it with `pkill -f "fastdds discovery"`. `ROS_SUPER_CLIENT=1` required for `ros2 node/topic list` to show the full graph.
 - **Robot avg_speed is ~0.022 m/s (mostly idle)** — most time is spent waiting on Nav2 goal acceptance and rotating at waypoints. Coverage comes from LiDAR sweeps during rotation, not path length. Reducing inter-goal idle time is the primary win for speed score.
-- **Nav2 timing benchmark (seed=42, easy, 2026-04-06)** — 15 goals, 4 accepted, 1 success. Phase breakdown: BFS+selection 2.6%, Nav2 accept 7.4% (mean 3.8s), rotation/spin-up 30.1% (median 22s **per waypoint** — Nav2 rotates to face goal direction before every translate), travel 45.4%. Two dominant failures: (a) rejected 11× in a row on same frontier `(16.88, 3.89)` — no blacklist on rejection so selector re-picks it indefinitely, burned ~160/300 sim-s; (b) 22s pre-travel rotation per goal.
-- **Repeated rejection = blacklist bug** — `result=None` (Nav2 rejected) never blacklists the frontier. Same bad frontier can loop forever consuming the entire run. Fix: blacklist after N consecutive rejections of the same goal position.
 - **Default Nav2 BT kills `collision_monitor` via costmap-clear storm** — `navigate_to_pose_w_replanning_and_recovery.xml` enters a ClearGlobalCostmap→replan loop on planning failure; rapid DDS flooding starves `collision_monitor` bond heartbeat → lifecycle_manager shuts down entire Nav2 stack → "Action server is inactive" forever. Fix: use `navigate_w_replanning_only_if_path_becomes_invalid.xml` (aborts cleanly on failure, no recovery loop). Set in `derpbot_nav2_params.yaml` as `default_nav_to_pose_bt_xml`.
 - **`collision_monitor` bond starvation** — starves when CPU/DDS load is high during long navigations; `bond_timeout` raised to 60s in `launch/navigation_launch.py`; `attempt_respawn_on_failure: True` added so lifecycle_manager restarts dead nodes instead of killing the whole stack.
 - **"Start occupied" cascade after frontier arrival** — robot reaches frontier → SLAM maps new nearby walls → inflation marks robot's cell LETHAL → SmacPlanner refuses every subsequent goal with "Start occupied". Old BT recovered via ClearGlobalCostmap loop (caused heartbeat storm); new fix: call `clear_global_costmap` once (fire-and-forget) after each failed goal in `frontier_explorer.py`.
@@ -111,6 +110,10 @@ For interactive observation during a run, `/arst-test` skill has the monitoring 
 ```bash
 # From derpbot-explorer root:
 python3.12 agent/agent_node.py
+
+# Nav-only mode — skips OWLv2 detector/depth projector/tracker (found_ratio=0):
+python3.12 agent/agent_node.py --no-perception
+# Or via start_stack.sh: ./scripts/start_stack.sh --no-perception
 
 # SLAM:
 ros2 launch slam_toolbox online_async_launch.py \

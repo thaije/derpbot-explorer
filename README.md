@@ -39,6 +39,9 @@ ros2 launch $(pwd)/launch/navigation_launch.py \
 
 # Terminal 3 — Agent
 cd agent && python3 agent_node.py
+
+# Nav-only benchmarking (skips OWLv2 detector / tracker):
+cd agent && python3 agent_node.py --no-perception
 ```
 
 Or use the combined launch file (starts all three with a 5 s delay between Nav2 and agent):
@@ -79,7 +82,7 @@ tmux ls                          # should say "no server running"
 ps aux | grep -E "gz sim|slam_toolbox|bt_navigator" | grep -v grep
 ```
 
-`start_stack.sh` does this cleanup automatically before each launch.
+`start_stack.sh` does this cleanup automatically before each launch. It also accepts `--no-perception` to run the agent with the OWLv2 detector / depth projector / tracker disabled — useful for isolating Nav2 behaviour from GPU load (found_ratio will be 0 in this mode).
 
 ## Known issues
 

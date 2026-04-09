@@ -19,6 +19,7 @@ SPEED=2
 SEED=42
 SCENARIO="easy"
 START_AGENT=1
+NO_PERCEPTION=0
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -27,6 +28,7 @@ while [[ $# -gt 0 ]]; do
         --seed)    SEED="$2"; shift 2 ;;
         --scenario) SCENARIO="$2"; shift 2 ;;
         --no-agent) START_AGENT=0; shift ;;
+        --no-perception) NO_PERCEPTION=1; shift ;;
         *) echo "Unknown arg: $1"; exit 1 ;;
     esac
 done
@@ -43,7 +45,7 @@ FDS_PORT="11811"
 ROS_ENV="export ROS_DISCOVERY_SERVER=${FDS_HOST}:${FDS_PORT}; export RMW_IMPLEMENTATION=rmw_fastrtps_cpp; export ROS_SUPER_CLIENT=1;"
 
 echo "=== DerpBot Stack Launcher ==="
-echo "  speed=$SPEED  seed=$SEED  scenario=$SCENARIO  agent=$START_AGENT"
+echo "  speed=$SPEED  seed=$SEED  scenario=$SCENARIO  agent=$START_AGENT  no_perception=$NO_PERCEPTION"
 echo ""
 
 # --- Step 0: Kill everything from previous runs ---
@@ -151,8 +153,10 @@ sleep 5
 
 # --- Step 5: Start agent (optional) ---
 if [[ $START_AGENT -eq 1 ]]; then
-    echo "[5/5] Starting agent..."
-    tmux new -s agent -d "${ROS_ENV} cd $EXPLORER_ROOT && python3.12 agent/agent_node.py"
+    AGENT_FLAGS=""
+    [[ $NO_PERCEPTION -eq 1 ]] && AGENT_FLAGS="--no-perception"
+    echo "[5/5] Starting agent (flags: ${AGENT_FLAGS:-none})..."
+    tmux new -s agent -d "${ROS_ENV} cd $EXPLORER_ROOT && python3.12 agent/agent_node.py ${AGENT_FLAGS}"
 else
     echo "[5/5] Skipping agent (--no-agent)"
 fi
