@@ -226,11 +226,13 @@ def generate_launch_description():
                 arguments=['--ros-args', '--log-level', log_level],
                 parameters=[{'autostart': autostart},
                             {'node_names': lifecycle_nodes},
-                            # bond_timeout 10s (was 60s) — proper isolation makes
-                            # the oversized timeout unnecessary; collision_monitor
-                            # is no longer in this group so a nav crash can't take
-                            # safety down with it.
-                            {'bond_timeout': 10.0},
+                            # bond_timeout 20s: 10s was too tight under transient
+                            # CPU starvation during large global-costmap resizes
+                            # (seed=7 Task 4 hit a mid-run collision_monitor bond
+                            # death while the map grew to 398 cols while MPPI +
+                            # spin recovery were running). 20s absorbs the spike
+                            # without masking a genuine crash.
+                            {'bond_timeout': 20.0},
                             {'attempt_respawn_reconnection': True}],
             ),
             Node(
@@ -241,7 +243,7 @@ def generate_launch_description():
                 arguments=['--ros-args', '--log-level', log_level],
                 parameters=[{'autostart': autostart},
                             {'node_names': lifecycle_nodes_safety},
-                            {'bond_timeout': 10.0},
+                            {'bond_timeout': 20.0},
                             {'attempt_respawn_reconnection': True}],
             ),
         ],
@@ -331,7 +333,7 @@ def generate_launch_description():
                         name='lifecycle_manager_navigation',
                         parameters=[
                             {'autostart': autostart, 'node_names': lifecycle_nodes,
-                             'bond_timeout': 10.0, 'attempt_respawn_reconnection': True}
+                             'bond_timeout': 20.0, 'attempt_respawn_reconnection': True}
                         ],
                     ),
                     ComposableNode(
@@ -340,7 +342,7 @@ def generate_launch_description():
                         name='lifecycle_manager_safety',
                         parameters=[
                             {'autostart': autostart, 'node_names': lifecycle_nodes_safety,
-                             'bond_timeout': 10.0, 'attempt_respawn_reconnection': True}
+                             'bond_timeout': 20.0, 'attempt_respawn_reconnection': True}
                         ],
                     ),
                 ],

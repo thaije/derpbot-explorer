@@ -16,6 +16,7 @@ Core pipeline is built and running. Current focus: hardening exploration robustn
 | Task 2 — Rotation Shim Controller | ✅ done | Rotation phase 30.1% → 13.2% (DoD met). Required `PoseProgressChecker` swap + tighter shim engagement (20°/8.6° hysteresis). Coverage didn't recover to baseline due to orthogonal bugs (see backlog). |
 | Task 3 — collision_monitor lifecycle isolation | ✅ done | Split into `lifecycle_manager_safety`. Nav-side failures no longer reach the safety bond. `bond_timeout` 60→10s, `attempt_respawn_on_failure` → `attempt_respawn_reconnection` (Jazzy). 0 bond events during scored run; teardown-only event remains. |
 | Task 4 — MPPI critic retune | ✅ done | Footprint-aware CostCritic + tighter sampling. 50.6 → 54.9 D, coverage 54.4% → 71.3%, 3/5 → 5+/6 goals, 1 → 0 collisions. csf=8.0 follow-on tested and reverted (slower first_move, -3pp coverage). |
+| Task 6 — Office-B approach goal#4 debug | ❌ not started | Reproducible stuck on seed=7 goal#4 (target ≈ (14, 4.5)), ~97 s stuck-detect independent of sim speed. Blocks reliable exploration of the east half. |
 | Task 5 — Detection-aware exploration | ❌ not started | After exploration is robust. |
 | `medium` / `hard` tier | ❌ not started | After easy scenario ≥ B. |
 
@@ -146,6 +147,38 @@ Rationale and deep-research sources for Tasks 1–4: [`docs/deep_research_robust
 
 ---
 
+### Task 6 — Office-B approach goal#4 debug
+
+**Goal:** Understand and fix the reproducible goal#4 failure on seed=7 (target ≈ (14.17, 4.56), Office B approach). Currently the single clearest unsolved nav issue — caps exploration of the east half of the map and is seed-dependent rather than a tuning regression.
+
+**What we know:**
+- Reproduces on seed=7 at both speed=2 (Task 4 cross-seed) and speed=1 (bond-timeout verification). `first_move` ≈ 9–18 s, then ~97 s of forward progress before the agent's 30 sim-s stuck-detector fires. Speed=2 recovered via spin+reach; speed=1 failed the goal outright.
+- **Not CPU-starvation.** RTF held rock-solid 1.0 at speed=1, controller loop mostly at 20 Hz, zero TF_OLD_DATA warnings. The problem persists with ample headroom → it is a planning/control issue at that geometry, not compute pressure.
+- **Speed=2 logged** "Failed to make progress" (1×) + "Costmap timed out" (1×) mid-goal followed by a successful spin recovery; **speed=1 logged neither** from nav2 itself, but the agent-level stuck-detector still fired at ~97 s. The nav2 stack thinks it is making progress; the robot isn't.
+- **Seed=42 dodges the trigger entirely.** Goal#4 target (12.65, 6.13) on seed=42 was first_move 2.1 s / nav 31.7 s.
+- At speed=1 a collision fired at sim t≈67 s (~7 s into goal#4), suggesting the robot is nudging obstacles while trying to push through a constrained region.
+
+**Hypotheses to investigate (in priority order):**
+1. **MPPI local minimum at the Office-B doorway.** The global plan routes through a narrow corridor entrance; MPPI's trajectory cloud may be oscillating around a cost ridge and failing to commit. Enable `publish_critics_stats: true` (already on from Task 4) and read per-critic cost traces during the stuck window. Look for a critic pair fighting each other (e.g. `PathAlignCritic` vs `CostCritic`).
+2. **Global plan instability under live mapping.** SmacPlanner2D may be re-planning through a different corridor each cycle as slam_toolbox refines the Office-B walls, preventing MPPI from ever tracking a stable reference path. Log the global plan poses over time (subscribe to `/plan` at 1 Hz and diff successive plans during the stuck window).
+3. **Inflation gradient pinching at the corridor entrance.** Local inflation (0.35 m / csf=5.0) plus the global footprint margin may leave zero cost-free cells across the narrow doorway. Rasterise the local costmap at the stuck position and measure the minimum cost path width.
+4. **Near-obstacle clearance + footprint polygon mismatch.** The chassis polygon (32×22 cm) is tighter than `robot_radius=0.22` (circular). If SLAM localisation yaw is noisy, the polygon's corners may be catching inflated cells that the circular model would have cleared. Test by setting `consider_footprint: false` temporarily and checking whether goal#4 recovers.
+
+**Concrete first steps (no coding yet — investigation only):**
+- Reproduce seed=7 Task 4 config at speed=2, record `/plan`, `/local_costmap/costmap`, and the `~/critics_stats` topic during goal#4. Save to bag.
+- Identify the exact X,Y where the robot first stops making progress. Overlay on the static map.
+- Inspect the global plan at 1 Hz during that window; check whether it's stable or thrashing.
+- Read the critic statistics: which critic is spiking? Which way is MPPI being pushed?
+- Only after root cause is identified, decide on a fix. Do NOT make speculative param changes first.
+
+**Definition of done:**
+- Root cause of goal#4 stuck documented with evidence (critic trace, plan trace, or cost-map snapshot).
+- Fix lands and seed=7 goal#4 reaches its target in < 60 sim-s with no recovery interventions.
+- seed=42 Task 4 result does not regress (54.9 D / 71.3% coverage baseline).
+- At least one additional seed (say seed=13) exercised to check the fix generalises.
+
+---
+
 ### Task 5 — Detection-aware exploration
 
 **Goal:** As a developer, I want the robot to revisit areas where objects were partially detected but not yet confirmed, so that detection rate improves beyond what pure coverage achieves.
@@ -169,10 +202,10 @@ Rationale and deep-research sources for Tasks 1–4: [`docs/deep_research_robust
 Surfaced during Task 2 verification (2026-04-09). None are rotation-shim-related; logged here so they aren't lost. Re-check after Task 3/4 — some may resolve as a side effect.
 
 - **Cold-start delay on goals 1–2 (~11 s `first_move` each).** Shim engaged correctly per logs, but the robot didn't start moving for ~11 s on the first two goals of every Task 2 run, regardless of heading offset (later goals show 1.9–2.3 s). Suspected: local_costmap waiting for first scan, slam_toolbox initial convergence, or velocity_smoother cold-boot deadband. Investigate by reading `controller_server` log timing between "Received a goal" and first `cmd_vel` publish on goal#1.
-- **Frontier picks off-map points.** Run 3 selected frontier (16.94, -0.12) on the OfficeA map whose east wall is ~12 m. Robot wasted the last 180 s of the run on an unreachable target. `frontier_explorer.py` BFS does not clip to the SLAM map's known extent — should reject any cell outside the bounding box of `OccupancyGrid` cells with state ≥ 0.
-- **MPPI "Failed to make progress" cascade mid-navigation.** Run 2's goal#4 ran cleanly for ~64 s then triggered "Failed to make progress" → local clear → "Costmap timed out" → "Resulting plan has 0 poses" loop. Independent of the shim (the rotation issue was already fixed by `PoseProgressChecker`). May resolve via Task 4 (tighter MPPI sampling + `consider_footprint: true`); if not, needs its own root-cause pass.
-- **`avg_speed_kmh` reported as ~0.015 km/h while `meters_traveled` ≈ 1.235 m**, despite the robot clearly traversing multi-metre distances. Suspected metric-reporting bug in the scenario runner (predates Task 2). Tanks the Speed category. Not in this repo — check `robot-sandbox` scoring code.
-- **`collision_monitor` `use_realtime_priority: true` deferred (Task 3).** The parameter is supported (verified in `libcollision_monitor_core.so`) and would elevate the safety thread to priority 90, hardening it against GPU/CPU starvation. Enabling it requires editing `/etc/security/limits.conf` to grant the run user `rtprio` capability — a system-level change. Currently the soft separation (own lifecycle group + 10 s bond) is sufficient; revisit if bond events reappear under perception load.
+- **Frontier picks off-map points.** Run 3 selected frontier (16.94, -0.12) on the OfficeA map whose east wall is ~12 m. Robot wasted the last 180 s of the run on an unreachable target. Not observed in Task 4 verification on seed=42 — defer fix until the bug reoccurs (need a concrete failing case to validate against). **Planned fix when it reoccurs:** connected-component reachability in `frontier_explorer.py` — flood-fill from the robot's cell through free-space to produce a reachability mask, then reject any cluster whose goal cell lies outside it. A pure bbox clip is *not* sufficient: frontier goal cells are always observed-free by construction, so the off-map pick has to be a SLAM ghost-island (laser ray leaking through a thin wall), which a bbox won't catch.
+- **MPPI "Failed to make progress" cascade mid-navigation.** Run 2's goal#4 ran cleanly for ~64 s then triggered "Failed to make progress" → local clear → "Costmap timed out" → "Resulting plan has 0 poses" loop. Independent of the shim (the rotation issue was already fixed by `PoseProgressChecker`). **Task 4 did NOT fix this** — seed=7 verification reproduced the cascade on goal#4 (first_move=17.8s, nav=181.7s, 1× "Failed to make progress" + 1× "Costmap timed out", recovered via spin). Seed=42 just dodged the trigger condition. Needs its own root-cause pass.
+- **`meters_traveled` reports a fraction of the true distance.** Run 2 reported 1.235 m, Task 4 seed=7 reported 5.971 m despite traversing ~15+ m across 4 completed goals. Not a one-off — present across Task 2 and Task 4 runs. Tanks the Speed category via the derived `avg_speed_kmh`. Not in this repo — check `robot-sandbox` scoring code for the source of `meters_traveled` accumulation.
+- **`collision_monitor` `use_realtime_priority: true` deferred (Task 3).** The parameter is supported (verified in `libcollision_monitor_core.so`) and would elevate the safety thread to priority 90, hardening it against GPU/CPU starvation. Enabling it requires editing `/etc/security/limits.conf` to grant the run user `rtprio` capability — a system-level change. **Bond events have reappeared** (Task 4 seed=7: 1× mid-run `CRITICAL FAILURE: SERVER collision_monitor IS DOWN` at goal#5 during a global-costmap resize to 398 cols + MPPI load + spin recovery concurrency). Mitigation: bumped `bond_timeout` from 10 s → 20 s on both managers to absorb transient CPU starvation during large costmap resizes. If bond deaths recur at 20 s, escalate to the rtprio grant.
 
 ---
 
