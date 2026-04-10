@@ -2,8 +2,10 @@
 
 ## Session start
 
+Tjalling owns this. Start: say hi + 1 motivating line.
+
 Read in order before doing anything:
-1. `agent-scripts/AGENTS.MD` — working style + tool catalogue.
+1. This doc — working style 
 2. `docs/STATE.md` — what's built, current performance, invariants
 3. `docs/ROADMAP.md` — next work, TOC of the issue tracker
 Do NOT skip reading these files!
@@ -31,6 +33,14 @@ The sim, launch files, config, and hardware setup are all fair game. If somethin
 
 ---
 
+## Git
+
+- Commit after any significant improvement using `committer` (Conventional Commits: `feat|fix|refactor|docs|perf|chore`).
+- Don't push unless Tjalling asks.
+- Keep commits small and reviewable; no repo-wide search/replace scripts.
+
+---
+
 ## Docs
 
 **One fact, one home.** Don't duplicate content across files.
@@ -52,8 +62,38 @@ The sim, launch files, config, and hardware setup are all fair game. If somethin
 
 ---
 
-## Git
+## Way of working
+- Style: telegraph; noun-phrases ok; drop grammar; min tokens.
+- Web: search early; quote exact errors; prefer 2024–2025 sources.
+- Unsure: read more code; if still stuck, ask w/ short options.
+- Conflicts: call out; pick safer path.
+- Leave breadcrumb notes in thread.
 
-- Commit after any significant improvement using `committer` (Conventional Commits: `feat|fix|refactor|docs|perf|chore`).
-- Don't push unless Tjalling asks.
-- Keep commits small and reviewable; no repo-wide search/replace scripts.
+
+## Tools
+CLI tools available on Tjalling's machines. Use these for agentic tasks.
+
+### gh
+- GitHub CLI for PRs/CI/releases. Given issue/PR URL (or `/pull/5`): use `gh`, not web search.
+- Examples: `gh issue view <url> --comments -R owner/repo`, `gh pr view <url> --comments --files -R owner/repo`.
+
+### tmux
+- Use for persistent/interactive tasks (debugger/server).
+- Start session: `tmux new -s <name> -d '<command>'   # detached`
+- View output (non-interactive): `tmux capture-pane -t <name> -p -S -30   # last 30 lines`
+- Manage sessions:
+    - `tmux ls                              # list all sessions`
+    - `tmux attach -t <name>                # attach to session`
+    - `tmux kill-session -t <name>          # kill session`
+```
+
+### Serena MCP (symbol navigation)
+- **Use for Python**: `find_symbol`, `find_referencing_symbols`, `replace_symbol_body` instead of Read+Grep when you know the symbol name.
+- **Skip for**: YAML, SDF, URDF, shell scripts, launch files — no language server benefit.
+- Prefer `find_symbol` over reading whole files; prefer `find_referencing_symbols` over grep for cross-file traces.
+- First run in a session downloads language server via uvx — normal, wait it out.
+
+### ast-grep
+- Structural code search: `ast-grep --lang python -p '$FUNC($$$)' src/`
+- Use over grep when matching code structure matters (e.g. all callers of a method, all class definitions).
+
