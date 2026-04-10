@@ -41,6 +41,8 @@ Known issues not currently prioritized. Full details in the linked issues; check
 - [#11](https://github.com/thaije/derpbot-explorer/issues/11) — MPPI "Failed to make progress" cascade mid-nav (may be fixed by Task 4)
 - [#12](https://github.com/thaije/derpbot-explorer/issues/12) — Upstream: `avg_speed_kmh` reporting bug in `robot-sandbox`
 - [#13](https://github.com/thaije/derpbot-explorer/issues/13) — Enable `collision_monitor` realtime priority (needs rtprio grant)
+- [#14](https://github.com/thaije/derpbot-explorer/issues/14) — Client-side goal pre-validation via `PyCostmap2D`
+- [#15](https://github.com/thaije/derpbot-explorer/issues/15) — Use `ClearCostmapAroundPose` (Jazzy) for targeted clearing
 
 Run `gh issue list --state open --label backlog` for the live list.
 
