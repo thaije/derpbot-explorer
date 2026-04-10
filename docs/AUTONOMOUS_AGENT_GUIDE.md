@@ -1,6 +1,7 @@
 # Autonomous Agent Guide — ARST
 
 Gazebo Harmonic + ROS 2 Jazzy simulation testbed. Your task: deploy a fully autonomous agent and complete the scenario.
+See the original here: https://github.com/thaije/robot-sandbox/blob/main/docs/AUTONOMOUS_AGENT_GUIDE.md
 
 ---
 
