@@ -97,7 +97,7 @@ RotationShimController wraps MPPI; `PoseProgressChecker` replaces `SimpleProgres
 **Verdict:**
 - **Task 2 rotation-phase DoD met:** rotation-spin-up dropped from 30.1% baseline → **13.2%** of total run time. Median first_move 22 s → ~6.8 s; goals 3 and 4 hit ~2 s when the shim has a clean start.
 - **Critical fix uncovered:** the *rotation-counts-as-progress* check matters as much as the shim itself. With `SimpleProgressChecker` the shim's in-place rotation triggers "Failed to make progress" cascades after 10 s and tanks coverage to 32%. Always pair RotationShimController with `PoseProgressChecker`.
-- **Coverage did not recover to 74% Task 1 baseline.** Loss is traceable to three orthogonal bugs (logged in [`approach1_classical_pipeline.md`](approach1_classical_pipeline.md) Backlog section): cold-start delay on first goals, frontier picking off-map points, and an MPPI mid-navigation "Failed to make progress" cascade. None are rotation-shim issues; deferred to Task 3/4 verification.
+- **Coverage did not recover to 74% Task 1 baseline.** Loss is traceable to three orthogonal bugs: cold-start delay on first goals ([#9](https://github.com/thaije/derpbot-explorer/issues/9)), frontier picking off-map points ([#10](https://github.com/thaije/derpbot-explorer/issues/10)), and an MPPI mid-navigation "Failed to make progress" cascade ([#11](https://github.com/thaije/derpbot-explorer/issues/11)). None are rotation-shim issues.
 - **Goal#4 long cross-map hop recovered** — previously a guaranteed-failure case in run 2, now succeeds with first_move 2.3 s.
 
 ---

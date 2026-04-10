@@ -3,10 +3,12 @@
 ## Session start
 
 Read in order before doing anything:
-1. `agent-scripts/AGENTS.MD` — working style + tool catalogue. 
-2. `docs/AGENT_HANDOFF.md` — what's built, gotchas, current performance
-3. `docs/approach1_classical_pipeline.md` — current plan + open tasks
+1. `agent-scripts/AGENTS.MD` — working style + tool catalogue.
+2. `docs/STATE.md` — what's built, current performance, invariants
+3. `docs/ROADMAP.md` — next work, TOC of the issue tracker
 Do NOT skip reading these files!
+
+Open and closed work lives in GitHub issues (`gh issue list`). Before proposing a change in a previously-touched area, check closed issues: `gh issue list --state closed --label dead-end` and `gh issue list --state closed --label task`.
 ---
 
 ## Hard rules
@@ -31,10 +33,14 @@ The sim, launch files, config, and hardware setup are all fair game. If somethin
 
 ## Docs
 
-- Lessons learned, gotchas, architecture decisions → `docs/AGENT_HANDOFF.md`. Keep new entries ≤ 3 lines each.
-- No new doc files without asking. No duplicating content across docs.
-- Update `AGENT_HANDOFF.md` whenever behaviour, config, or APIs change. Don't ship without a doc update.
-- Keep all doc entries brief and telegraph-style (noun phrases ok, drop filler).
+**One fact, one home.** Don't duplicate content across files.
+
+- **`docs/STATE.md`** — invariants + current architecture/config. Keep entries ≤ 3 lines each, telegraph-style. Update only when a behaviour/config/API change produces a *new invariant* that future agents need in-context.
+- **`docs/ROADMAP.md`** — short TOC of the issue tracker, one entry per active task with a link. Full plans live in the GitHub issue, not here.
+- **GitHub issues** — anything with a lifecycle: tasks, bugs, dead-ends, backlog, upstream-asks. Labels: `task`, `bug`, `dead-end`, `backlog`, `upstream`. Cross-link related issues.
+- **Commit messages** — the "why" of code changes. Reference the issue (`feat(nav2): X (#4)`). Commits + closed issues = project history.
+- **`docs/benchmark_results.md`** — append-only metric log.
+- No new doc files without asking.
 
 ---
 

@@ -3,7 +3,7 @@
 Autonomous robot exploration agent for the [Autonomous Robotics Simulation Testbed (ARST)](docs/AUTONOMOUS_AGENT_GUIDE.md). Explores unknown indoor environments, builds a map, detects target objects, and reports findings within a time limit.
 
 Architecture: slam_toolbox + Nav2 + frontier explorer + YOLOE26-S open-vocabulary detector.
-Agent state / implementation notes: [`docs/AGENT_HANDOFF.md`](docs/AGENT_HANDOFF.md)
+Agent state / invariants: [`docs/STATE.md`](docs/STATE.md) · Next work: [`docs/ROADMAP.md`](docs/ROADMAP.md) · Tracker: GitHub issues
 
 ## Prerequisites
 
