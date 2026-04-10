@@ -82,9 +82,13 @@ controller_server:
       ax_min: -3.0
       ay_max: 3.0
       az_max: 3.5
-      vx_std: 0.2
+      # Task 4 — tighter sampling stds for precision in narrow passages.
+      # Was 0.2/0.4. Combined with consider_footprint:true and the steeper
+      # local inflation, MPPI now needs precision over exploration in the
+      # rollout cloud.
+      vx_std: 0.15
       vy_std: 0.0
-      wz_std: 0.4
+      wz_std: 0.3
       vx_max: 0.5
       vx_min: -0.35
       vy_max: 0.0      # differential drive: no strafe
@@ -98,6 +102,7 @@ controller_server:
       visualize: false
       reset_period: 1.0
       regenerate_noises: false
+      publish_critics_stats: true   # Task 4 — per-critic cost visibility for tuning
       TrajectoryVisualizer:
         trajectory_step: 5
         time_step: 3
@@ -129,7 +134,12 @@ controller_server:
         cost_power: 1
         cost_weight: 3.81
         critical_cost: 300.0
-        consider_footprint: false   # robot_radius used (no polygon footprint)
+        # Task 4 — consider_footprint=true uses the costmap-published footprint
+        # (auto-circular from robot_radius=0.22) for per-trajectory-point cost
+        # lookup instead of point-cost. Required for narrow-door reliability
+        # against the steep local-inflation gradient. Prior crash gotcha was
+        # with no robot_radius AND no polygon — this config has robot_radius.
+        consider_footprint: true
         collision_cost: 1000000.0
         near_goal_distance: 1.0
         trajectory_point_step: 2
@@ -170,7 +180,10 @@ local_costmap:
       width: 6                      # 3→6m window (3m radius): desk at ~3.08m visible from robot start
       height: 6                     # 5m/5cm/3Hz caused heartbeat failure; 6m/10cm/2Hz same cell count, lower CPU
       resolution: 0.1               # 0.05→0.1m: 10cm cells; ±5cm error is within 0.25m inflation margin
-      robot_radius: 0.22          # DerpBot half-diagonal ~18cm + margin
+      robot_radius: 0.22          # DerpBot half-diagonal ~18cm + margin (kept for inflation layer / fallback)
+      # Task 4 — explicit polygon footprint required by MPPI CostCritic.consider_footprint=true.
+      # Chassis is 30×20cm; 1cm margin per side → 32×22cm rectangle. Half-extents 0.16 × 0.11.
+      footprint: "[[0.16, 0.11], [0.16, -0.11], [-0.16, -0.11], [-0.16, 0.11]]"
       transform_tolerance: 0.3
       plugins: ["voxel_layer", "inflation_layer"]
       inflation_layer:
@@ -179,9 +192,11 @@ local_costmap:
         # costmap so MPPI can find low-cost trajectories through 1m doors without
         # hitting a steep-gradient convergence failure. Cost at 0.28m from wall:
         # 253*e^(-5*(0.28-0.22)) ≈ 187, below 253 threshold → door passable.
-        # Initially set to 8.0 per deep research but point-cost MPPI (consider_footprint:false)
-        # had "Failed to make progress" aborts with control loop dropping to 4.5Hz.
-        # Steep 8.0 needs Task 4's consider_footprint:true + tighter sampling stds.
+        # Initially set to 8.0 per deep research; softened to 5.0 in Task 1 because
+        # point-cost MPPI couldn't handle the gradient. Task 4 retried 8.0 with
+        # footprint-aware MPPI + tighter sampling — controller was stable, but
+        # first_move regressed by ~5–10s across goals (median 2.1s → 11s) and
+        # coverage dropped 3pp. Reverted: 5.0 is the sweet spot for this stack.
         cost_scaling_factor: 5.0
         inflation_radius: 0.35
       voxel_layer:
@@ -219,6 +234,9 @@ global_costmap:
       global_frame: map
       robot_base_frame: base_link
       robot_radius: 0.22
+      # Task 4 — explicit polygon footprint required by MPPI CostCritic.consider_footprint=true.
+      # Same chassis-matching rectangle as local_costmap. Half-extents 0.16 × 0.11.
+      footprint: "[[0.16, 0.11], [0.16, -0.11], [-0.16, -0.11], [-0.16, 0.11]]"
       transform_tolerance: 0.3
       resolution: 0.05
       track_unknown_space: true    # essential — distinguish unexplored from free

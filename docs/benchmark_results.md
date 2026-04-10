@@ -4,6 +4,42 @@ Historical performance snapshots. Append new entries on top; keep older ones for
 
 ---
 
+## 2026-04-10 — Task 4 verification (seed=42, easy, speed=2, --no-perception)
+
+`CostCritic.consider_footprint: true` with explicit polygon footprint, tighter MPPI sampling (`vx_std: 0.15`, `wz_std: 0.3`), `publish_critics_stats: true`. Polygon `[[0.16,0.11],[0.16,-0.11],[-0.16,-0.11],[-0.16,0.11]]` on both costmaps (chassis 30×20cm + 1cm margin).
+
+| Metric | Task 3 baseline | **Task 4 (csf=5.0)** | csf=8.0 follow-on |
+|---|---|---|---|
+| Score / grade | 50.6 D | **54.9 D** | 54.8 D |
+| Coverage | 54.4% | **71.3%** | 68.3% |
+| Goals reached | 3/5 | **5+/6** | 6 |
+| Collisions | 1 (t=17s) | **0** | 0 |
+| START_OCCUPIED | 0 | **0** | 0 |
+| Bond events (scored run) | 0 | **0** | 0 |
+| Failed-to-make-progress | 0 | **0** | 0 |
+| Costmap timed out | 0 | **0** | 0 |
+| Median first_move | — | **~2.1 s** (4 of 5 goals) | ~11 s |
+
+**Per-goal first_move (Task 4 main run):**
+
+| Goal | Target | first_move | nav | Outcome |
+|---|---|---|---|---|
+| #1 | (0.71, 1.74)  | 10.5 s | 17.5 s | SUCCEEDED (cold start) |
+| #2 | (2.09, 7.38)  |  2.5 s | 40.2 s | SUCCEEDED |
+| #3 | (7.38, 6.53)  | 20.7 s | 64.7 s | SUCCEEDED |
+| #4 | (12.65, 6.13) |  2.1 s | 31.7 s | SUCCEEDED |
+| #5 | (17.20, 6.08) |  2.0 s | 32.3 s | SUCCEEDED |
+| #6 | (15.04, 0.56) |  —     | DNF (TIME_LIMIT) | started but truncated |
+
+**Verdict:**
+- **Task 4 DoD met.** No recovery interventions, collision count 1 → 0, coverage 54.4 → 71.3% (+16.9 pp). Footprint-aware CostCritic + tighter sampling pays back exactly as the deep research predicted.
+- **Polygon footprint is non-negotiable for `consider_footprint: true`.** First attempt with `robot_radius: 0.22` only crashed at `controller_server.on_configure`: "Inconsistent configuration in collision checking. ... no robot footprint provided in the costmap." Adding the explicit polygon resolved it. The earlier handoff gotcha was correct — updated to clarify that `robot_radius` alone is insufficient.
+- **csf=8.0 follow-on tested and reverted.** Hypothesis (steeper local inflation = wider passable corridor through 1m doors) didn't pay back. Controller was stable — no "Failed to make progress" cascades, no rate misses, no bond drops — but `first_move` regressed by ~5–10s on every goal (median 2.1s → 11s) and coverage dropped 3 pp. MPPI hesitates longer before committing under the steeper gradient. csf=5.0 stays.
+- **Score is now gated by perception** (accuracy=40 D, found_ratio=0 because of `--no-perception`). Nav layer is performing materially better; next big lever is Task 5 (detection-aware exploration).
+- **Backlog status:** `goal#3 first_move=20.7s` is a new outlier worth watching; could be the same cold-start mechanism as goal#1, or a doorway-negotiation pause. Cold-start and frontier-off-map bugs from Task 2 backlog still present (less impactful at higher coverage).
+
+---
+
 ## 2026-04-10 — Task 3 verification (seed=42, easy, speed=2, --no-perception)
 
 `collision_monitor` lifted into its own `lifecycle_manager_safety` group; both managers on `bond_timeout: 10.0` + `attempt_respawn_reconnection: true`.
