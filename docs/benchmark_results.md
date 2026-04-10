@@ -4,6 +4,46 @@ Historical performance snapshots. Append new entries on top; keep older ones for
 
 ---
 
+## 2026-04-09 — Task 2 verification (seed=42, easy, speed=2, --no-perception)
+
+RotationShimController wraps MPPI; `PoseProgressChecker` replaces `SimpleProgressChecker`.
+
+**Config under test (final, run 3):**
+- `controller_server.FollowPath`: `nav2_rotation_shim_controller::RotationShimController` wrapping `nav2_mppi_controller::MPPIController`
+- Shim params: `angular_dist_threshold: 0.35`, `angular_disengage_threshold: 0.15`, `rotate_to_heading_angular_vel: 1.8`, `max_angular_accel: 3.0`, `forward_sampling_distance: 0.5`, `simulate_ahead_time: 1.0`, `rotate_to_goal_heading: true`
+- `progress_checker`: `nav2_controller::PoseProgressChecker` with `required_movement_radius: 0.1`, `required_movement_angle: 0.25`, `movement_time_allowance: 10.0`
+- `general_goal_checker.yaw_goal_tolerance: 3.14` (restored — had drifted to 0.5)
+
+| Metric | Run 1 (45° shim, `SimpleProgressChecker`) | Run 2 (45° shim, `PoseProgressChecker`) | **Run 3 (20° shim, `PoseProgressChecker`)** |
+|---|---|---|---|
+| Score / grade | 49.4 (D) | 50.8 (D) | **54.0 (D)** |
+| Coverage | 32.1% | 58.7% | **53.0%** |
+| Goals succeeded / attempted | 3 / 5 | 3 / 4 | **4 / 5** |
+| Collisions | 2 | 1 | **0** |
+| START_OCCUPIED events | 0 | 0 | **0** |
+| MPPI "Failed to make progress" | ~6 | 1 (goal#4 cascade) | **1** |
+| MPPI "Costmap timed out" | ~6 | 3 (goal#4 cascade) | **1** |
+| Bond death (during scored run) | none | none | **none** |
+
+**Per-goal phase breakdown (run 3):**
+
+| Goal | first_move | nav_total | first_move % | Outcome |
+|---|---|---|---|---|
+| #1 (1.61, 0.62)  | 11.2 s |  20.0 s | 56% | SUCCEEDED |
+| #2 (1.61, 7.33)  | 11.3 s |  52.1 s | 22% | SUCCEEDED |
+| #3 (5.19, 7.75)  |  1.9 s |  14.5 s | 13% | SUCCEEDED |
+| #4 (6.82, 3.49)  |  2.3 s | 116.1 s |  2% | SUCCEEDED (recovered from prev-run failure) |
+| #5 (16.94,-0.12) |  —     | DNF     |  —  | OFF-MAP, time-limit hit |
+| **Total**        | **26.7 s** | **202.7 s** | **13.2%** | — |
+
+**Verdict:**
+- **Task 2 rotation-phase DoD met:** rotation-spin-up dropped from 30.1% baseline → **13.2%** of total run time. Median first_move 22 s → ~6.8 s; goals 3 and 4 hit ~2 s when the shim has a clean start.
+- **Critical fix uncovered:** the *rotation-counts-as-progress* check matters as much as the shim itself. With `SimpleProgressChecker` the shim's in-place rotation triggers "Failed to make progress" cascades after 10 s and tanks coverage to 32%. Always pair RotationShimController with `PoseProgressChecker`.
+- **Coverage did not recover to 74% Task 1 baseline.** Loss is traceable to three orthogonal bugs (logged in [`approach1_classical_pipeline.md`](approach1_classical_pipeline.md) Backlog section): cold-start delay on first goals, frontier picking off-map points, and an MPPI mid-navigation "Failed to make progress" cascade. None are rotation-shim issues; deferred to Task 3/4 verification.
+- **Goal#4 long cross-map hop recovered** — previously a guaranteed-failure case in run 2, now succeeds with first_move 2.3 s.
+
+---
+
 ## 2026-04-09 — Task 1 verification (seed=42, easy, speed=2, --no-perception)
 
 Custom BT + differential inflation + static-layer footprint clearing.

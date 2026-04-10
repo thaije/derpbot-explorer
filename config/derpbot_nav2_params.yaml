@@ -42,8 +42,14 @@ controller_server:
     controller_plugins: ["FollowPath"]
 
     progress_checker:
-      plugin: "nav2_controller::SimpleProgressChecker"
+      # Task 2 — PoseProgressChecker counts BOTH linear and angular motion as
+      # progress. SimpleProgressChecker only tracked linear displacement, which
+      # meant the RotationShimController's in-place rotation was counted as
+      # "no progress" → "Failed to make progress" fired during rotation →
+      # cascade (clear local costmap → MPPI "Costmap timed out" → stuck).
+      plugin: "nav2_controller::PoseProgressChecker"
       required_movement_radius: 0.1
+      required_movement_angle: 0.25   # ~14° — rotation ≥ this counts as progress
       movement_time_allowance: 10.0
     transform_tolerance: 0.3
 
@@ -51,10 +57,24 @@ controller_server:
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.5
-      yaw_goal_tolerance: 0.5
+      yaw_goal_tolerance: 3.14   # suppress post-arrival rotation (old Task 3). Shim's rotate_to_goal_heading becomes no-op.
 
     FollowPath:
-      plugin: "nav2_mppi_controller::MPPIController"
+      # Task 2 — RotationShimController wraps MPPI. When path heading is off
+      # by > 45°, shim rotates in place (deterministic, fast) before handing
+      # off to MPPI. Addresses the 30% pre-travel rotation bottleneck that
+      # MPPI sampling couldn't solve (GH #4049). Hysteresis: disengage at
+      # < 22.5° so brief heading mismatches don't bounce control back.
+      plugin: "nav2_rotation_shim_controller::RotationShimController"
+      primary_controller: "nav2_mppi_controller::MPPIController"
+      angular_dist_threshold: 0.35         # 20° — engage aggressively (was 45°, left MPPI to do too many slow turns)
+      angular_disengage_threshold: 0.15    # 8.6° — tight hysteresis, disengage only when close to aligned
+      forward_sampling_distance: 0.5
+      rotate_to_heading_angular_vel: 1.8   # was 1.5, closer to wz_max=2.0
+      max_angular_accel: 3.0               # was 2.5, matches velocity_smoother angular accel limit
+      simulate_ahead_time: 1.0
+      rotate_to_goal_heading: true         # also handle goal-arrival rotation
+      # --- MPPI (primary controller) params below ---
       time_steps: 40
       model_dt: 0.05
       batch_size: 500

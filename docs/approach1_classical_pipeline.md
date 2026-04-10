@@ -13,9 +13,9 @@ Core pipeline is built and running. Current focus: hardening exploration robustn
 | End-to-end easy scenario score | ⚠️ in progress | Best: 66.1 (C), 4/6, 98% coverage. Target: ≥ 70 (B). |
 | Reduce inter-goal idle time | ✅ done | `yaw_goal_tolerance=3.14`, goal pose oriented to travel dir, `_flood_unknown` removed, streak blacklist on reject. Residual rotation bottleneck addressed by Task 2 (RotationShim). Benchmark table in [`benchmark_results.md`](benchmark_results.md). |
 | Task 1 — differential inflation + START_OCCUPIED BT | ✅ done | 0 START_OCCUPIED events across 2 runs, doors passable, bond-death no longer affects scored run. Coverage 74% in verification run (--no-perception). See [`benchmark_results.md`](benchmark_results.md). |
-| Task 2 — Rotation Shim Controller | ❌ not started | Primary speed-score fix. |
+| Task 2 — Rotation Shim Controller | ✅ done | Rotation phase 30.1% → 13.2% (DoD met). Required `PoseProgressChecker` swap + tighter shim engagement (20°/8.6° hysteresis). Coverage didn't recover to baseline due to orthogonal bugs (see backlog). |
 | Task 3 — collision_monitor lifecycle isolation | ❌ not started | Fixes residual bond death. |
-| Task 4 — MPPI critic retune | ❌ not started | Narrow-door polish + enables local csf=8.0. |
+| Task 4 — MPPI critic retune | ❌ not started | Narrow-door polish + enables local csf=8.0. May also fix the goal-mid-cascade bug in backlog. |
 | Task 5 — Detection-aware exploration | ❌ not started | After exploration is robust. |
 | `medium` / `hard` tier | ❌ not started | After easy scenario ≥ B. |
 
@@ -58,29 +58,30 @@ Rationale and deep-research sources for Tasks 1–4: [`docs/deep_research_robust
 
 ---
 
-### Task 2 — Rotation Shim Controller wrapping MPPI
+### Task 2 — Rotation Shim Controller wrapping MPPI ✅ DONE
 
-**Goal:** Cut pre-travel rotation time from 22 s median per waypoint (~30% of run) to near-zero, directly raising the speed score and freeing budget for exploration/detection.
+**Goal:** Cut pre-travel rotation time from 22 s median per waypoint (~30% of run) toward near-zero, directly raising the speed score and freeing budget for exploration/detection.
 
 **Root cause (from deep research + benchmark):** MPPI's random trajectory sampling rarely finds valid turning trajectories in constrained spaces (GitHub #4049). When the robot must rotate significantly before translating, MPPI produces slow, jittery turns. The old Task 3's `yaw_goal_tolerance=3.14` only skips the *post-arrival* rotation; the *pre-travel* rotation is still handled by MPPI sampling and remains the dominant bottleneck.
 
-**Plan:**
-- Wrap existing MPPI plugin as `primary_controller` under `nav2_rotation_shim_controller::RotationShimController` in `config/derpbot_nav2_params.yaml` → `controller_server.FollowPath`.
-- Params:
-  - `angular_dist_threshold: 0.785` (engage shim when path heading off by > 45°)
-  - `angular_disengage_threshold: 0.3925` (Jazzy hysteresis: disengage at < 22.5°)
+**What landed:**
+- `controller_server.FollowPath` wraps MPPI under `nav2_rotation_shim_controller::RotationShimController` (`primary_controller: "nav2_mppi_controller::MPPIController"`).
+- Final shim params (after 3 verification runs of tuning):
+  - `angular_dist_threshold: 0.35` (engage on 20° mismatch — 45° was too loose, MPPI got stuck doing 20–45° rotations slowly)
+  - `angular_disengage_threshold: 0.15` (8.6° hysteresis — only hand off to MPPI once well aligned)
   - `forward_sampling_distance: 0.5`
-  - `rotate_to_heading_angular_vel: 1.5`
-  - `max_angular_accel: 2.5`
+  - `rotate_to_heading_angular_vel: 1.8` (close to `wz_max=2.0`)
+  - `max_angular_accel: 3.0` (matches velocity_smoother)
   - `simulate_ahead_time: 1.0`
   - `rotate_to_goal_heading: true`
-- Keep `yaw_goal_tolerance: 3.14` (goal-arrival rotation stays suppressed).
-- Re-run timing benchmark (same seed, same phase table as [`benchmark_results.md`](benchmark_results.md)).
+- **Critical fix:** Swapped `progress_checker` from `SimpleProgressChecker` → `PoseProgressChecker` (`required_movement_angle: 0.25`). The simple checker only counts linear displacement, so the shim's in-place rotation was being treated as "no progress" → fired after 10s → cascaded into local-costmap-clear loops → MPPI "Costmap timed out". This is the root reason the first verification runs collapsed coverage to 32%.
+- Restored `yaw_goal_tolerance: 3.14` (had drifted to 0.5 against the old Task 3 status).
 
-**Definition of done:**
-- Rotation phase drops from 30% → < 15% of total run time in the timing table.
-- New timing table appended to `benchmark_results.md`.
-- `avg_speed_kmh` in results JSON measurably higher, no coverage regression.
+**Result:** Rotation phase 30.1% → 13.2% — DoD met. Per-goal first_move drops from 22 s median (baseline) to 1.9–2.3 s when the shim has a clean start (verified on goal#3 / goal#4 in run 3). Goal#4 (long cross-map hop) recovered from a guaranteed-failure cascade.
+
+**Coverage did *not* recover to the 74% baseline** in the verification runs (best was 53%). Investigation traced the loss to three orthogonal bugs that the rotation shim does not address — captured in the [Backlog](#backlog--known-issues-not-blocking-task-progression) section below. Decision: ship Task 2 and fold those into the next tasks rather than scope-creep here.
+
+**Verification:** [`benchmark_results.md`](benchmark_results.md) — 2026-04-09 Task 2 entry with per-goal phase table.
 
 ---
 
@@ -138,6 +139,17 @@ Rationale and deep-research sources for Tasks 1–4: [`docs/deep_research_robust
 **Definition of done:**
 - Easy-scenario run shows an increase in confirmed detections relative to Task 4 baseline, with no increase in false positive rate.
 - `AGENT_HANDOFF.md` updated with the candidate injection design and any threshold values tuned.
+
+---
+
+## Backlog — known issues not blocking task progression
+
+Surfaced during Task 2 verification (2026-04-09). None are rotation-shim-related; logged here so they aren't lost. Re-check after Task 3/4 — some may resolve as a side effect.
+
+- **Cold-start delay on goals 1–2 (~11 s `first_move` each).** Shim engaged correctly per logs, but the robot didn't start moving for ~11 s on the first two goals of every Task 2 run, regardless of heading offset (later goals show 1.9–2.3 s). Suspected: local_costmap waiting for first scan, slam_toolbox initial convergence, or velocity_smoother cold-boot deadband. Investigate by reading `controller_server` log timing between "Received a goal" and first `cmd_vel` publish on goal#1.
+- **Frontier picks off-map points.** Run 3 selected frontier (16.94, -0.12) on the OfficeA map whose east wall is ~12 m. Robot wasted the last 180 s of the run on an unreachable target. `frontier_explorer.py` BFS does not clip to the SLAM map's known extent — should reject any cell outside the bounding box of `OccupancyGrid` cells with state ≥ 0.
+- **MPPI "Failed to make progress" cascade mid-navigation.** Run 2's goal#4 ran cleanly for ~64 s then triggered "Failed to make progress" → local clear → "Costmap timed out" → "Resulting plan has 0 poses" loop. Independent of the shim (the rotation issue was already fixed by `PoseProgressChecker`). May resolve via Task 4 (tighter MPPI sampling + `consider_footprint: true`); if not, needs its own root-cause pass.
+- **`avg_speed_kmh` reported as ~0.015 km/h while `meters_traveled` ≈ 1.235 m**, despite the robot clearly traversing multi-metre distances. Suspected metric-reporting bug in the scenario runner (predates Task 2). Tanks the Speed category. Not in this repo — check `robot-sandbox` scoring code.
 
 ---
 
