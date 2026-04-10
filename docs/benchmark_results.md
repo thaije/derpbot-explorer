@@ -4,6 +4,115 @@ Historical performance snapshots. Append new entries on top; keep older ones for
 
 ---
 
+## 2026-04-10 — Fresh-seed perception runs (seeds 123, 7, 99, easy, speed=2, perception ON)
+
+Three scored runs with full perception after all Task 1–4 fixes landed, to test generalization beyond seed=42. seed=99 also verifies the issue #12 fix (`meters_traveled` / `avg_speed_kmh`).
+
+### Four-seed summary
+
+| Seed | Score | Grade | Found | Coverage | Collisions | `m_traveled` | `avg_kmh` | Notes |
+|---|---|---|---|---|---|---|---|---|
+| 42 (old) | 66.1 | C | 4/6 | 98% | 1 | — | — | historical best |
+| **123** | **43.0** | **D** | 2/6 | 48.0% | 2 | 0.0 ❌ | 0.0 ❌ | stuck in (2.5, 7.1) corridor, 2 collisions there |
+| **7**   | **57.3** | **C** | 1/6 | 34.8% | 0 | 4.9 ❌ | 0.058 ❌ | stuck goals #2 & #3 early; safety=S rescued score |
+| **99**  | **66.6** | **C** | 4/6 | 44.6% | 0 | **21.7 ✅** | **0.26 ✅** | issue #12 fix verified; ties seed=42 best |
+
+Four-seed averages: score ≈ 58.3, found ≈ 2.75/6 (46%), coverage ≈ 56%, collisions ≈ 0.75.
+**seed=42's score is no longer an outlier — seed=99 matched it.** The spread (43.0 to 66.6) is driven by early stuck events on "bad" seeds, not by a ceiling regression. Any Task 5 delta must still be measured across ≥ 3 seeds.
+
+### seed=99 run (office_easy_001_20260410T212000.json) — issue #12 fix verified
+
+| Metric | Value |
+|---|---|
+| Score / grade | **66.6 C** |
+| Found | **4/6** — FA#1 @ t=33.1 s, FE#2 @ t=58.0 s, FA#2 @ t=134.8 s, Person @ t=137.7 s. Missed: FE#1 (far-right Office B), FE#3 (top-right meeting room) |
+| Coverage | 44.6% |
+| Collisions | **0** |
+| False positives / duplicates | 2 / 1 |
+| Mean loc. error | 0.28 m |
+| Completion time | 300.6 s (TIME_LIMIT) |
+| Category — speed / accuracy / safety / efficiency / effectiveness | 21.2 F / 66.7 C / 100 S / 78.6 B / 63.3 C |
+| **`meters_traveled`** | **21.684 m ✅** (was ~0–5 m on prior seeds) |
+| **`avg_speed_kmh`** | **0.26 km/h ✅** (was ~0–0.06 km/h) |
+
+**Issue #12 fix verification:** cross-checked against 12 pose snapshots from `world_state.py` during the monitoring loop. Straight-line sum between consecutive snapshots ≈ 18.2 m (lower bound — misses curves, rotations, backups). Reported 21.7 m is fully consistent with that. Fix confirmed — close #12.
+
+**Behavior:** RTF 1.73–1.99 stable. No stuck events, no bond deaths, no lifecycle cascades, no TF flood, no aborts. Two first_move outliers: goal#2 @ 15.7 s, goal#3 @ 26.2 s — same pattern as prior runs, worth noting as a residual lever for Task 5 or a separate backlog issue.
+
+
+### seed=7 run (office_easy_001_20260410T205244.json)
+
+| Metric | Value |
+|---|---|
+| Score / grade | **57.3 C** |
+| Found | **1/6** (fire_extinguisher #3 @ t=54 s, loc_err 1.10 m) |
+| Coverage | **34.8%** |
+| Collisions | **0** |
+| False positives | 0 (precision 1.0) |
+| Mean loc. error | 1.10 m |
+| Completion time | 303.3 s (TIME_LIMIT) |
+| Category — speed | 21.0 F |
+| Category — accuracy | 50.0 D |
+| Category — safety | 100.0 S |
+| Category — efficiency | 100.0 S |
+| Category — effectiveness | 20.8 F |
+| `meters_traveled` (reported) | 4.921 — **clearly wrong**, ground-truth path > 10 m |
+| `avg_speed_kmh` (reported) | 0.058 — **clearly wrong**, issue #12 |
+
+**Failure mode:** robot stuck twice very early — goal#2 (1.41, 6.58) cancelled at ~37 s into nav, goal#3 (6.64, -0.61) cancelled at ~20 s into nav. Both triggered backup + clear-costmap recovery. ~70 s of the 300 s budget burned on recovery, leaving only ~150 s to explore; goal#5 dispatched at t=162 but never finished. Also 3× `first_move=n/a` (goals 1/2/3) and 1 first_move=12.2 s outlier on goal#4.
+
+**Tracker noise:** persistent pending fire_extinguisher sightings at phantom locations (5.4, 4.1) and (3.3, 1.6) that never crossed the confirmation threshold. Detector firing on office clutter; projection/tracker didn't lock. Worth investigating as part of Task 5.
+
+**Stack health:** 0 bond deaths, 0 lifecycle crashes, 0 collisions. Task 1–4 safety fixes held perfectly (safety S, efficiency S) — the bottleneck is entirely exploration velocity and early-mission stalls.
+
+### seed=123 run (office_easy_001_20260410T203458.json)
+
+| Metric | seed=42 baseline (old) | **seed=123** |
+|---|---|---|
+| Score / grade | 66.1 C | **43.0 D** |
+| Found | 4 / 6 | **2 / 6** |
+| Coverage | 98% | **48.0%** |
+| Collisions | 1 | **2** (t=69.9 s, t=77.2 s) |
+| False positives | — | 3 (precision 0.40) |
+| Mean loc. error | — | 0.33 m |
+| Completion time | — | 301.3 s (TIME_LIMIT) |
+| Category — speed | — | 21.2 F |
+| Category — accuracy | — | 36.0 F |
+| Category — safety | — | 86.0 A |
+| Category — efficiency | — | 0.0 F |
+| Category — effectiveness | — | 42.8 D |
+
+**Confirmed detections (scored):** person #1 @ t=34.5 s, first_aid_kit #2 @ t=51.8 s.
+**Confirmed by tracker but NOT scored:** 3× fire_extinguisher at (5.2, 5.0), (5.4, 7.4), (8.8, 8.3) — likely gated by localization error (0.33 m) + MATCH_RADIUS. Worth investigating as its own lever.
+
+**Stuck events / failure timeline:**
+- goal#2 (1.40, 7.25): `first_move = 22.4 s` despite coming straight off a completed goal#1 (not a cold start). Controller silent for 22 s with an active goal. Then 114 s of nav ending in stuck-detect + backup recovery.
+- Both collisions fired during/after the goal#2 stall in the (2.5, 7.1) doorway/corridor area — footprint-aware MPPI critic (Task 4) did not prevent them here.
+- goal#3 (7.44, 5.35): never moved at all (`first_move = n/a`), cancelled after 34.8 s.
+- Net effect: robot never reached the east/north half of the map; fire_extinguisher #2 at (12.9, 11.5) and #3 at (10.4, 1.7) never approached.
+
+**Stack health (all ✅):**
+- RTF sustained ~1.98, no TF flood.
+- No bond deaths, no Nav2 lifecycle failures, no START_OCCUPIED, no BackUp cascades on the managed side.
+- Safety lifecycle (Task 3) held through both collision events.
+
+**Verdict:**
+- **Regression on this seed, not the stack.** Task 1–4 fixes preserved lifecycle stability, but the failure mode is new: mid-mission first_move stall in a tight area, followed by collision-in-corridor. This is *not* the previously characterised goal#4 cold-start or START_OCCUPIED problem.
+- **seed=42 baseline was optimistic.** First evidence that our "best easy" (66.1 C) may be seed-specific. Need 2–3 more seeds before trusting any Task 5 delta.
+- **Confirmation gap is real.** 5 tracker-confirmed objects → only 2 scored. If that ratio holds on other seeds, detection-pipeline → scored-detection conversion is a bigger lever than raw exploration coverage for Task 5.
+
+**Issue #12 (avg_speed_kmh bug) reproducer confirmed:** results JSON still reports `avg_speed_kmh: 0.0` and `meters_traveled: 0.0` this run — Tjalling monitoring.
+
+**New findings to file (not filed yet, flagged for next pass):**
+- Mid-mission goal#2 `first_move = 22.4 s` stall in tight corridor (distinct from #9 cold-start).
+- 2 collisions in (2.5, 7.1) area despite footprint-aware MPPI — Task 4 doesn't fully cover every tight passage.
+- `world_state.py --no-ros --results` crashes with `KeyError: 'class_id'` — minor tooling bug.
+- Tracker-confirmed-but-unscored detection gap (localization-error gated?).
+
+Results JSON: `~/Projects/robot-sandbox/results/office_easy_001_20260410T203458.json`
+
+---
+
 ## 2026-04-10 — Task 4 verification (seed=42, easy, speed=2, --no-perception)
 
 `CostCritic.consider_footprint: true` with explicit polygon footprint, tighter MPPI sampling (`vx_std: 0.15`, `wz_std: 0.3`), `publish_critics_stats: true`. Polygon `[[0.16,0.11],[0.16,-0.11],[-0.16,-0.11],[-0.16,0.11]]` on both costmaps (chassis 30×20cm + 1cm margin).
