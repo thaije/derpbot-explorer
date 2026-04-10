@@ -1,3 +1,0 @@
-[submodule "agent-scripts"]
-	path = agent-scripts
-	url = git@github.com:thaije/agent-scripts.git

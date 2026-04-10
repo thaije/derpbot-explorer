@@ -65,8 +65,18 @@ def generate_launch_description():
     #              https://github.com/ros2/launch_ros/issues/56
     remappings = [('/tf', 'tf'), ('/tf_static', 'tf_static')]
 
+    # BT XML path — computed relative to this launch file so the repo is portable.
+    bt_xml_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        'behavior_trees',
+        'navigate_backup_clear_replan.xml',
+    )
+
     # Create our own temporary YAML files that include substitutions
-    param_substitutions = {'autostart': autostart}
+    param_substitutions = {
+        'autostart': autostart,
+        'default_nav_to_pose_bt_xml': bt_xml_path,
+    }
 
     configured_params = ParameterFile(
         RewrittenYaml(

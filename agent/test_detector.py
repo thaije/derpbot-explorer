@@ -6,7 +6,7 @@ Grabs one frame from /derpbot_0/rgbd/image, saves it, then runs YOLOE/YOLO-World
 inference inline (no subprocess) with various class prompts and thresholds.
 
 Usage (with scenario running):
-    cd /home/plip/Projects/derpbot-explorer
+    cd <repo-root>
     source /opt/ros/jazzy/setup.bash
     .venv/bin/python agent/test_detector.py
 """

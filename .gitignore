@@ -70,3 +70,6 @@ debug/
 
 # images
 *.jpg
+
+# agent-scripts (local Claude workflow tooling, not part of this project)
+agent-scripts/
