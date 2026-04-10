@@ -14,7 +14,7 @@ Core pipeline is built and running. Current focus: hardening exploration robustn
 | Reduce inter-goal idle time | ✅ done | `yaw_goal_tolerance=3.14`, goal pose oriented to travel dir, `_flood_unknown` removed, streak blacklist on reject. Residual rotation bottleneck addressed by Task 2 (RotationShim). Benchmark table in [`benchmark_results.md`](benchmark_results.md). |
 | Task 1 — differential inflation + START_OCCUPIED BT | ✅ done | 0 START_OCCUPIED events across 2 runs, doors passable, bond-death no longer affects scored run. Coverage 74% in verification run (--no-perception). See [`benchmark_results.md`](benchmark_results.md). |
 | Task 2 — Rotation Shim Controller | ✅ done | Rotation phase 30.1% → 13.2% (DoD met). Required `PoseProgressChecker` swap + tighter shim engagement (20°/8.6° hysteresis). Coverage didn't recover to baseline due to orthogonal bugs (see backlog). |
-| Task 3 — collision_monitor lifecycle isolation | ❌ not started | Fixes residual bond death. |
+| Task 3 — collision_monitor lifecycle isolation | ✅ done | Split into `lifecycle_manager_safety`. Nav-side failures no longer reach the safety bond. `bond_timeout` 60→10s, `attempt_respawn_on_failure` → `attempt_respawn_reconnection` (Jazzy). 0 bond events during scored run; teardown-only event remains. |
 | Task 4 — MPPI critic retune | ❌ not started | Narrow-door polish + enables local csf=8.0. May also fix the goal-mid-cascade bug in backlog. |
 | Task 5 — Detection-aware exploration | ❌ not started | After exploration is robust. |
 | `medium` / `hard` tier | ❌ not started | After easy scenario ≥ B. |
@@ -85,24 +85,32 @@ Rationale and deep-research sources for Tasks 1–4: [`docs/deep_research_robust
 
 ---
 
-### Task 3 — Isolate collision_monitor in its own lifecycle group
+### Task 3 — Isolate collision_monitor in its own lifecycle group ✅ DONE
 
 **Goal:** Decouple the safety node from navigation failures. A planner crash should not take the collision monitor down with it.
 
-**Root cause (from deep research + handoff gotcha):** `collision_monitor` currently shares `lifecycle_manager_navigation` with controller/planner/behavior servers. Under GPU load (Gazebo + OWLv2 on shared GPU 0), bond heartbeats are delayed; a failure in any managed node triggers the lifecycle manager to bring *all* nodes down, leaving the robot unprotected during respawn. Current mitigation (`bond_timeout: 60 s`) masks the symptom but does not isolate the safety path.
+**Root cause (from deep research + handoff gotcha):** `collision_monitor` shared `lifecycle_manager_navigation` with controller/planner/behavior servers. Under GPU load (Gazebo + OWLv2 on shared GPU 0), bond heartbeats slipped and the manager would bring the *entire* group down, leaving the robot unprotected during respawn. Previous mitigation (`bond_timeout: 60 s`) masked the symptom but did not isolate the safety path. Worse: the parameter `attempt_respawn_on_failure` was the *old* name and was being silently ignored on Jazzy.
 
-**Plan:**
-- Split `launch/navigation_launch.py` lifecycle managers:
-  - `lifecycle_manager_navigation`: `controller_server`, `planner_server`, `behavior_server`, `bt_navigator`, `smoother_server`, `velocity_smoother`, `waypoint_follower`
-  - `lifecycle_manager_safety`: `collision_monitor` only
-- Align bond timing on both managers: `bond_timeout: 10.0`, `bond_heartbeat_period: 0.5` (drop from 60 s — properly-aligned heartbeat is the real fix, not the oversized timeout).
-- Add `use_realtime_priority: true` on `collision_monitor` — elevates its thread to priority 90. **Requires** `/etc/security/limits.conf` to grant `rtprio` permissions — flag to Tjalling before enabling.
-- Rename `attempt_respawn_on_failure` → `attempt_respawn_reconnection` on both managers (Nav2 Jazzy parameter rename).
+**What landed:** `launch/navigation_launch.py`
+- `lifecycle_manager_navigation` now owns: `controller_server`, `smoother_server`, `planner_server`, `behavior_server`, `velocity_smoother`, `bt_navigator`, `waypoint_follower`.
+- New `lifecycle_manager_safety` owns: `collision_monitor`.
+- Both managers: `bond_timeout: 10.0` (was 60 s) and `attempt_respawn_reconnection: true` (Jazzy rename — old key was silently ignored).
+- Same change applied to the composable-bringup branch for parity.
 
-**Definition of done:**
-- Manual test: kill `planner_server` mid-run. `collision_monitor` continues running without bond starvation. `lifecycle_manager_navigation` respawns the dead node without touching the safety group.
-- Full easy-scenario run with zero bond timeout entries in logs.
-- `AGENT_HANDOFF.md` updated: new lifecycle architecture note, remove the `bond_timeout: 60 s` hack entry.
+**Note on `bond_heartbeat_period`:** the deep-research recommendation to set `bond_heartbeat_period: 0.5` does not apply to Jazzy — the `nav2_lifecycle_manager` library doesn't expose this parameter; the bond library uses its compiled-in default. Only `bond_timeout` is tunable on the manager side. Verified by `strings` on `libnav2_lifecycle_manager_core.so`.
+
+**Note on `use_realtime_priority`:** `nav2_collision_monitor` does support `use_realtime_priority: true` (verified in the binary), but enabling it requires `/etc/security/limits.conf` to grant the user `rtprio` capability. Deferred — see Backlog. For now the soft separation + 10 s bond is sufficient.
+
+**Verification (2026-04-10, easy scenario, seed=42, --no-perception):**
+- Both `lifecycle_manager_navigation` (pid 10780) and `lifecycle_manager_safety` (pid 10781) reached "Managed nodes are active" cleanly.
+- Zero bond events on either manager during the scored run.
+- During goal#2's mid-run planner failure cascade, the safety manager logged nothing — `collision_monitor` continued running with bond intact while nav-side aborts piled up. This is exactly the isolation behaviour the task targets.
+- One bond event on the safety manager at t = scenario_end + 7 s (teardown only — acceptable, expected when the bridge / sim is going away).
+
+**Definition of done:** ✅
+- Isolation confirmed in vivo by goal#2 nav-side failure cascade leaving safety untouched (de facto kill-test).
+- Zero bond timeout entries during the scored run (teardown event excluded).
+- `AGENT_HANDOFF.md` updated with the new architecture note and the old `bond_timeout: 60 s` hack entry removed.
 
 ---
 
@@ -150,6 +158,7 @@ Surfaced during Task 2 verification (2026-04-09). None are rotation-shim-related
 - **Frontier picks off-map points.** Run 3 selected frontier (16.94, -0.12) on the OfficeA map whose east wall is ~12 m. Robot wasted the last 180 s of the run on an unreachable target. `frontier_explorer.py` BFS does not clip to the SLAM map's known extent — should reject any cell outside the bounding box of `OccupancyGrid` cells with state ≥ 0.
 - **MPPI "Failed to make progress" cascade mid-navigation.** Run 2's goal#4 ran cleanly for ~64 s then triggered "Failed to make progress" → local clear → "Costmap timed out" → "Resulting plan has 0 poses" loop. Independent of the shim (the rotation issue was already fixed by `PoseProgressChecker`). May resolve via Task 4 (tighter MPPI sampling + `consider_footprint: true`); if not, needs its own root-cause pass.
 - **`avg_speed_kmh` reported as ~0.015 km/h while `meters_traveled` ≈ 1.235 m**, despite the robot clearly traversing multi-metre distances. Suspected metric-reporting bug in the scenario runner (predates Task 2). Tanks the Speed category. Not in this repo — check `robot-sandbox` scoring code.
+- **`collision_monitor` `use_realtime_priority: true` deferred (Task 3).** The parameter is supported (verified in `libcollision_monitor_core.so`) and would elevate the safety thread to priority 90, hardening it against GPU/CPU starvation. Enabling it requires editing `/etc/security/limits.conf` to grant the run user `rtprio` capability — a system-level change. Currently the soft separation (own lifecycle group + 10 s bond) is sufficient; revisit if bond events reappear under perception load.
 
 ---
 

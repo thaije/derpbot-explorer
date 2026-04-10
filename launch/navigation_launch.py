@@ -40,17 +40,21 @@ def generate_launch_description():
     use_respawn = LaunchConfiguration('use_respawn')
     log_level = LaunchConfiguration('log_level')
 
+    # Task 3 — collision_monitor isolated in its own lifecycle group so a
+    # planner/controller failure can't cascade-shutdown the safety path.
     lifecycle_nodes = [
         'controller_server',
         'smoother_server',
         'planner_server',
         'behavior_server',
         'velocity_smoother',
-        'collision_monitor',
         'bt_navigator',
         'waypoint_follower',
         # 'route_server',   # not needed for exploration
         # 'docking_server', # not needed for exploration
+    ]
+    lifecycle_nodes_safety = [
+        'collision_monitor',
     ]
 
     # Map fully qualified names to relative ones so the node's namespace can be prepended.
@@ -220,9 +224,25 @@ def generate_launch_description():
                 name='lifecycle_manager_navigation',
                 output='screen',
                 arguments=['--ros-args', '--log-level', log_level],
-                parameters=[{'autostart': autostart}, {'node_names': lifecycle_nodes},
-                            {'bond_timeout': 60.0},
-                            {'attempt_respawn_on_failure': True}],
+                parameters=[{'autostart': autostart},
+                            {'node_names': lifecycle_nodes},
+                            # bond_timeout 10s (was 60s) — proper isolation makes
+                            # the oversized timeout unnecessary; collision_monitor
+                            # is no longer in this group so a nav crash can't take
+                            # safety down with it.
+                            {'bond_timeout': 10.0},
+                            {'attempt_respawn_reconnection': True}],
+            ),
+            Node(
+                package='nav2_lifecycle_manager',
+                executable='lifecycle_manager',
+                name='lifecycle_manager_safety',
+                output='screen',
+                arguments=['--ros-args', '--log-level', log_level],
+                parameters=[{'autostart': autostart},
+                            {'node_names': lifecycle_nodes_safety},
+                            {'bond_timeout': 10.0},
+                            {'attempt_respawn_reconnection': True}],
             ),
         ],
     )
@@ -311,7 +331,16 @@ def generate_launch_description():
                         name='lifecycle_manager_navigation',
                         parameters=[
                             {'autostart': autostart, 'node_names': lifecycle_nodes,
-                             'bond_timeout': 60.0, 'attempt_respawn_on_failure': True}
+                             'bond_timeout': 10.0, 'attempt_respawn_reconnection': True}
+                        ],
+                    ),
+                    ComposableNode(
+                        package='nav2_lifecycle_manager',
+                        plugin='nav2_lifecycle_manager::LifecycleManager',
+                        name='lifecycle_manager_safety',
+                        parameters=[
+                            {'autostart': autostart, 'node_names': lifecycle_nodes_safety,
+                             'bond_timeout': 10.0, 'attempt_respawn_reconnection': True}
                         ],
                     ),
                 ],

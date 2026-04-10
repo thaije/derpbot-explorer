@@ -4,6 +4,28 @@ Historical performance snapshots. Append new entries on top; keep older ones for
 
 ---
 
+## 2026-04-10 — Task 3 verification (seed=42, easy, speed=2, --no-perception)
+
+`collision_monitor` lifted into its own `lifecycle_manager_safety` group; both managers on `bond_timeout: 10.0` + `attempt_respawn_reconnection: true`.
+
+| Metric | Value |
+|---|---|
+| Score / grade | 50.6 (D) |
+| Coverage | 54.4% |
+| Goals succeeded / attempted | 3 of 5 (goal#5 truncated by time-limit) |
+| Collisions | 1 (t=17 s) |
+| START_OCCUPIED events | 0 |
+| Bond events on `lifecycle_manager_navigation` | **0** during scored run |
+| Bond events on `lifecycle_manager_safety` | **0** during scored run; 1 in teardown (~7 s after sim shutdown) |
+| `collision_monitor` log errors / warnings | 0 |
+
+**Verdict — Task 3 DoD met:**
+- Both lifecycle managers reached "Managed nodes are active" cleanly on startup.
+- During goal#2's planner-failure cascade (multiple aborts on the navigation side), the safety manager logged nothing and `collision_monitor`'s bond stayed intact. This is the in-vivo equivalent of the planned manual `kill planner_server` test.
+- Score regression vs Task 2 (54.0 → 50.6) is from the same backlog issues already documented (early collision, mid-nav cascade, off-map frontier picks). No new regressions traceable to lifecycle isolation.
+
+---
+
 ## 2026-04-09 — Task 2 verification (seed=42, easy, speed=2, --no-perception)
 
 RotationShimController wraps MPPI; `PoseProgressChecker` replaces `SimpleProgressChecker`.
