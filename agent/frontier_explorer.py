@@ -13,11 +13,14 @@ Frontier lifecycle:
 
 from __future__ import annotations
 
+import json
 import math
 import threading
 import time
-from collections import deque
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
@@ -41,12 +44,6 @@ UNKNOWN = -1
 W_SIZE = 1.0    # prefer large frontier clusters (larger cluster = more open frontier edge)
 W_DIST = 1.5    # penalise distance from robot (lowered from 2.0 to push the robot
                 # toward distant unexplored areas; 4.0 is too local, 0.5 causes thrashing)
-
-# Info-gain flood fill: disabled (replaced scoring approach; see git history)
-# The flood fill caused all frontiers to hit the cap early in exploration,
-# making scores equal and causing micro-stepping + Nav2 path failures.
-# Left in codebase for future investigation with proper connected-components normalization.
-MAX_FLOOD_CELLS = 5000  # kept for _flood_unknown method signature compatibility
 
 # Stuck detection
 STUCK_DIST_THRESHOLD = 0.10   # metres — robot must move this far
@@ -83,7 +80,6 @@ class GoalStats:
 class FrontierCluster:
     cells: list[tuple[int, int]]    # (row, col) in grid frame
     centroid_world: tuple[float, float]  # (x, y) in map frame (metres)
-    reachable_unknown: int = 0      # flood-fill info gain (unknown cells accessible through frontier)
 
     @property
     def size(self) -> int:
@@ -112,7 +108,19 @@ class FrontierExplorer:
 
         self._robot_x: float = 0.0
         self._robot_y: float = 0.0
+        self._robot_vx: float = 0.0
+        self._robot_wz: float = 0.0
         self._odom_lock = threading.Lock()
+        self._odom_initialized: bool = False
+        self._meters_traveled: float = 0.0
+        # Per-phase motion accumulators — odom callback buckets distance and
+        # rotation into whichever phase `_tl` last set as current. Gives true
+        # time-weighted avg speeds rather than phase-start velocity snapshots.
+        self._current_phase: str = "init"
+        self._phase_dist: dict[str, float] = defaultdict(float)  # ∫|vx|·dt per phase
+        self._phase_rot: dict[str, float] = defaultdict(float)   # ∫|wz|·dt per phase
+        self._phase_sample_time: dict[str, float] = defaultdict(float)  # Σdt per phase
+        self._last_odom_sim_t: float = 0.0
 
         # Last position used for stuck detection
         self._last_moved_x: float = 0.0
@@ -124,6 +132,7 @@ class FrontierExplorer:
         self._active_goal_handle = None
         self._exploring = False
         self._goal_stats: list[GoalStats] = []
+        self._timeline: list[dict] = []
 
         # Subscriptions
         # /map is published TRANSIENT_LOCAL — subscriber must also use TRANSIENT_LOCAL
@@ -175,9 +184,43 @@ class FrontierExplorer:
             self._map = msg
 
     def _odom_cb(self, msg: Odometry) -> None:
+        # dt from node sim-clock — header.stamp on derpbot_0/odom is unreliable
+        # (observed zero). Looser dt bound (< 5s) tolerates GIL latency spikes.
+        now = self._sim_time()
+        vx = msg.twist.twist.linear.x
+        wz = msg.twist.twist.angular.z
         with self._odom_lock:
+            if self._odom_initialized:
+                dx = msg.pose.pose.position.x - self._robot_x
+                dy = msg.pose.pose.position.y - self._robot_y
+                self._meters_traveled += math.hypot(dx, dy)
+                # Per-phase integrators: ∫|v|·dt over all odom samples within
+                # the phase. Skip dt=0 (same clock tick) and dt>5s (big gap).
+                dt = now - self._last_odom_sim_t
+                if 0.0 < dt < 5.0:
+                    self._phase_dist[self._current_phase] += abs(vx) * dt
+                    self._phase_rot[self._current_phase] += abs(wz) * dt
+                    self._phase_sample_time[self._current_phase] += dt
+            self._last_odom_sim_t = now
             self._robot_x = msg.pose.pose.position.x
             self._robot_y = msg.pose.pose.position.y
+            self._robot_vx = vx
+            self._robot_wz = wz
+            self._odom_initialized = True
+
+    def _tl(self, phase: str, goal_num: int = 0, notes: str = "") -> None:
+        """Append a timeline entry and switch the current phase bucket."""
+        with self._odom_lock:
+            vx, wz = self._robot_vx, self._robot_wz
+            self._current_phase = phase
+        self._timeline.append({
+            "t": self._sim_time(),
+            "phase": phase,
+            "goal": goal_num,
+            "vx": vx,
+            "wz": wz,
+            "notes": notes,
+        })
 
     # ------------------------------------------------------------------
     # Public API
@@ -193,12 +236,19 @@ class FrontierExplorer:
         self._exploring = False
         if self._active_goal_handle is not None:
             self._active_goal_handle.cancel_goal_async()
+        # Write profile even on abnormal exit (sim died, time-limit, etc.)
+        self._write_timeline()
 
     # ------------------------------------------------------------------
     # Exploration loop
     # ------------------------------------------------------------------
 
     def _explore_loop(self) -> None:
+        # Mark startup: captures Nav2 action-server wait + first /map wait.
+        # Ends when the first bfs_detect fires. Time spent BEFORE _explore_loop
+        # runs (mission fetch, detector spawn, AgentNode init) is not captured
+        # here — see the profile header's "Unmeasured startup" line for that.
+        self._tl("startup", 0, "nav2 wait + map wait")
         self._logger.info("FrontierExplorer: waiting for Nav2 action server…")
         if not self._nav_client.wait_for_server(timeout_sec=60.0):
             self._logger.error("NavigateToPose action server not available — aborting.")
@@ -226,6 +276,7 @@ class FrontierExplorer:
             with self._odom_lock:
                 rx, ry = self._robot_x, self._robot_y
 
+            self._tl("bfs_detect", _goal_num + 1)
             _t_bfs_start = self._sim_time()
             frontiers = self._detect_frontiers(current_map)
             _t_bfs = self._sim_time() - _t_bfs_start
@@ -234,27 +285,7 @@ class FrontierExplorer:
             is_patrol = False
             if best is not None:
                 cx, cy = best.centroid_world  # used for scoring/blacklisting
-
-                # Navigate to the cluster cell closest to the centroid, not to the robot.
-                # - All frontier cells are free (value == 0), so this is always navigable.
-                # - Centroid can land outside free cells (average may fall in unknown/
-                #   inflated space). Closest-to-centroid picks a real free cell near the
-                #   geometric interior of the frontier.
-                # - Unlike closest-to-robot, this requires the robot to actually travel
-                #   toward the unexplored area.
-                res = current_map.info.resolution
-                ox = current_map.info.origin.position.x
-                oy = current_map.info.origin.position.y
-                centroid_r = (cy - oy) / res - 0.5
-                centroid_c = (cx - ox) / res - 0.5
-                goal_x, goal_y = cx, cy  # fallback
-                min_d = math.inf
-                for r, c in best.cells:
-                    d = math.hypot(r - centroid_r, c - centroid_c)
-                    if d < min_d:
-                        min_d = d
-                        goal_x = ox + (c + 0.5) * res
-                        goal_y = oy + (r + 0.5) * res
+                goal_x, goal_y = self._goal_cell_from_cluster(best, current_map.info)
             else:
                 # Frontier exhausted — switch to patrol mode.
                 # LIDAR coverage (98%+) does NOT mean camera coverage: the robot must
@@ -272,6 +303,11 @@ class FrontierExplorer:
             _t_idle = self._sim_time() - _t_last_goal_end  # BFS + selection overhead
             _t_goal_start = self._sim_time()
             if not is_patrol:
+                self._tl("frontier_select", _goal_num,
+                         f"({cx:.1f},{cy:.1f}) size={best.size} dist={math.hypot(cx-rx, cy-ry):.1f}")
+            else:
+                self._tl("frontier_select", _goal_num, f"PATROL ({cx:.1f},{cy:.1f})")
+            if not is_patrol:
                 self._logger.info(
                     f"FrontierExplorer: goal#{_goal_num} ({goal_x:.2f}, {goal_y:.2f})"
                     f" [centroid ({cx:.2f}, {cy:.2f})],"
@@ -284,8 +320,9 @@ class FrontierExplorer:
                     f" idle_since_last={_t_idle:.1f}s bfs={_t_bfs:.2f}s"
                 )
 
+            self._tl("nav2_send", _goal_num)
             result, _t_accept_lat, _t_first_move, _t_nav = self._send_goal_and_wait(
-                goal_x, goal_y, current_map.header.frame_id
+                goal_x, goal_y, current_map.header.frame_id, _goal_num
             )
 
             _t_after_nav = self._sim_time()
@@ -295,6 +332,7 @@ class FrontierExplorer:
             _move_str = f"{_t_first_move:.1f}s" if not math.isnan(_t_first_move) else "n/a"
 
             if result is True:
+                self._tl("goal_reached", _goal_num, f"nav={_t_nav:.1f}s")
                 self._logger.info(
                     f"FrontierExplorer: goal#{_goal_num} ({cx:.2f}, {cy:.2f}) SUCCEEDED"
                     f" accept={_accept_str} first_move={_move_str} nav={_t_nav:.1f}s — blacklisting."
@@ -304,6 +342,7 @@ class FrontierExplorer:
                 # the robot from repeatedly returning to the same inaccessible spot.
                 self._blacklist.append((cx, cy))
             elif result is False:
+                self._tl("goal_failed", _goal_num, f"nav={_t_nav:.1f}s")
                 self._logger.info(
                     f"FrontierExplorer: goal#{_goal_num} ({cx:.2f}, {cy:.2f}) FAILED"
                     f" accept={_accept_str} first_move={_move_str} nav={_t_nav:.1f}s — blacklisting."
@@ -312,10 +351,12 @@ class FrontierExplorer:
                 # Back up + clear costmap after failure to prevent "Start occupied"
                 # cascade: robot may be inside an inflation zone after a stuck/abort;
                 # backing up first moves it to free space before the costmap rebuilds.
+                self._tl("recovery", _goal_num, "backup+clear")
                 self._recover_from_occupied_start()
                 # Brief pause — give Nav2 time to finish cancellation/cleanup
                 # before we send the next goal (avoids acceptance future delays).
-                time.sleep(3.0)
+                self._tl("post_goal_sleep", _goal_num, "3.0s sim")
+                self._sim_sleep(3.0)
             elif result is None:
                 # Track consecutive rejections of the same centroid.
                 if math.hypot(cx - _last_reject_cx, cy - _last_reject_cy) < BLACKLIST_RADIUS:
@@ -337,7 +378,8 @@ class FrontierExplorer:
                         f" nav={_t_nav:.1f}s — streak={_reject_streak}/{MAX_REJECT_STREAK}, retrying."
                     )
                 # Nav2 busy or acceptance timed out — brief pause before retry.
-                time.sleep(5.0)
+                self._tl("rejection_sleep", _goal_num, "5.0s sim")
+                self._sim_sleep(5.0)
 
             _t_last_goal_end = self._sim_time()
             self._goal_stats.append(GoalStats(
@@ -351,8 +393,9 @@ class FrontierExplorer:
                 post_goal_pause_s=_t_last_goal_end - _t_after_nav,
             ))
 
-        # Always log timing table on exit (time-limit, natural completion, or stop)
+        # Always log timing table + profile on exit (time-limit, natural completion, or stop)
         self._log_timing_table()
+        self._write_timeline()
         # Only signal done if exploration finished naturally (not stopped externally)
         if self._exploring:
             self._done_callback()
@@ -429,52 +472,6 @@ class FrontierExplorer:
 
         return clusters
 
-    def _flood_unknown(
-        self,
-        cluster: FrontierCluster,
-        data: np.ndarray,
-        height: int,
-        width: int,
-    ) -> int:
-        """
-        Flood-fill through unknown cells reachable from the unexplored side of
-        this frontier cluster.  Returns the count of reachable unknown cells,
-        capped at MAX_FLOOD_CELLS to bound computation time.
-
-        This is the information-gain estimate: a frontier along a thin wall edge
-        scores near 0; a frontier through a doorway into an unmapped room scores
-        proportional to room size.
-        """
-        unknown = data == UNKNOWN
-
-        # Seeds: unknown cells immediately adjacent to frontier cells
-        visited_local = np.zeros((height, width), dtype=bool)
-        q: deque[tuple[int, int]] = deque()
-        for r, c in cluster.cells:
-            for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                nr, nc = r + dr, c + dc
-                if 0 <= nr < height and 0 <= nc < width:
-                    if unknown[nr, nc] and not visited_local[nr, nc]:
-                        visited_local[nr, nc] = True
-                        q.append((nr, nc))
-
-        if not q:
-            return cluster.size  # fallback: no unknown neighbours (shouldn't happen)
-
-        # BFS through unknown cells only
-        count = 0
-        while q and count < MAX_FLOOD_CELLS:
-            r, c = q.popleft()
-            count += 1
-            for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                nr, nc = r + dr, c + dc
-                if 0 <= nr < height and 0 <= nc < width:
-                    if unknown[nr, nc] and not visited_local[nr, nc]:
-                        visited_local[nr, nc] = True
-                        q.append((nr, nc))
-
-        return count
-
     # ------------------------------------------------------------------
     # Frontier selection — scoring
     # ------------------------------------------------------------------
@@ -505,6 +502,33 @@ class FrontierExplorer:
             if math.hypot(x - bx, y - by) < BLACKLIST_RADIUS:
                 return True
         return False
+
+    def _goal_cell_from_cluster(
+        self, cluster: FrontierCluster, grid_info
+    ) -> tuple[float, float]:
+        """
+        Return world (x, y) of the cluster cell closest to the centroid.
+
+        Why not navigate directly to the centroid?
+        - Centroid is an average of cell coords and may fall in unknown/inflated space.
+        - Closest-to-centroid picks a guaranteed-free interior cell and forces
+          actual travel (unlike closest-to-robot, which Nav2 may satisfy immediately).
+        """
+        res = grid_info.resolution
+        ox = grid_info.origin.position.x
+        oy = grid_info.origin.position.y
+        cx, cy = cluster.centroid_world
+        centroid_r = (cy - oy) / res - 0.5
+        centroid_c = (cx - ox) / res - 0.5
+        goal_x, goal_y = cx, cy  # fallback (centroid itself)
+        min_d = math.inf
+        for r, c in cluster.cells:
+            d = math.hypot(r - centroid_r, c - centroid_c)
+            if d < min_d:
+                min_d = d
+                goal_x = ox + (c + 0.5) * res
+                goal_y = oy + (r + 0.5) * res
+        return goal_x, goal_y
 
     def _select_patrol_target(
         self, grid: OccupancyGrid
@@ -659,12 +683,179 @@ class FrontierExplorer:
         for line in lines:
             self._logger.info(line)
 
+    def _write_timeline(self) -> None:
+        """Write a self-contained markdown profile: summary table + raw timeline."""
+        entries = self._timeline
+        if not entries:
+            return
+
+        t_end = self._sim_time()
+        t0 = entries[0]["t"]
+        total_time = t_end - t0
+        if total_time <= 0:
+            return
+
+        # Compute duration per entry (gap to next entry; last entry → t_end)
+        for i in range(len(entries)):
+            t_next = entries[i + 1]["t"] if i + 1 < len(entries) else t_end
+            entries[i]["dur"] = t_next - entries[i]["t"]
+
+        # Summary: group by phase. Count + total come from timeline entries;
+        # dist/rot come from per-phase odom accumulators (accurate time-weighted
+        # averages, not phase-start velocity snapshots).
+        summary: dict[str, dict] = defaultdict(lambda: {"count": 0, "total": 0.0})
+        for e in entries:
+            s = summary[e["phase"]]
+            s["count"] += 1
+            s["total"] += e["dur"]
+
+        with self._odom_lock:
+            meters = self._meters_traveled
+            phase_dist = dict(self._phase_dist)
+            phase_rot = dict(self._phase_rot)
+            phase_sample_time = dict(self._phase_sample_time)
+
+        traveling_time = summary["traveling"]["total"] if "traveling" in summary else 0.0
+
+        # Compare profiled budget against the sandbox mission time (if available)
+        # to surface any unmeasurable startup gap — time spent BEFORE _explore_loop
+        # runs (mission fetch, OWLv2 detector spawn, AgentNode init).
+        unmeasured_gap_str = "n/a (no recent sandbox result found)"
+        try:
+            sandbox_results = Path.home() / "Projects" / "robot-sandbox" / "results"
+            if sandbox_results.is_dir():
+                candidates = sorted(
+                    sandbox_results.glob("*.json"),
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                )
+                if candidates:
+                    latest = candidates[0]
+                    age_s = datetime.now().timestamp() - latest.stat().st_mtime
+                    # Window must cover: sandbox write → bailout → node shutdown
+                    # → profile write. Observed ~190s; 15 min gives headroom
+                    # without risking cross-run confusion (most-recent wins).
+                    if age_s < 900.0:
+                        data = json.loads(latest.read_text())
+                        raw = data.get("raw_metrics", {}) or {}
+                        mission_time = float(
+                            raw.get("task_completion_time")
+                            or data.get("elapsed_seconds")
+                            or 0.0
+                        )
+                        if mission_time > 0:
+                            gap = mission_time - total_time
+                            # Negative gap = profile window exceeds mission
+                            # (shutdown overhead after timeout). Means no
+                            # measurable pre-_explore_loop gap exists.
+                            gap_fmt = (
+                                f"{gap:.1f}s" if gap > 1.0
+                                else f"~0s (profile ≥ mission)"
+                            )
+                            unmeasured_gap_str = (
+                                f"{gap_fmt}"
+                                f" (mission={mission_time:.1f}s,"
+                                f" profiled={total_time:.1f}s;"
+                                f" source={latest.name})"
+                            )
+        except Exception as exc:
+            self._logger.debug(f"Unmeasured-gap lookup failed: {exc}")
+            unmeasured_gap_str = f"n/a ({exc})"
+
+        lines: list[str] = []
+        ts = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        lines.append(f"# Run Profile — {ts}")
+        lines.append("")
+        lines.append(f"- **Budget:** {total_time:.1f} sim-s"
+                     f" (from first `_tl` call to end — includes `startup` phase)")
+        lines.append(f"- **Unmeasured startup:** {unmeasured_gap_str}")
+        lines.append(f"- **Distance:** {meters:.1f} m (odom-integrated)")
+        lines.append(f"- **Effective speed:** {meters / total_time:.3f} m/s"
+                     f" ({meters / total_time * 3.6:.2f} km/h)")
+        if traveling_time > 0:
+            lines.append(f"- **Moving speed:** {meters / traveling_time:.3f} m/s"
+                         f" (during 'traveling' phases only)")
+            lines.append(f"- **Moving fraction:** {traveling_time / total_time * 100:.1f}%"
+                         f" ({traveling_time:.1f} / {total_time:.1f} s)")
+        lines.append("")
+
+        # Summary table — sorted by total time descending
+        lines.append("## Summary")
+        lines.append("")
+        lines.append("| Phase | Count | Total (s) | Mean (s) | % budget |"
+                     " Avg vx (m/s) | Avg wz (rad/s) |")
+        lines.append("|---|---|---|---|---|---|---|")
+        for phase, s in sorted(summary.items(), key=lambda x: -x[1]["total"]):
+            mean = s["total"] / s["count"]
+            pct = 100.0 * s["total"] / total_time
+            # Divide integrators by actual sample time (Σdt during this phase)
+            # — not timeline duration — so dropped callbacks don't bias avgs.
+            sample_t = phase_sample_time.get(phase, 0.0)
+            avg_vx = phase_dist.get(phase, 0.0) / sample_t if sample_t > 0 else 0.0
+            avg_wz = phase_rot.get(phase, 0.0) / sample_t if sample_t > 0 else 0.0
+            lines.append(f"| {phase} | {s['count']} | {s['total']:.1f} |"
+                         f" {mean:.1f} | {pct:.1f}% | {avg_vx:.3f} | {avg_wz:.3f} |")
+        lines.append(f"| **Total** | | **{total_time:.1f}** | | **100%** | | |")
+        lines.append("")
+
+        # Per-goal summary
+        goal_nums = sorted({e["goal"] for e in entries if e["goal"] > 0})
+        if goal_nums:
+            lines.append("## Per-goal breakdown")
+            lines.append("")
+            lines.append("| Goal | Nav (s) | Waiting (s) | Rotating (s) |"
+                         " Traveling (s) | BFS+Sel (s) | Result |")
+            lines.append("|---|---|---|---|---|---|---|")
+            for gn in goal_nums:
+                ge = [e for e in entries if e["goal"] == gn]
+                nav_t = sum(e["dur"] for e in ge
+                            if e["phase"] in ("waiting", "rotating", "traveling",
+                                              "nav2_accepted"))
+                wait_t = sum(e["dur"] for e in ge if e["phase"] == "waiting")
+                rot_t = sum(e["dur"] for e in ge if e["phase"] == "rotating")
+                trav_t = sum(e["dur"] for e in ge if e["phase"] == "traveling")
+                bfs_t = sum(e["dur"] for e in ge
+                            if e["phase"] in ("bfs_detect", "frontier_select"))
+                result_phases = [e["phase"] for e in ge
+                                 if e["phase"] in ("goal_reached", "goal_failed", "goal_stuck")]
+                result_str = result_phases[-1] if result_phases else "?"
+                lines.append(f"| {gn} | {nav_t:.1f} | {wait_t:.1f} | {rot_t:.1f} |"
+                             f" {trav_t:.1f} | {bfs_t:.1f} | {result_str} |")
+            lines.append("")
+
+        # Raw timeline
+        lines.append("## Timeline")
+        lines.append("")
+        lines.append("| sim_t | dur_s | phase | goal | vx | wz | notes |")
+        lines.append("|---|---|---|---|---|---|---|")
+        for e in entries:
+            t_rel = e["t"] - t0
+            lines.append(f"| {t_rel:.1f} | {e['dur']:.1f} | {e['phase']} |"
+                         f" {e['goal']} | {e['vx']:.2f} | {e['wz']:.2f} |"
+                         f" {e.get('notes', '')} |")
+        lines.append("")
+
+        # Write file
+        out_dir = Path(__file__).resolve().parent.parent / "results"
+        out_dir.mkdir(exist_ok=True)
+        out_path = out_dir / f"profile_{datetime.now().strftime('%Y%m%dT%H%M%S')}.md"
+        out_path.write_text("\n".join(lines) + "\n")
+        self._logger.info(f"FrontierExplorer: profile written to {out_path}")
+
     def _sim_time(self) -> float:
         """Return current ROS clock time in seconds (sim time when use_sim_time=True)."""
         return self._node.get_clock().now().nanoseconds / 1e9
 
+    def _sim_sleep(self, sim_seconds: float, max_wall: float = 30.0) -> None:
+        """Sleep until sim_seconds of sim-time elapse (wall-clock safety ceiling)."""
+        t0_sim = self._sim_time()
+        t0_wall = time.time()
+        while (self._sim_time() - t0_sim < sim_seconds
+               and time.time() - t0_wall < max_wall):
+            time.sleep(0.1)
+
     def _send_goal_and_wait(
-        self, goal_x: float, goal_y: float, frame_id: str
+        self, goal_x: float, goal_y: float, frame_id: str, goal_num: int = 0
     ) -> tuple[Optional[bool], float, float, float]:
         """
         Send a NavigateToPose goal and block until it succeeds, fails, or the
@@ -714,6 +905,7 @@ class FrontierExplorer:
         _t_accept = self._sim_time()
         accept_latency = _t_accept - _t_send
         self._logger.info(f"FrontierExplorer: TIMING accept={accept_latency:.1f}s")
+        self._tl("nav2_accepted", goal_num, f"accept_lat={accept_latency:.1f}s")
 
         self._active_goal_handle = goal_handle
         self._last_move_time = _t_accept
@@ -726,6 +918,8 @@ class FrontierExplorer:
 
         result_future = goal_handle.get_result_async()
         _first_move_t = _nan  # sim-seconds from accept to first 0.15 m displacement
+        _sub = "waiting"      # nav sub-phase for timeline profiling
+        _wall_accept = time.time()  # wall-clock escape: catch dead sim (clock frozen)
 
         while not result_future.done():
             time.sleep(0.2)
@@ -741,6 +935,18 @@ class FrontierExplorer:
             # false positives (wall-clock 30 s at RTF=0.1 = only 3 sim seconds).
             with self._odom_lock:
                 rx, ry = self._robot_x, self._robot_y
+                vx, wz = self._robot_vx, self._robot_wz
+
+            # Sub-phase detection for timeline profiling
+            if abs(vx) >= 0.05:
+                new_sub = "traveling"
+            elif abs(wz) >= 0.1:
+                new_sub = "rotating"
+            else:
+                new_sub = "waiting"
+            if new_sub != _sub:
+                self._tl(new_sub, goal_num)
+                _sub = new_sub
 
             # Track first significant displacement from accept position.
             if math.isnan(_first_move_t):
@@ -756,6 +962,7 @@ class FrontierExplorer:
                 self._logger.warning(
                     "FrontierExplorer: stuck detected — cancelling goal."
                 )
+                self._tl("goal_stuck", goal_num)
                 cancel_future = goal_handle.cancel_goal_async()
                 cancel_deadline = time.time() + 5.0
                 while not cancel_future.done() and time.time() < cancel_deadline:
@@ -765,6 +972,18 @@ class FrontierExplorer:
             if not self._exploring:
                 cancel_future = goal_handle.cancel_goal_async()
                 cancel_deadline = time.time() + 5.0
+                while not cancel_future.done() and time.time() < cancel_deadline:
+                    time.sleep(0.1)
+                return False, accept_latency, _first_move_t, self._sim_time() - _t_accept
+
+            # Wall-clock escape: if a single goal takes > 180 wall-seconds,
+            # the sim is likely dead (clock frozen, Nav2 unresponsive).
+            if time.time() - _wall_accept > 180.0:
+                self._logger.warning(
+                    "FrontierExplorer: wall-clock timeout (180s) — sim likely dead, bailing out."
+                )
+                cancel_future = goal_handle.cancel_goal_async()
+                cancel_deadline = time.time() + 3.0
                 while not cancel_future.done() and time.time() < cancel_deadline:
                     time.sleep(0.1)
                 return False, accept_latency, _first_move_t, self._sim_time() - _t_accept
