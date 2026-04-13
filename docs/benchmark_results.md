@@ -4,6 +4,48 @@ Historical performance snapshots. Append new entries on top; keep older ones for
 
 ---
 
+## 2026-04-12 — Task 6a profiling run (seed=55, easy, speed=2, perception ON)
+
+First run with timeline profiler instrumentation (#16). Validates profiling infrastructure and establishes the time-budget baseline for Task 6 (#17).
+
+| Metric | Value |
+|---|---|
+| Score / grade | **63.8 C** |
+| Found | 2/6 — FE#2 @ t=123.6 s, Person @ t=141.4 s |
+| Coverage | 64.7% |
+| Collisions | 0 |
+| `meters_traveled` | 20.6 m |
+| `avg_speed_kmh` | 0.244 |
+
+**Time budget (259.4 sim-s tracked, 100% accounted):**
+
+| Phase | % | Time (s) | Notes |
+|---|---|---|---|
+| **traveling** (linear motion) | **49.8%** | 129.3 | avg vx=0.174 m/s — well below vx_max 0.5 |
+| nav2_send (dispatch → accept) | 13.6% | 35.2 | 7.0 s mean/goal; includes GIL stalls |
+| goal_reached (result → next BFS) | 11.9% | 30.8 | pure loop overhead + GIL contention |
+| **rotating** (RotationShim) | **9.4%** | 24.3 | goal#2: 20.4 s rotation; goal#3: 4.0 s |
+| recovery (backup + clear) | 5.4% | 14.0 | 1 failure; wall-clock deadlines inflate at RTF > 1 |
+| nav2_accepted → first motion | 2.9% | 7.5 | 1.5 s mean — planner + BT startup |
+| BFS + frontier selection | 4.7% | 12.4 | reasonable |
+| other (stuck, sleep, failed) | 2.3% | 6.0 | — |
+
+**Key findings:**
+- **Robot moving only 49.8% of the time.** The other 50% is overhead: goal dispatch (16.5%), inter-goal loop stalls (11.9%), rotation (9.4%), recovery (5.4%).
+- **Moving speed 0.154 m/s** — MPPI is conservative. CostCritic + corridor inflation keep average well below 0.5 m/s max.
+- **GIL contention is a real tax.** The 4-thread MultiThreadedExecutor processing high-frequency callbacks (odom 20 Hz, TF 30+ Hz) preempts the explorer thread. `nav2_send` and `goal_reached` phases include 5–10 s of pure scheduling waste per occurrence.
+- **post_goal_sleep shows 0.0 s** — the `time.sleep → _sim_sleep` fix is working; 3 sim-s sleep completed in ~1.5 wall-s at RTF 2.0.
+
+**Levers for Task 6 (2× speed target):**
+1. Reduce nav2 dispatch overhead (35.2 → <10 s) — investigate bt_navigator acceptance latency
+2. Reduce inter-goal loop stalls (30.8 → <5 s) — GIL optimization or reduce executor thread count
+3. Faster rotation (24.3 → <10 s) — tune `rotate_to_heading_angular_vel` or reduce `angular_dist_threshold`
+4. Increase moving speed (0.154 → 0.20+ m/s) — tune MPPI temperature, reduce CostCritic weight in open areas
+
+Profile: `results/profile_20260412T173435.md` · Results: `robot-sandbox/results/office_easy_001_20260412T173145.json`
+
+---
+
 ## 2026-04-10 — Fresh-seed perception runs (seeds 123, 7, 99, easy, speed=2, perception ON)
 
 Three scored runs with full perception after all Task 1–4 fixes landed, to test generalization beyond seed=42. seed=99 also verifies the issue #12 fix (`meters_traveled` / `avg_speed_kmh`).

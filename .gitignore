@@ -73,3 +73,6 @@ debug/
 
 # agent-scripts (local Claude workflow tooling, not part of this project)
 agent-scripts/
+
+# profiling results 
+results/*

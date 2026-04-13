@@ -11,6 +11,7 @@ Read in order before doing anything:
 Do NOT skip reading these files!
 
 Open and closed work lives in GitHub issues (`gh issue list`). Before proposing a change in a previously-touched area, check closed issues: `gh issue list --state closed --label dead-end` and `gh issue list --state closed --label task`.
+
 ---
 
 ## Hard rules
@@ -56,19 +57,20 @@ The sim, launch files, config, and hardware setup are all fair game. If somethin
 
 ## Code quality
 
-- Files approaching ~500 LOC: split or refactor before adding more code.
+- Files approaching ~500 LOC: split or refactor before adding more.
 - After any major addition: check whether existing code can be simplified, merged, or removed.
-- Prefer end-to-end verification over unit tests in isolation; if blocked, say what's missing.
+- Prefer end-to-end verification; if blocked, say what's missing.
+- New deps: quick health check (recent releases, adoption).
 
 ---
 
 ## Way of working
 - Style: telegraph; noun-phrases ok; drop grammar; min tokens.
-- Web: search early; quote exact errors; prefer 2024–2025 sources.
+- Web: search early; quote exact errors; prefer 2025–2026 sources.
 - Unsure: read more code; if still stuck, ask w/ short options.
 - Conflicts: call out; pick safer path.
 - Leave breadcrumb notes in thread.
-
+- Unrecognised changes: assume other agent; keep going; focus your changes. If causes issues, stop + ask.
 
 ## Tools
 CLI tools available on Tjalling's machines. Use these for agentic tasks.

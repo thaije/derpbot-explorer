@@ -16,6 +16,14 @@ Current state lives in [`STATE.md`](STATE.md). History lives in closed issues + 
 
 ## Next
 
+### Task 6a — Profile per-goal time budget · [#16](https://github.com/thaije/derpbot-explorer/issues/16)
+Timeline profiler in frontier_explorer: every sim-second accounted for, zero "untracked". **✅ Done** — profile infrastructure validated, seed=55 baseline captured. See [benchmark_results.md](benchmark_results.md).
+
+### Task 6 — 2× average speed · [#17](https://github.com/thaije/derpbot-explorer/issues/17)
+Double avg_speed from ~0.07 → ~0.14 m/s by reducing downtime. Profiling shows robot moving only 50% of the time; biggest levers: Nav2 dispatch overhead (13.6%), inter-goal loop stalls (11.9%), rotation (9.4%).
+**Blocked on:** Task 6a ✅
+**DoD:** `avg_speed_kmh` ≥ 0.50 on ≥ 3 seeds, 0 collision regression.
+
 ### Task 5 — Detection-aware exploration · [#8](https://github.com/thaije/derpbot-explorer/issues/8)
 Revisit partially-detected areas so the detection rate exceeds the pure-coverage ceiling. Nav is now good enough (Task 4: 71% coverage, 0 collisions); score is gated by perception. Next big lever.
 **Blocked on:** Tasks 1–4 ✅
@@ -39,7 +47,6 @@ Known issues not currently prioritized. Full details in the linked issues; check
 - [#9](https://github.com/thaije/derpbot-explorer/issues/9) — Cold-start delay ~11 s on goals 1–2 (first_move)
 - [#10](https://github.com/thaije/derpbot-explorer/issues/10) — Frontier explorer picks off-map points
 - [#11](https://github.com/thaije/derpbot-explorer/issues/11) — MPPI "Failed to make progress" cascade mid-nav (may be fixed by Task 4)
-- [#12](https://github.com/thaije/derpbot-explorer/issues/12) — Upstream: `avg_speed_kmh` reporting bug in `robot-sandbox`
 - [#13](https://github.com/thaije/derpbot-explorer/issues/13) — Enable `collision_monitor` realtime priority (needs rtprio grant)
 - [#14](https://github.com/thaije/derpbot-explorer/issues/14) — Client-side goal pre-validation via `PyCostmap2D`
 - [#15](https://github.com/thaije/derpbot-explorer/issues/15) — Use `ClearCostmapAroundPose` (Jazzy) for targeted clearing

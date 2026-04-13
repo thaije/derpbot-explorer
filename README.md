@@ -60,6 +60,18 @@ rviz2 -d config/derpbot_rviz.rviz
 Shows: occupancy map, global costmap, lidar scan, robot model, TF frames, planned path, goal pose, RGB camera feed. Use the **Nav2** panel or **2D Goal Pose** tool to send goals manually.
 
 
+## Run profiling
+
+Every run auto-writes a per-goal timeline profile to `results/profile_<UTC>.md` — phase budget table, per-goal breakdown, and the raw state-transition timeline. No flag needed. Use it when you want to know where sim-time is going (waiting on Nav2 acceptance vs rotating vs traveling vs recovery, etc.).
+
+```bash
+# Summarise the most recent profile
+python3.12 scripts/profile_run.py
+
+# Or compare specific runs
+python3.12 scripts/profile_run.py results/profile_*.md
+```
+
 ## Cleanup between runs
 
 The stack uses tmux sessions (`fds`, `sim`, `slam`, `nav2`, `agent`). Leftover processes from a previous run will corrupt the next one (stale TF, inactive Nav2 lifecycle, etc.).

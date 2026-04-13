@@ -96,6 +96,8 @@ python3.12 agent/agent_node.py --no-perception  # nav-only, found_ratio=0
 
 Results: `~/Projects/robot-sandbox/results/`. Key fields: `overall_score`, `overall_grade`, `raw_metrics.found_ratio`, `raw_metrics.exploration_coverage`, `raw_metrics.collision_count`.
 
+**Per-run timeline profile** (auto-written every run, no flag needed): `results/profile_<UTC>.md`. Phase budget table + per-goal breakdown + raw timeline. Use when diagnosing where sim-time goes (waiting / rotating / traveling / nav2_send / recovery). Summarise with `python3.12 scripts/profile_run.py [path]` (defaults to most recent; pass globs to compare runs).
+
 ---
 
 ## Issue tracker
