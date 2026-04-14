@@ -207,6 +207,14 @@ def write_timeline(
                      f" {mean:.1f} | {pct:.1f}% | {avg_vx:.3f} | {avg_wz:.3f} |")
     lines.append(f"| **Total** | | **{total_time:.1f}** | | **100%** | | |")
     lines.append("")
+    lines.append("> ⚠️ **`rotating` / `waiting` phase durations and `Avg wz` are unreliable.**"
+                 " The sub-phase classifier in `_send_goal_and_wait` is sticky: when the"
+                 " polling loop is GIL-starved under Nav2 contention, it stops re-evaluating,"
+                 " so a single `rotating` entry can span the full nav window (active rotation"
+                 " + idle gaps). The time-weighted `Avg wz` therefore reads much lower than the"
+                 " bot's actual commanded/peak wz. Do **not** infer \"rotation is slow\" from"
+                 " this number — instrument `cmd_vel` directly. See #16 closing notes.")
+    lines.append("")
 
     # Per-goal summary
     goal_nums = sorted({e["goal"] for e in entries if e["goal"] > 0})

@@ -255,7 +255,7 @@ class FrontierExplorer:
 
             if current_map is None:
                 self._logger.info("FrontierExplorer: waiting for /map…")
-                time.sleep(1.0)
+                time.sleep(0.1)
                 continue
 
             with self._odom_lock:
@@ -340,8 +340,8 @@ class FrontierExplorer:
                 self._recover_from_occupied_start()
                 # Brief pause — give Nav2 time to finish cancellation/cleanup
                 # before we send the next goal (avoids acceptance future delays).
-                self._tl("post_goal_sleep", _goal_num, "3.0s sim")
-                self._sim_sleep(3.0)
+                self._tl("post_goal_sleep", _goal_num, "1.0s sim")
+                self._sim_sleep(1.0)
             elif result is None:
                 # Track consecutive rejections of the same centroid.
                 if math.hypot(cx - _last_reject_cx, cy - _last_reject_cy) < BLACKLIST_RADIUS:
@@ -363,8 +363,8 @@ class FrontierExplorer:
                         f" nav={_t_nav:.1f}s — streak={_reject_streak}/{MAX_REJECT_STREAK}, retrying."
                     )
                 # Nav2 busy or acceptance timed out — brief pause before retry.
-                self._tl("rejection_sleep", _goal_num, "5.0s sim")
-                self._sim_sleep(5.0)
+                self._tl("rejection_sleep", _goal_num, "1.0s sim")
+                self._sim_sleep(1.0)
 
             _t_last_goal_end = self._sim_time()
             self._goal_stats.append(GoalStats(
