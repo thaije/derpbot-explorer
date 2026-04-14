@@ -156,7 +156,7 @@ if [[ $START_AGENT -eq 1 ]]; then
     AGENT_FLAGS=""
     [[ $NO_PERCEPTION -eq 1 ]] && AGENT_FLAGS="--no-perception"
     echo "[5/5] Starting agent (flags: ${AGENT_FLAGS:-none})..."
-    tmux new -s agent -d "${ROS_ENV} cd $EXPLORER_ROOT && python3.12 agent/agent_node.py ${AGENT_FLAGS}"
+    tmux new -s agent -d "${ROS_ENV} cd $EXPLORER_ROOT && $EXPLORER_ROOT/.venv/bin/python agent/agent_node.py ${AGENT_FLAGS}"
 else
     echo "[5/5] Skipping agent (--no-agent)"
 fi

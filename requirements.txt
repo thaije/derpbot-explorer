@@ -1,4 +1,6 @@
 numpy
 pyyaml
 pillow
+torch
+transformers
 ultralytics
