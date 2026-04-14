@@ -131,6 +131,8 @@ def write_timeline(
     # to surface any unmeasurable startup gap — time spent BEFORE _explore_loop
     # runs (mission fetch, OWLv2 detector spawn, AgentNode init).
     unmeasured_gap_str = "n/a (no recent sandbox result found)"
+    scenario_str = "unknown"
+    seed_str = "unknown"
     try:
         sandbox_results = Path.home() / "Projects" / "robot-sandbox" / "results"
         if sandbox_results.is_dir():
@@ -148,6 +150,8 @@ def write_timeline(
                 if age_s < 900.0:
                     data = json.loads(latest.read_text())
                     raw = data.get("raw_metrics", {}) or {}
+                    scenario_str = str(data.get("scenario_name") or "unknown")
+                    seed_str = str(data.get("random_seed") or "unknown")
                     mission_time = float(
                         raw.get("task_completion_time")
                         or data.get("elapsed_seconds")
@@ -176,6 +180,7 @@ def write_timeline(
     ts = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     lines.append(f"# Run Profile — {ts}")
     lines.append("")
+    lines.append(f"- **Scenario:** {scenario_str}  ·  **Seed:** {seed_str}")
     lines.append(f"- **Budget:** {total_time:.1f} sim-s"
                  f" (from first `_tl` call to end — includes `startup` phase)")
     lines.append(f"- **Unmeasured startup:** {unmeasured_gap_str}")
