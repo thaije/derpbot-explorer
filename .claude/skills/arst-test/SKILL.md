@@ -9,24 +9,42 @@ user_invocable: true
 You are the **observer/tester**, not the driver. A separate autonomy stack controls DerpBot.
 Your job: start the sim, start the agent, monitor from the outside, and interpret results.
 
-All commands run from the ~/Projects/robot-sandbox repo root. PYTHONPATH and ROS env are set by hooks — no prefix needed.
+All paths: `~/Projects/derpbot-explorer` (explorer root), `~/Projects/robot-sandbox` (sandbox root).
+Always use `python3.12`.
+
+---
+
+## Environment setup (REQUIRED before any ROS2 command)
+
+The stack uses a FastDDS discovery server. All ROS2 CLI commands and monitoring scripts
+**must** have these env vars set, or they will see no topics/nodes:
+
+```bash
+. ~/Projects/derpbot-explorer/scripts/ros_env.sh
+```
+
+This sets `ROS_DISCOVERY_SERVER=127.0.0.1:11811`, `RMW_IMPLEMENTATION=rmw_fastrtps_cpp`,
+and `ROS_SUPER_CLIENT=1`. Source it at the start of each bash block that uses ros2 or
+calls rtf_monitor.py / world_state.py / robot_control.py.
 
 ---
 
 ## Scenario tiers
 
 See the AUTONOMOUS_AGENT_GUIDE.md file.
+
 ---
 
-## 1. Start the simulation
+## 1. Start the stack
 
-**Recommended: use `start_stack.sh`** (from the derpbot-explorer repo). It kills stale processes, restarts the ROS2 daemon, and starts sim → SLAM → Nav2 → agent in the correct order within 5s of sim ready.
+**Use `start_stack.sh`** (from the derpbot-explorer repo). It kills stale processes, restarts the
+ROS2 daemon, and starts sim → SLAM → Nav2 → agent in the correct order within 5s of sim ready.
 
 ```bash
 cd ~/Projects/derpbot-explorer
 
 # Full stack (sim + SLAM + Nav2 + agent)
-./scripts/start_stack.sh --speed 2 --seed 42
+./scripts/start_stack.sh --speed 2 --seed 42 --scenario easy
 
 # Without agent (benchmarking)
 ./scripts/start_stack.sh --speed 2 --seed 42 --no-agent
@@ -36,47 +54,43 @@ cd ~/Projects/derpbot-explorer
 
 # Options: --speed N (default 2), --seed N (default 42), --scenario TIER (default easy),
 #          --no-agent, --no-perception
+# Scenario tiers: easy, medium, hard, brutal, perception_stress
 ```
 
-Creates tmux sessions: `sim`, `slam`, `nav2`, `agent`. Then switch to `~/Projects/robot-sandbox` for monitoring.
-
-**Manual sim-only** (if needed):
-```bash
-cd ~/Projects/robot-sandbox
-tmux new -s sim -d './scripts/run_scenario.sh config/scenarios/office_explore_detect/easy.yaml --headless --seed 42 --speed 2'
-tmux capture-pane -t sim -p -S -20   # check startup
-```
-
-Wait ~5 s. Sim is ready when output shows "Simulation ready".
-
-**Check RTF — run synchronously from `~/Projects/robot-sandbox`:**
-```bash
-python3.12 scripts/rtf_monitor.py --samples 5
-python3.12 scripts/rtf_monitor.py --once   # single value
-```
-RTF should be near `--speed N`. Full stack at speed=2 achieves ~1.9. Sim ceiling is ~3× regardless of speed setting.
-
-> **Warning**: `rtf_monitor.py` produces empty output when run as a background shell task (Python stdout buffering). Always run it synchronously or use `--once` in a loop.
-
-After starting the agent, check RTF again — a sustained drop below 0.5× target means something is wrong.
+Creates tmux sessions: `sim`, `slam`, `nav2`, `agent`. Wait for `=== Stack launched ===`.
 
 ---
 
-## 2. Start the autonomous agent
+## 2. Check RTF immediately after launch
 
-Run the robot's agent script in a separate tmux session:
 ```bash
-tmux new -s agent -d 'python3.12 <path/to/agent_script.py>'
-tmux capture-pane -t agent -p -S -30   # watch agent output
+. ~/Projects/derpbot-explorer/scripts/ros_env.sh
+cd ~/Projects/robot-sandbox && python3.12 scripts/rtf_monitor.py --once
 ```
 
-The agent controls the robot via ROS topics or `robot_control.py`. You do not drive.
+Run this 3 times over ~30s. Expected: ~1.9 at speed=2.
+
+**Abort if RTF < 1.0 sustained** — autonomy is too heavy. Kill stack, report to main agent.
 
 ---
 
-## 3. Monitor ground-truth progress (world_state.py)
+## 3. Check for TF flood (first 60s wall-time after launch)
 
-This is your primary observability tool. Call it any time to get a full status snapshot.
+```bash
+tmux capture-pane -t agent -p -S -50
+```
+
+**TF flood symptom**: agent logs show Nav2 goals immediately aborting (status 6), robot never moves,
+and Nav2/SLAM logs flooded with `TF_OLD_DATA` or timestamp warnings.
+
+**If detected**: kill stack (`./scripts/start_stack.sh` will clean up on next call), report to main agent.
+Do NOT retry more than once — this is a known hard failure, not a transient issue.
+
+---
+
+## 4. Monitor ground-truth progress
+
+Primary observability tool — call every 30s wall-time until scenario ends.
 
 ```bash
 # Default: writes arst_world_map.png in repo root, prints full status
@@ -85,9 +99,9 @@ python3.12 scripts/world_state.py
 ```
 
 **Output includes:**
-- Object list with status: `not found`, `FOUND ✓`, or `not found  [visible 👁]`
+- Object list with status: `not found`, `FOUND ✓`, or `not found  [visible]`
 - Robot pose (world frame, yaw, facing direction)
-- Collision status: `⚡ COLLISION` or `no collision`
+- Collision status: `COLLISION` or `no collision`
 - Elapsed time and remaining time (when scenario is active)
 
 **Map legend:**
@@ -99,18 +113,16 @@ python3.12 scripts/world_state.py
 **Save to a custom path** (useful for comparing across time):
 ```bash
 python3.12 scripts/world_state.py --png /tmp/map_t0.png
-# ... later ...
-python3.12 scripts/world_state.py --png /tmp/map_t1.png
 ```
 
 **Post-run — render map from a results file** (no sim needed):
 ```bash
-python3.12 scripts/world_state.py --results results/office_medium_001_<timestamp>.json --no-ros
+python3.12 scripts/world_state.py --results results/<file>.json --no-ros
 ```
 
 ---
 
-## 4. Check robot pose and camera
+## 5. Check robot pose and camera
 
 ```bash
 # Print current pose (world frame, yaw):
@@ -119,19 +131,11 @@ python3.12 scripts/robot_control.py status
 # Take a camera snapshot (what the robot currently sees):
 python3.12 scripts/robot_control.py snapshot
 # Default output: /tmp/robot_snapshot.png — then: Read /tmp/robot_snapshot.png
-
-# Save to a named path:
-python3.12 scripts/robot_control.py snapshot --output /tmp/snap_t1.png
 ```
-
-Use these to diagnose agent behaviour:
-- Robot stuck? `status` to get pose, compare across calls.
-- Agent claiming to see objects? `snapshot` to verify the camera view.
-- Collision event? `world_state.py` shows collision ring on robot in map.
 
 ---
 
-## 5. Read live tmux output
+## 6. Read live tmux output
 
 ```bash
 # Sim logs (last 30 lines):
@@ -146,7 +150,7 @@ The results JSON is written to `results/` automatically.
 
 ---
 
-## 6. Interpret the results JSON
+## 7. Interpret the results JSON
 
 Results land in `results/<scenario_name>_<timestamp>.json`.
 
@@ -178,18 +182,74 @@ Category weights: speed 20%, accuracy 30%, safety 25%, efficiency 10%, effective
 
 ---
 
-## 7. Monitoring loop (while agent runs)
+## 8. Monitoring loop (while agent runs)
 
-Repeat until scenario ends or time runs out:
+Repeat every 30s wall-time until scenario ends or time runs out:
 
+```bash
+. ~/Projects/derpbot-explorer/scripts/ros_env.sh
+
+# Ground truth status
+cd ~/Projects/robot-sandbox && python3.12 scripts/world_state.py
+
+# Agent logs
+tmux capture-pane -t agent -p -S -50
+
+# Sim logs (check for SUCCESS / TIME_LIMIT)
+tmux capture-pane -t sim -p -S -20
 ```
-world_state.py  →  Read map  →  check found count + collision status
-robot_control.py status  →  check pose if robot seems stuck
-tmux capture-pane -t agent  →  watch for errors or stalls
+
+Read the map PNG after each `world_state.py` call.
+
+---
+
+## Abort conditions — kill stack and report immediately
+
+| Condition | How to detect |
+|---|---|
+| RTF < 1.0 for >60s wall-time | `rtf_monitor.py --once` repeatedly low |
+| Robot not moving for >120s wall-time | `robot_control.py status` pose unchanged across 2+ checks |
+| Agent process crashed | `tmux capture-pane -t agent` shows traceback + no new output |
+| Nav2 lifecycle startup failure | Nav2 logs: "failed to send response to /smoother_server/change_state" |
+| TF flood | Agent logs show Nav2 goals immediately aborting (status 6), TF_OLD_DATA warnings |
+
+For Nav2 lifecycle failure: kill stack and restart once. If it fails again, report to main agent.
+
+---
+
+## 9. Scenario end
+
+Scenario ends when sim prints `SUCCESS` or `TIME_LIMIT`.
+
+```bash
+# Get most recent results file
+ls -t ~/Projects/robot-sandbox/results/ | head -1
+
+# Read it
+cat ~/Projects/robot-sandbox/results/<filename>
 ```
 
-Polling interval: every 15–30 s wall-time is enough unless debugging a specific issue.
-At `--speed 3`, 30 s wall = 90 s sim. Check more often for short timeouts.
+Report back:
+- `overall_score` + `overall_grade`
+- `raw_metrics.found_ratio`, `exploration_coverage`, `collision_count`, `near_miss_count`
+- Any abort conditions that fired during the run
+- Final world_state map (run `world_state.py --no-ros --results <file>` and read the PNG)
+- If there were multiple scenarios run, for instance to retry after an issue, and which one is the correct one.
+
+---
+
+## Kill stack (cleanup)
+
+```bash
+for sess in agent nav2 slam sim fds; do tmux kill-session -t $sess 2>/dev/null || true; done
+pkill -9 -f "gz sim" 2>/dev/null || true
+pkill -9 -f "parameter_bridge" 2>/dev/null || true
+pkill -9 -f "scenario_runner" 2>/dev/null || true
+pkill -9 -f "fastdds discovery" 2>/dev/null || true
+ros2 daemon stop 2>/dev/null || true
+```
+
+Always clean up before reporting, even on abort.
 
 ---
 
@@ -200,4 +260,4 @@ At `--speed 3`, 30 s wall = 90 s sim. Check more often for short timeouts.
 - **`robot_control.py status/snapshot` requires a running sim** (needs ROS topics).
 - **Timeout is in sim-seconds** — `timeout_seconds: 900` in the scenario config means 900 sim-seconds. At `--speed 2`, that's ~450 wall-clock seconds. At `--speed 3`, ~300 wall-clock seconds.
 - **Robot autonomy can significantly impact sim RTF**: minimum RTF is 1.0. Anything lower and the autonomy is too heavy, and needs to be made more efficient.
-
+- **RTF should be checked immediately after launch** and monitored throughout — sustained drop below 0.5× target means something is wrong.
