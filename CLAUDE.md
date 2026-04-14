@@ -32,6 +32,9 @@ No band-aids or workarounds that mask the real problem. If the same approach fai
 **Environment is changeable**
 The sim, launch files, config, and hardware setup are all fair game. If something is a fundamental bottleneck (CPU, GPU, broken config, sim bug), flag it explicitly — don't silently work around it. Hardware issues should be escalated to Tjalling.
 
+**Never conclude from a single run**
+Scores, coverage, and per-phase profile numbers are high-variance across seeds and repeat runs. Before trusting a delta, run ≥ 2 seeds (or repeats) for both baseline and change; report mean + range.
+
 ---
 
 ## Git
