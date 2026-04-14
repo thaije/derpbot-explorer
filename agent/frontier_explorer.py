@@ -18,6 +18,8 @@ import threading
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
+
+_WALL_T0 = time.time()
 from typing import Callable, Optional
 
 import numpy as np
@@ -26,7 +28,7 @@ from profiler import GoalStats, log_timing_table, write_timeline
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import OccupancyGrid, Odometry
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, Twist
 from nav2_msgs.action import BackUp, NavigateToPose
 from nav2_msgs.srv import ClearEntireCostmap
 from rclpy.action import ActionClient
@@ -39,31 +41,37 @@ UNKNOWN = -1
 
 # Frontier scoring weights
 # Score = W_SIZE * cluster.size - W_DIST * dist
-W_SIZE = 1.0    # prefer large frontier clusters (larger cluster = more open frontier edge)
-W_DIST = 1.5    # penalise distance from robot (lowered from 2.0 to push the robot
-                # toward distant unexplored areas; 4.0 is too local, 0.5 causes thrashing)
+W_SIZE = (
+    1.0  # prefer large frontier clusters (larger cluster = more open frontier edge)
+)
+W_DIST = 1.5  # penalise distance from robot (lowered from 2.0 to push the robot
+# toward distant unexplored areas; 4.0 is too local, 0.5 causes thrashing)
 
 # Stuck detection
-STUCK_DIST_THRESHOLD = 0.10   # metres — robot must move this far
-STUCK_TIME_THRESHOLD = 30.0   # seconds (Nav2 rotates first; give it time to start translating)
+STUCK_DIST_THRESHOLD = 0.10  # metres — robot must move this far
+STUCK_TIME_THRESHOLD = (
+    30.0  # seconds (Nav2 rotates first; give it time to start translating)
+)
 
 # Blacklist radius: frontiers within this distance of a failed goal are blacklisted
-BLACKLIST_RADIUS = 0.5        # metres
+BLACKLIST_RADIUS = 0.5  # metres
 
 # Patrol mode: kicks in after all LIDAR frontiers are exhausted.
 # Selects free cells that are far from any previously visited goal (LIDAR coverage
 # does not imply camera coverage; the robot must physically visit all regions).
-PATROL_MIN_DIST = 2.0     # metres — patrol target must be > this far from all visited goals
-                          # 3.0m excluded fire_ext#2 at (1.7,4.7) which is ~2.7m from robot start
-PATROL_STEP_M = 1.0       # metres — coarse grid sampling resolution for patrol targets
+PATROL_MIN_DIST = (
+    2.0  # metres — patrol target must be > this far from all visited goals
+)
+# 3.0m excluded fire_ext#2 at (1.7,4.7) which is ~2.7m from robot start
+PATROL_STEP_M = 1.0  # metres — coarse grid sampling resolution for patrol targets
 
 # Minimum cluster size to be considered a meaningful frontier
-MIN_FRONTIER_SIZE = 5         # cells
+MIN_FRONTIER_SIZE = 5  # cells
 
 
 @dataclass
 class FrontierCluster:
-    cells: list[tuple[int, int]]    # (row, col) in grid frame
+    cells: list[tuple[int, int]]  # (row, col) in grid frame
     centroid_world: tuple[float, float]  # (x, y) in map frame (metres)
 
     @property
@@ -103,7 +111,7 @@ class FrontierExplorer:
         # time-weighted avg speeds rather than phase-start velocity snapshots.
         self._current_phase: str = "init"
         self._phase_dist: dict[str, float] = defaultdict(float)  # ∫|vx|·dt per phase
-        self._phase_rot: dict[str, float] = defaultdict(float)   # ∫|wz|·dt per phase
+        self._phase_rot: dict[str, float] = defaultdict(float)  # ∫|wz|·dt per phase
         self._phase_sample_time: dict[str, float] = defaultdict(float)  # Σdt per phase
         self._last_odom_sim_t: float = 0.0
 
@@ -113,7 +121,9 @@ class FrontierExplorer:
         self._last_move_time: float = 0.0  # set to sim time when each goal starts
 
         self._blacklist: list[tuple[float, float]] = []  # world coords of failed goals
-        self._visited_goals: list[tuple[float, float]] = []  # all goal positions attempted
+        self._visited_goals: list[
+            tuple[float, float]
+        ] = []  # all goal positions attempted
         self._active_goal_handle = None
         self._exploring = False
         self._goal_stats: list[GoalStats] = []
@@ -131,10 +141,13 @@ class FrontierExplorer:
             reliability=rclpy.qos.ReliabilityPolicy.RELIABLE,
         )
         reentrant = rclpy.callback_groups.ReentrantCallbackGroup()
-        node.create_subscription(OccupancyGrid, "/map", self._map_cb, map_qos,
-                                 callback_group=reentrant)
         node.create_subscription(
-            Odometry, "/derpbot_0/odom", self._odom_cb,
+            OccupancyGrid, "/map", self._map_cb, map_qos, callback_group=reentrant
+        )
+        node.create_subscription(
+            Odometry,
+            "/derpbot_0/odom",
+            self._odom_cb,
             rclpy.qos.QoSProfile(depth=10),
         )
 
@@ -159,6 +172,9 @@ class FrontierExplorer:
         self._clear_local_costmap = node.create_client(
             ClearEntireCostmap, "/local_costmap/clear_entirely_local_costmap"
         )
+
+        # Cmd_vel publisher for spinning during startup (accelerates slam_toolbox mapping)
+        self._cmd_vel_pub = node.create_publisher(Twist, "/derpbot_0/cmd_vel", 10)
 
     # ------------------------------------------------------------------
     # Callbacks
@@ -198,14 +214,16 @@ class FrontierExplorer:
         with self._odom_lock:
             vx, wz = self._robot_vx, self._robot_wz
             self._current_phase = phase
-        self._timeline.append({
-            "t": self._sim_time(),
-            "phase": phase,
-            "goal": goal_num,
-            "vx": vx,
-            "wz": wz,
-            "notes": notes,
-        })
+        self._timeline.append(
+            {
+                "t": self._sim_time(),
+                "phase": phase,
+                "goal": goal_num,
+                "vx": vx,
+                "wz": wz,
+                "notes": notes,
+            }
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -230,24 +248,69 @@ class FrontierExplorer:
 
     def _explore_loop(self) -> None:
         # Mark startup: captures Nav2 action-server wait + first /map wait.
-        # Ends when the first bfs_detect fires. Time spent BEFORE _explore_loop
-        # runs (mission fetch, detector spawn, AgentNode init) is not captured
-        # here — see the profile header's "Unmeasured startup" line for that.
+        # Time spent BEFORE _explore_loop runs (mission fetch, detector spawn,
+        # AgentNode init) is tracked in agent_node.py. Here we track from
+        # wait_for_server until first bfs_detect fires.
+        t0 = self._sim_time()
+        t0_wall = time.time()
         self._tl("startup", 0, "nav2 wait + map wait")
         self._logger.info("FrontierExplorer: waiting for Nav2 action server…")
+        t_nav2_start = self._sim_time()
         if not self._nav_client.wait_for_server(timeout_sec=60.0):
             self._logger.error("NavigateToPose action server not available — aborting.")
             self._done_callback()
             return
+        t_nav2_ready = self._sim_time()
+        self._logger.info(
+            f"[STARTUP TIMING] Nav2 wait: {t_nav2_ready - t_nav2_start:.2f}s"
+        )
 
+        # Wait for first /map to arrive (slam_toolbox must finish initial scan)
+        # Move robot in small circles to accelerate map building — slam_toolbox needs
+        # scan overlap from translation (not just rotation) to build a coherent map.
+        t_map_wait_start = self._sim_time()
+        t_map_wait_start_wall = time.time()
+        spin_msg = Twist()
+        spin_msg.linear.x = 0.1  # forward velocity
+        spin_msg.angular.z = 0.5  # rad/s — gentle arc
+        _publish_count = 0
+        while self._map is None and self._exploring and rclpy.ok():
+            self._cmd_vel_pub.publish(spin_msg)
+            _publish_count += 1
+            time.sleep(0.05)  # 20 Hz
+        t_map_ready = self._sim_time()
+        t_map_ready_wall = time.time()
+
+        self._logger.info(
+            f"[STARTUP] Moved during /map wait: {_publish_count} cmd_vel publishes"
+        )
+
+        # Stop moving
+        stop_msg = Twist()
+        self._cmd_vel_pub.publish(stop_msg)
+
+        if self._map is not None:
+            self._logger.info(
+                f"[STARTUP TIMING] first /map: {t_map_ready - t_map_wait_start:.2f}s sim, {t_map_ready_wall - t_map_wait_start_wall:.2f}s wall"
+            )
+        else:
+            self._logger.warning(
+                "[STARTUP TIMING] no /map received before exploration start"
+            )
+
+        self._logger.info(
+            f"[STARTUP TIMING] total startup phase: {t_map_ready - t0:.2f}s sim, {t_map_ready_wall - t0_wall:.2f}s wall"
+        )
         self._logger.info("FrontierExplorer: Nav2 ready. Starting exploration.")
 
-        _t_last_goal_end: float = self._sim_time()  # sim time when last goal cycle ended
+        _t_last_goal_end: float = (
+            self._sim_time()
+        )  # sim time when last goal cycle ended
         _goal_num: int = 0
-        _reject_streak: int = 0          # consecutive rejections of the same centroid
+        _reject_streak: int = 0  # consecutive rejections of the same centroid
         _last_reject_cx: float = math.nan
         _last_reject_cy: float = math.nan
-        MAX_REJECT_STREAK: int = 3       # blacklist after this many consecutive rejections
+        MAX_REJECT_STREAK: int = 3  # blacklist after this many consecutive rejections
 
         while self._exploring and rclpy.ok():
             with self._map_lock:
@@ -288,8 +351,11 @@ class FrontierExplorer:
             _t_idle = self._sim_time() - _t_last_goal_end  # BFS + selection overhead
             _t_goal_start = self._sim_time()
             if not is_patrol:
-                self._tl("frontier_select", _goal_num,
-                         f"({cx:.1f},{cy:.1f}) size={best.size} dist={math.hypot(cx-rx, cy-ry):.1f}")
+                self._tl(
+                    "frontier_select",
+                    _goal_num,
+                    f"({cx:.1f},{cy:.1f}) size={best.size} dist={math.hypot(cx - rx, cy - ry):.1f}",
+                )
             else:
                 self._tl("frontier_select", _goal_num, f"PATROL ({cx:.1f},{cy:.1f})")
             if not is_patrol:
@@ -313,8 +379,12 @@ class FrontierExplorer:
             _t_after_nav = self._sim_time()
             self._visited_goals.append((cx, cy))
 
-            _accept_str = f"{_t_accept_lat:.1f}s" if not math.isnan(_t_accept_lat) else "n/a"
-            _move_str = f"{_t_first_move:.1f}s" if not math.isnan(_t_first_move) else "n/a"
+            _accept_str = (
+                f"{_t_accept_lat:.1f}s" if not math.isnan(_t_accept_lat) else "n/a"
+            )
+            _move_str = (
+                f"{_t_first_move:.1f}s" if not math.isnan(_t_first_move) else "n/a"
+            )
 
             if result is True:
                 self._tl("goal_reached", _goal_num, f"nav={_t_nav:.1f}s")
@@ -344,7 +414,10 @@ class FrontierExplorer:
                 self._sim_sleep(1.0)
             elif result is None:
                 # Track consecutive rejections of the same centroid.
-                if math.hypot(cx - _last_reject_cx, cy - _last_reject_cy) < BLACKLIST_RADIUS:
+                if (
+                    math.hypot(cx - _last_reject_cx, cy - _last_reject_cy)
+                    < BLACKLIST_RADIUS
+                ):
                     _reject_streak += 1
                 else:
                     _reject_streak = 1
@@ -367,16 +440,18 @@ class FrontierExplorer:
                 self._sim_sleep(1.0)
 
             _t_last_goal_end = self._sim_time()
-            self._goal_stats.append(GoalStats(
-                goal_num=_goal_num,
-                is_patrol=is_patrol,
-                result=result,
-                bfs_and_selection_s=_t_idle,
-                accept_latency_s=_t_accept_lat,
-                time_to_first_move_s=_t_first_move,
-                nav_time_s=_t_nav,
-                post_goal_pause_s=_t_last_goal_end - _t_after_nav,
-            ))
+            self._goal_stats.append(
+                GoalStats(
+                    goal_num=_goal_num,
+                    is_patrol=is_patrol,
+                    result=result,
+                    bfs_and_selection_s=_t_idle,
+                    accept_latency_s=_t_accept_lat,
+                    time_to_first_move_s=_t_first_move,
+                    nav_time_s=_t_nav,
+                    post_goal_pause_s=_t_last_goal_end - _t_after_nav,
+                )
+            )
 
         # Always log timing table + profile on exit (time-limit, natural completion, or stop)
         self._log_timing_table()
@@ -415,7 +490,7 @@ class FrontierExplorer:
                 shifted[:, -1] = False
             elif dc == 1:
                 shifted[:, 0] = False
-            frontier_mask |= (free & shifted)
+            frontier_mask |= free & shifted
 
         # BFS-cluster the frontier cells
         visited = np.zeros((height, width), dtype=bool)
@@ -549,8 +624,7 @@ class FrontierExplorer:
                     min_d = math.hypot(wx - rx, wy - ry)
                 else:
                     min_d = min(
-                        math.hypot(wx - px, wy - py)
-                        for px, py in self._visited_goals
+                        math.hypot(wx - px, wy - py) for px, py in self._visited_goals
                     )
                 if min_d > best_dist:
                     best_dist = min_d
@@ -579,7 +653,7 @@ class FrontierExplorer:
         if self._backup_client.wait_for_server(timeout_sec=1.0):
             goal = BackUp.Goal()
             goal.target = Point(x=0.30, y=0.0, z=0.0)  # back up 0.3 m
-            goal.speed = 0.10                            # m/s (slow, safe)
+            goal.speed = 0.10  # m/s (slow, safe)
             goal.time_allowance.sec = 10
             future = self._backup_client.send_goal_async(goal)
             deadline = self._sim_time() + 12.0
@@ -592,7 +666,9 @@ class FrontierExplorer:
                     time.sleep(0.1)
             self._logger.info("FrontierExplorer: backup complete.")
         else:
-            self._logger.warning("FrontierExplorer: backup server not available — skipping backup.")
+            self._logger.warning(
+                "FrontierExplorer: backup server not available — skipping backup."
+            )
 
         # Step 2: clear both costmaps
         for svc, name in [
@@ -616,8 +692,13 @@ class FrontierExplorer:
             phase_rot = dict(self._phase_rot)
             phase_sample_time = dict(self._phase_sample_time)
         write_timeline(
-            self._logger, self._timeline, self._sim_time(),
-            meters, phase_dist, phase_rot, phase_sample_time,
+            self._logger,
+            self._timeline,
+            self._sim_time(),
+            meters,
+            phase_dist,
+            phase_rot,
+            phase_sample_time,
         )
 
     def _sim_time(self) -> float:
@@ -628,8 +709,9 @@ class FrontierExplorer:
         """Sleep until sim_seconds of sim-time elapse (wall-clock safety ceiling)."""
         t0_sim = self._sim_time()
         t0_wall = time.time()
-        while (self._sim_time() - t0_sim < sim_seconds
-               and time.time() - t0_wall < max_wall):
+        while (
+            self._sim_time() - t0_sim < sim_seconds and time.time() - t0_wall < max_wall
+        ):
             time.sleep(0.1)
 
     def _send_goal_and_wait(
@@ -667,7 +749,9 @@ class FrontierExplorer:
         while not future.done() and time.time() < deadline:
             time.sleep(0.05)
         if not future.done():
-            self._logger.warning("FrontierExplorer: timeout waiting for goal acceptance — skipping (not blacklisting).")
+            self._logger.warning(
+                "FrontierExplorer: timeout waiting for goal acceptance — skipping (not blacklisting)."
+            )
             return None, _nan, _nan, 0.0
         goal_handle = future.result()
 
@@ -696,7 +780,7 @@ class FrontierExplorer:
 
         result_future = goal_handle.get_result_async()
         _first_move_t = _nan  # sim-seconds from accept to first 0.15 m displacement
-        _sub = "waiting"      # nav sub-phase for timeline profiling
+        _sub = "waiting"  # nav sub-phase for timeline profiling
         _wall_accept = time.time()  # wall-clock escape: catch dead sim (clock frozen)
 
         while not result_future.done():
@@ -745,14 +829,24 @@ class FrontierExplorer:
                 cancel_deadline = time.time() + 5.0
                 while not cancel_future.done() and time.time() < cancel_deadline:
                     time.sleep(0.1)
-                return False, accept_latency, _first_move_t, self._sim_time() - _t_accept
+                return (
+                    False,
+                    accept_latency,
+                    _first_move_t,
+                    self._sim_time() - _t_accept,
+                )
 
             if not self._exploring:
                 cancel_future = goal_handle.cancel_goal_async()
                 cancel_deadline = time.time() + 5.0
                 while not cancel_future.done() and time.time() < cancel_deadline:
                     time.sleep(0.1)
-                return False, accept_latency, _first_move_t, self._sim_time() - _t_accept
+                return (
+                    False,
+                    accept_latency,
+                    _first_move_t,
+                    self._sim_time() - _t_accept,
+                )
 
             # Wall-clock escape: if a single goal takes > 180 wall-seconds,
             # the sim is likely dead (clock frozen, Nav2 unresponsive).
@@ -764,7 +858,12 @@ class FrontierExplorer:
                 cancel_deadline = time.time() + 3.0
                 while not cancel_future.done() and time.time() < cancel_deadline:
                     time.sleep(0.1)
-                return False, accept_latency, _first_move_t, self._sim_time() - _t_accept
+                return (
+                    False,
+                    accept_latency,
+                    _first_move_t,
+                    self._sim_time() - _t_accept,
+                )
 
         result = result_future.result()
         nav_time = self._sim_time() - _t_accept
