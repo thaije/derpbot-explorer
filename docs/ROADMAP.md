@@ -20,14 +20,9 @@ Current state lives in [`STATE.md`](STATE.md). History lives in closed issues + 
 Timeline profiler in frontier_explorer: every sim-second accounted for, zero "untracked". **✅ Done** — profile infrastructure validated, seed=55 baseline captured. See [benchmark_results.md](benchmark_results.md).
 
 ### Task 6 — 2× average speed · [#17](https://github.com/thaije/derpbot-explorer/issues/17)
-Double avg_speed from ~0.07 → ~0.14 m/s by reducing downtime. Profiling shows robot moving only 50% of the time; biggest levers: Nav2 dispatch overhead (13.6%), inter-goal loop stalls (11.9%), rotation (9.4%).
+Double avg_speed from ~0.07 → ~0.14 m/s by reducing downtime. Profiling shows robot moving only 50% of the time; biggest levers: Nav2 dispatch overhead (13.6%), inter-goal loop stalls (11.9%), rotation (9.4%). #18 landed — startup phase down from 18.5% → 3.9% of budget. Next lever: Nav2 first_move latency (goals stuck in `rotating` for 25+ sim-s after accept).
 **Blocked on:** Task 6a ✅
 **DoD:** `avg_speed_kmh` ≥ 0.50 on ≥ 3 seeds, 0 collision regression.
-
-### Bug — 40 s startup delay waiting for first `/map` · [#18](https://github.com/thaije/derpbot-explorer/issues/18)
-First ~40 sim-s of every run is blocked waiting on slam_toolbox's first `/map`. 13% of budget, before any goal can be sent — largest single contributor to the #17 gap. Investigation done; options: pre-built static map, faster SLAM (Hector), or overlap perception warm-up / executor spin-up with the map wait.
-**Parent:** [#17](https://github.com/thaije/derpbot-explorer/issues/17)
-**DoD:** first frontier goal dispatched ≤ 10 sim-s after sim ready, 0 collision regression.
 
 ### Task 5 — Detection-aware exploration · [#8](https://github.com/thaije/derpbot-explorer/issues/8)
 Revisit partially-detected areas so the detection rate exceeds the pure-coverage ceiling. Nav is now good enough (Task 4: 71% coverage, 0 collisions); score is gated by perception. Next big lever.
