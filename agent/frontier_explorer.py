@@ -14,10 +14,12 @@ Frontier lifecycle:
 from __future__ import annotations
 
 import math
+import os
 import threading
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from pathlib import Path
 
 _WALL_T0 = time.time()
 from typing import Callable, Optional
@@ -254,6 +256,17 @@ class FrontierExplorer:
         t0 = self._sim_time()
         t0_wall = time.time()
         self._tl("startup", 0, "nav2 wait + map wait")
+
+        # #18 fix: signal the launcher that wall-time init is done so it can
+        # unpause Gazebo. All heavy work (imports, OWLv2 load, Nav2 client
+        # construction) has already happened in AgentNode.__init__ by the
+        # time this thread starts. See scripts/start_stack.sh.
+        ready_flag = os.environ.get("DERPBOT_READY_FLAG", "/tmp/derpbot_agent_ready")
+        try:
+            Path(ready_flag).touch()
+        except OSError as exc:
+            self._logger.warning(f"Could not touch ready flag {ready_flag}: {exc}")
+
         self._logger.info("FrontierExplorer: waiting for Nav2 action server…")
         t_nav2_start = self._sim_time()
         if not self._nav_client.wait_for_server(timeout_sec=60.0):

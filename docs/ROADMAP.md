@@ -24,6 +24,11 @@ Double avg_speed from ~0.07 → ~0.14 m/s by reducing downtime. Profiling shows 
 **Blocked on:** Task 6a ✅
 **DoD:** `avg_speed_kmh` ≥ 0.50 on ≥ 3 seeds, 0 collision regression.
 
+### Bug — 40 s startup delay waiting for first `/map` · [#18](https://github.com/thaije/derpbot-explorer/issues/18)
+First ~40 sim-s of every run is blocked waiting on slam_toolbox's first `/map`. 13% of budget, before any goal can be sent — largest single contributor to the #17 gap. Investigation done; options: pre-built static map, faster SLAM (Hector), or overlap perception warm-up / executor spin-up with the map wait.
+**Parent:** [#17](https://github.com/thaije/derpbot-explorer/issues/17)
+**DoD:** first frontier goal dispatched ≤ 10 sim-s after sim ready, 0 collision regression.
+
 ### Task 5 — Detection-aware exploration · [#8](https://github.com/thaije/derpbot-explorer/issues/8)
 Revisit partially-detected areas so the detection rate exceeds the pure-coverage ceiling. Nav is now good enough (Task 4: 71% coverage, 0 collisions); score is gated by perception. Next big lever.
 **Blocked on:** Tasks 1–4 ✅

@@ -134,10 +134,44 @@ if [[ $WAITED -ge $MAX_WAIT ]]; then
     exit 1
 fi
 # Brief pause: let the ros_gz_bridge publish its first /clock messages before
-# Nav2 starts — the lifecycle manager's bond check fires immediately at startup
-# and needs sim clock to be flowing or it hits the 4s wall-clock timeout.
-echo "       Sim ready after ${WAITED}s. Waiting 3s for clock bridge to settle..."
-sleep 3
+# we touch the control service. 1s is enough — we no longer need to wait
+# for Nav2 here because Gazebo will be paused before Nav2 starts.
+echo "       Sim ready after ${WAITED}s. Waiting 1s for clock bridge to settle..."
+sleep 1
+
+# --- #18 fix: pause Gazebo so wall-time stack bringup burns zero sim-s ---
+# Without this, ~15–25 wall-s of slam+nav2+agent cold-launch is multiplied by
+# RTF on the sim clock, consuming ~40 sim-s of the 300 s mission budget before
+# the agent ever processes its first /map.
+#
+# Discover the world control service dynamically so this works for any tier.
+WORLD_CONTROL="$(gz service -l 2>/dev/null | grep -oE '^/world/[^/]+/control$' | head -1 || true)"
+if [[ -z "$WORLD_CONTROL" ]]; then
+    echo "       WARNING: could not discover /world/<name>/control service — skipping pause."
+    PAUSED=0
+else
+    echo "       Pausing sim via ${WORLD_CONTROL}..."
+    if gz service -s "$WORLD_CONTROL" \
+        --reqtype gz.msgs.WorldControl --reptype gz.msgs.Boolean \
+        --timeout 2000 --req 'pause: true' >/dev/null 2>&1; then
+        PAUSED=1
+        # Safety: unpause on script exit (success or failure) so a crashed
+        # launch can never leave Gazebo paused forever.
+        trap 'if [[ "${PAUSED:-0}" == "1" && -n "${WORLD_CONTROL:-}" ]]; then
+                gz service -s "$WORLD_CONTROL" \
+                    --reqtype gz.msgs.WorldControl --reptype gz.msgs.Boolean \
+                    --timeout 2000 --req "pause: false" >/dev/null 2>&1 || true
+              fi' EXIT
+    else
+        echo "       WARNING: pause request failed — continuing without pause."
+        PAUSED=0
+    fi
+fi
+
+# Clear any stale agent-ready flag from a previous run.
+READY_FLAG="${DERPBOT_READY_FLAG:-/tmp/derpbot_agent_ready}"
+rm -f "$READY_FLAG"
+
 echo "       Starting SLAM + Nav2..."
 
 # --- Step 4: Start SLAM (must be within 5s of sim ready) ---
@@ -148,17 +182,50 @@ tmux new -s slam -d "${ROS_ENV} cd $EXPLORER_ROOT && ros2 launch slam_toolbox on
 echo "      Starting Nav2..."
 tmux new -s nav2 -d "${ROS_ENV} cd $EXPLORER_ROOT && ros2 launch $(cd $EXPLORER_ROOT && pwd)/launch/navigation_launch.py params_file:=$(cd $EXPLORER_ROOT && pwd)/config/derpbot_nav2_params.yaml use_sim_time:=true"
 
-# Wait briefly for Nav2 lifecycle to finish activating
-sleep 5
+# Nav2 lifecycle activation happens wall-clock, not sim-clock, so it proceeds
+# normally while Gazebo is paused. No wall-sleep needed here — the agent's
+# own wait_for_server will block until the nav2 action server is discovered.
 
 # --- Step 5: Start agent (optional) ---
 if [[ $START_AGENT -eq 1 ]]; then
     AGENT_FLAGS=""
     [[ $NO_PERCEPTION -eq 1 ]] && AGENT_FLAGS="--no-perception"
     echo "[5/5] Starting agent (flags: ${AGENT_FLAGS:-none})..."
-    tmux new -s agent -d "${ROS_ENV} cd $EXPLORER_ROOT && $EXPLORER_ROOT/.venv/bin/python agent/agent_node.py ${AGENT_FLAGS}"
+    tmux new -s agent -d "${ROS_ENV} cd $EXPLORER_ROOT && DERPBOT_READY_FLAG='$READY_FLAG' $EXPLORER_ROOT/.venv/bin/python agent/agent_node.py ${AGENT_FLAGS}"
+
+    if [[ "${PAUSED:-0}" == "1" ]]; then
+        # Poll for the agent's ready flag. The flag is created at the top of
+        # _explore_loop in frontier_explorer.py — after AgentNode.__init__
+        # has completed all wall-time work (imports, OWLv2 load, Nav2 client
+        # construction). See #18.
+        echo "       Waiting for agent ready flag (${READY_FLAG})..."
+        READY_WAITED=0
+        READY_MAX=60  # wall-s; OWLv2 weight load can take 20-30 wall-s on cold cache
+        while [[ $READY_WAITED -lt $READY_MAX ]]; do
+            if [[ -f "$READY_FLAG" ]]; then
+                break
+            fi
+            sleep 1
+            READY_WAITED=$((READY_WAITED + 1))
+        done
+        if [[ ! -f "$READY_FLAG" ]]; then
+            echo "       WARNING: agent did not signal ready within ${READY_MAX}s — unpausing anyway."
+        else
+            echo "       Agent ready after ${READY_WAITED}s wall — unpausing sim."
+        fi
+        gz service -s "$WORLD_CONTROL" \
+            --reqtype gz.msgs.WorldControl --reptype gz.msgs.Boolean \
+            --timeout 2000 --req 'pause: false' >/dev/null 2>&1 || true
+        PAUSED=0
+    fi
 else
     echo "[5/5] Skipping agent (--no-agent)"
+    if [[ "${PAUSED:-0}" == "1" ]]; then
+        gz service -s "$WORLD_CONTROL" \
+            --reqtype gz.msgs.WorldControl --reptype gz.msgs.Boolean \
+            --timeout 2000 --req 'pause: false' >/dev/null 2>&1 || true
+        PAUSED=0
+    fi
 fi
 
 echo ""
