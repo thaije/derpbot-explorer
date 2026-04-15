@@ -104,7 +104,10 @@ def write_timeline(
     phase_sample_time: dict[str, float],
 ) -> None:
     """Write a self-contained markdown profile: summary table + raw timeline."""
-    entries = timeline
+    # Snapshot — the explore thread may still be appending via _tl() while we
+    # render. Without the copy, new entries land between the `dur` computation
+    # loop and the render loop and hit KeyError. See #19.
+    entries = list(timeline)
     if not entries:
         return
 
