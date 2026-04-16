@@ -16,9 +16,6 @@ Current state lives in [`STATE.md`](STATE.md). History lives in closed issues + 
 
 ## Next
 
-### Task 6a — Profile per-goal time budget · [#16](https://github.com/thaije/derpbot-explorer/issues/16)
-Timeline profiler in frontier_explorer: every sim-second accounted for, zero "untracked". **✅ Done** — profile infrastructure validated, seed=55 baseline captured. See [benchmark_results.md](benchmark_results.md).
-
 ### Task 6 — 2× average speed · [#17](https://github.com/thaije/derpbot-explorer/issues/17)
 Double avg_speed from ~0.07 → ~0.14 m/s by reducing downtime. Profiling shows robot moving only 50% of the time; biggest levers: Nav2 dispatch overhead (13.6%), inter-goal loop stalls (11.9%), rotation (9.4%). #18 landed — startup phase down from 18.5% → 3.9% of budget. Next lever: Nav2 first_move latency (goals stuck in `rotating` for 25+ sim-s after accept).
 **Blocked on:** Task 6a ✅

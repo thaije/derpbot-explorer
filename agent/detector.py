@@ -56,7 +56,7 @@ try:
 except ImportError:
     raise ImportError("cv_bridge not found — install ros-jazzy-cv-bridge")
 
-PROCESS_EVERY_N_FRAMES = 2      # process every 2nd frame → ~5 Hz from 10 Hz stream
+PROCESS_EVERY_N_FRAMES = 2  # process every 2nd frame → ~5 Hz from 10 Hz stream
 # GPU index for inference within the subprocess's CUDA_VISIBLE_DEVICES scope.
 # CUDA_VISIBLE_DEVICES is set to "1" inside _inference_worker (before torch import)
 # so "cuda:0" here maps to nvidia-smi GPU 1 (RTX 2070 SUPER),
@@ -64,7 +64,7 @@ PROCESS_EVERY_N_FRAMES = 2      # process every 2nd frame → ~5 Hz from 10 Hz s
 GPU_DEVICE = 0
 
 OWL_MODEL_ID = "google/owlv2-base-patch16-ensemble"
-OWL_CONF_THRESHOLD = 0.15       # tuned: 0.10 gave 3 FPs; 0.12 gave 3 FPs with no net benefit; 0.15 gives 1 FP best precision (fire_ext#2 marginal but found at good nav coverage)
+OWL_CONF_THRESHOLD = 0.15  # tuned: 0.10 gave 3 FPs; 0.12 gave 3 FPs with no net benefit; 0.15 gives 1 FP best precision (fire_ext#2 marginal but found at good nav coverage)
 
 
 @dataclass
@@ -84,6 +84,7 @@ class DetectionResult:
 # Subprocess worker — runs in a completely separate Python process (no ROS2)
 # ---------------------------------------------------------------------------
 
+
 def _inference_worker(
     targets: list[str],
     frame_queue: mp.Queue,
@@ -99,11 +100,14 @@ def _inference_worker(
     # (Previously CUDA_VISIBLE_DEVICES=1 kept PyTorch off Gazebo's rendering GPU;
     # that GPU no longer exists. RTF may be lower than the 3-GPU baseline.)
     import os as _os
+
     _os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     _os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    _os.environ["HF_HUB_OFFLINE"] = "1"
 
     try:
         import torch
+
         torch.set_num_threads(4)
         torch.set_num_interop_threads(2)
         from PIL import Image as PILImage
@@ -129,7 +133,10 @@ def _inference_worker(
     try:
         _dummy = PILImage.fromarray(np.zeros((480, 640, 3), dtype=np.uint8))
         _inputs = processor(text=queries, images=_dummy, return_tensors="pt")
-        _inputs = {k: (v.half() if v.dtype == torch.float32 else v).to(f"cuda:{GPU_DEVICE}") for k, v in _inputs.items()}
+        _inputs = {
+            k: (v.half() if v.dtype == torch.float32 else v).to(f"cuda:{GPU_DEVICE}")
+            for k, v in _inputs.items()
+        }
         with torch.no_grad():
             model(**_inputs)
     except Exception as exc:
@@ -154,21 +161,32 @@ def _inference_worker(
             rgb = _cv2.cvtColor(frame, _cv2.COLOR_BGR2RGB)
             pil_image = PILImage.fromarray(rgb)
             inputs = processor(text=queries, images=pil_image, return_tensors="pt")
-            inputs = {k: (v.half() if v.dtype == torch.float32 else v).to(f"cuda:{GPU_DEVICE}") for k, v in inputs.items()}
+            inputs = {
+                k: (v.half() if v.dtype == torch.float32 else v).to(
+                    f"cuda:{GPU_DEVICE}"
+                )
+                for k, v in inputs.items()
+            }
 
             with torch.no_grad():
                 outputs = model(**inputs)
 
-            target_sizes = torch.tensor([(shape[0], shape[1])], dtype=torch.int32, device=f"cuda:{GPU_DEVICE}")
+            target_sizes = torch.tensor(
+                [(shape[0], shape[1])], dtype=torch.int32, device=f"cuda:{GPU_DEVICE}"
+            )
             results = processor.post_process_grounded_object_detection(
-                outputs, target_sizes=target_sizes, threshold=OWL_CONF_THRESHOLD,
+                outputs,
+                target_sizes=target_sizes,
+                threshold=OWL_CONF_THRESHOLD,
             )[0]
         except Exception as exc:
             result_queue.put({"warning": f"inference error: {exc}"})
             continue
 
         detections = []
-        for score, label_idx, box in zip(results["scores"], results["labels"], results["boxes"]):
+        for score, label_idx, box in zip(
+            results["scores"], results["labels"], results["boxes"]
+        ):
             x1, y1, x2, y2 = box.tolist()
             cx = (x1 + x2) / 2
             cy = (y1 + y2) / 2
@@ -177,12 +195,18 @@ def _inference_worker(
             idx = int(label_idx)
             if idx >= len(targets):
                 continue
-            detections.append({
-                "class_name": targets[idx],
-                "confidence": float(score),
-                "cx_px": cx, "cy_px": cy, "w_px": w, "h_px": h,
-                "stamp_sec": stamp_sec, "stamp_nanosec": stamp_nanosec,
-            })
+            detections.append(
+                {
+                    "class_name": targets[idx],
+                    "confidence": float(score),
+                    "cx_px": cx,
+                    "cy_px": cy,
+                    "w_px": w,
+                    "h_px": h,
+                    "stamp_sec": stamp_sec,
+                    "stamp_nanosec": stamp_nanosec,
+                }
+            )
 
         result_queue.put({"detections": detections})
 
@@ -209,12 +233,14 @@ class Detector:
         self._model_name: Optional[str] = None
 
         # Multiprocessing queues — picklable, cross-process safe
-        ctx = mp.get_context("spawn")   # spawn avoids fork+CUDA issues
+        ctx = mp.get_context("spawn")  # spawn avoids fork+CUDA issues
         self._mp_frames: mp.Queue = ctx.Queue(maxsize=2)
         self._mp_results: mp.Queue = ctx.Queue(maxsize=50)
         self._ready_event = ctx.Event()
 
-        self._logger.info(f"Detector: starting inference subprocess for targets: {targets}")
+        self._logger.info(
+            f"Detector: starting inference subprocess for targets: {targets}"
+        )
         self._worker = ctx.Process(
             target=_inference_worker,
             args=(targets, self._mp_frames, self._mp_results, self._ready_event),
@@ -316,11 +342,14 @@ class Detector:
             name="detector_worker",
         )
         self._worker.start()
-        self._logger.info("Detector: new inference subprocess started — waiting for ready.")
+        self._logger.info(
+            "Detector: new inference subprocess started — waiting for ready."
+        )
 
     def _relay_loop(self) -> None:
         import queue as _queue
         import time as _time
+
         inference_count = 0
         last_result_time = _time.monotonic()
         last_heartbeat = _time.monotonic()
@@ -348,7 +377,9 @@ class Detector:
                     last_heartbeat = now
                 continue
             except Exception as exc:
-                self._logger.warning(f"Detector: relay_loop mp_results.get error — {type(exc).__name__}: {exc}")
+                self._logger.warning(
+                    f"Detector: relay_loop mp_results.get error — {type(exc).__name__}: {exc}"
+                )
                 continue
 
             if "ready" in result:
@@ -363,7 +394,9 @@ class Detector:
 
             dets = result.get("detections", [])
             inference_count += 1
-            last_result_time = _time.monotonic()  # reset watchdog + heartbeat on activity
+            last_result_time = (
+                _time.monotonic()
+            )  # reset watchdog + heartbeat on activity
             last_heartbeat = last_result_time
             if inference_count % 5 == 0:
                 self._logger.info(
