@@ -50,36 +50,7 @@ echo ""
 
 # --- Step 0: Kill everything from previous runs ---
 echo "[0/5] Cleaning up old processes..."
-for sess in agent nav2 slam sim fds; do
-    tmux kill-session -t "$sess" 2>/dev/null || true
-done
-sleep 1
-
-# Kill sim/bridge/discovery processes by name — two rounds to catch respawns
-for _round in 1 2; do
-    pkill -9 -f "gz sim" 2>/dev/null || true
-    pkill -9 -f "parameter_bridge" 2>/dev/null || true
-    pkill -9 -f "scenario_runner" 2>/dev/null || true
-    pkill -9 -f "run_scenario" 2>/dev/null || true
-    pkill -9 -f "slam_toolbox" 2>/dev/null || true
-    pkill -9 -f "controller_server" 2>/dev/null || true
-    pkill -9 -f "planner_server" 2>/dev/null || true
-    pkill -9 -f "bt_navigator" 2>/dev/null || true
-    pkill -9 -f "behavior_server" 2>/dev/null || true
-    pkill -9 -f "velocity_smoother" 2>/dev/null || true
-    pkill -9 -f "collision_monitor" 2>/dev/null || true
-    pkill -9 -f "lifecycle_manager" 2>/dev/null || true
-    pkill -9 -f "waypoint_follower" 2>/dev/null || true
-    pkill -9 -f "smoother_server" 2>/dev/null || true
-    pkill -9 -f "map_publisher" 2>/dev/null || true
-    pkill -9 -f "agent_node" 2>/dev/null || true
-    pkill -9 -f "robot_state_publisher" 2>/dev/null || true
-    pkill -9 -f "fastdds discovery" 2>/dev/null || true
-    sleep 1
-done
-fuser -k 7400/tcp 2>/dev/null || true
-fuser -k "${FDS_PORT}/udp" 2>/dev/null || true
-sleep 1
+FDS_PORT="${FDS_PORT}" "$SCRIPT_DIR/cleanup.sh"
 
 # --- Step 1: Start FastDDS discovery server ---
 # Must start before the ROS2 daemon so the daemon can register with it.

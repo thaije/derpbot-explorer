@@ -130,12 +130,8 @@ Report back to the main agent:
 ## Kill stack (cleanup)
 
 ```bash
-for sess in agent nav2 slam sim fds; do tmux kill-session -t $sess 2>/dev/null || true; done
-pkill -9 -f "gz sim" 2>/dev/null || true
-pkill -9 -f "parameter_bridge" 2>/dev/null || true
-pkill -9 -f "scenario_runner" 2>/dev/null || true
-pkill -9 -f "fastdds discovery" 2>/dev/null || true
-ros2 daemon stop 2>/dev/null || true
+cd ~/Projects/derpbot-explorer
+./scripts/cleanup.sh
 ```
 
 Always clean up before reporting, even on abort.
