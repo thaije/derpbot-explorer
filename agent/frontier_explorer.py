@@ -36,6 +36,11 @@ from nav2_msgs.srv import ClearEntireCostmap
 from rclpy.action import ActionClient
 from rclpy.node import Node
 
+# Debug: dump selected frontier + /map + global costmap to /tmp for offline analysis.
+# Gated on env var so normal runs aren't polluted. See issue #10.
+_FRONTIER_DEBUG = os.environ.get("DERPBOT_FRONTIER_DEBUG") == "1"
+_FRONTIER_DEBUG_DIR = Path(os.environ.get("DERPBOT_FRONTIER_DEBUG_DIR", "/tmp/derpbot_frontier_dumps"))
+
 # Grid cell values from Nav2 OccupancyGrid
 FREE = 0
 UNKNOWN = -1
@@ -70,6 +75,19 @@ PATROL_STEP_M = 1.0  # metres — coarse grid sampling resolution for patrol tar
 # Minimum cluster size to be considered a meaningful frontier
 MIN_FRONTIER_SIZE = 5  # cells
 
+# Frontier cells with global_costmap >= this value are rejected: they sit inside
+# the inflation layer's inscribed-radius zone, so Nav2 cannot position the robot
+# there even though SLAM marks them free. Without this filter, the BFS picks
+# wall-hugging frontier ribbons (SLAM-free, costmap-lethal), the goal lands in
+# inflation, MPPI can't complete, stuck → blacklist → next wall-hugging cluster.
+# See issue #10.
+#
+# Published Nav2 costmap uses 0..100 + -1 (unknown). Default inflation layer
+# scaling: 99 = inscribed radius, 100 = LETHAL. Accepting -1 (unknown in costmap,
+# e.g. right after ClearEntireCostmap) is required so recovery doesn't
+# starve the explorer while the costmap repopulates from sensors.
+COSTMAP_LETHAL_THRESHOLD = 99  # reject cells with costmap value >= this
+
 
 @dataclass
 class FrontierCluster:
@@ -100,6 +118,11 @@ class FrontierExplorer:
 
         self._map: Optional[OccupancyGrid] = None
         self._map_lock = threading.Lock()
+
+        # Global costmap snapshot: used to filter wall-hugging frontier cells
+        # whose goal would land in the inflation layer (issue #10).
+        self._global_costmap: Optional[OccupancyGrid] = None
+        self._costmap_lock = threading.Lock()
 
         self._robot_x: float = 0.0
         self._robot_y: float = 0.0
@@ -153,6 +176,23 @@ class FrontierExplorer:
             rclpy.qos.QoSProfile(depth=10),
         )
 
+        # Subscribe to global costmap (used both in production for frontier
+        # filtering, and by debug dumps). Nav2 publishes TRANSIENT_LOCAL when
+        # always_send_full_costmap is true.
+        node.create_subscription(
+            OccupancyGrid,
+            "/global_costmap/costmap",
+            self._global_costmap_cb,
+            map_qos,
+            callback_group=reentrant,
+        )
+
+        if _FRONTIER_DEBUG:
+            _FRONTIER_DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+            self._logger.info(
+                f"FrontierExplorer: DEBUG dumps enabled → {_FRONTIER_DEBUG_DIR}"
+            )
+
         # Nav2 action client
         self._nav_client = ActionClient(node, NavigateToPose, "navigate_to_pose")
 
@@ -185,6 +225,86 @@ class FrontierExplorer:
     def _map_cb(self, msg: OccupancyGrid) -> None:
         with self._map_lock:
             self._map = msg
+
+    def _global_costmap_cb(self, msg: OccupancyGrid) -> None:
+        with self._costmap_lock:
+            self._global_costmap = msg
+
+    def _dump_frontier_debug(
+        self,
+        goal_num: int,
+        cluster: Optional[FrontierCluster],
+        cx: float,
+        cy: float,
+        goal_x: float,
+        goal_y: float,
+        robot_x: float,
+        robot_y: float,
+        is_patrol: bool,
+    ) -> None:
+        """Snapshot /map + global costmap + cluster for offline analysis (issue #10)."""
+        with self._map_lock:
+            m = self._map
+        with self._costmap_lock:
+            cm = self._global_costmap
+        if m is None:
+            return
+        map_data = np.array(m.data, dtype=np.int8).reshape((m.info.height, m.info.width))
+        cm_data = None
+        cm_info = None
+        if cm is not None:
+            cm_data = np.array(cm.data, dtype=np.int8).reshape(
+                (cm.info.height, cm.info.width)
+            )
+            cm_info = {
+                "width": cm.info.width,
+                "height": cm.info.height,
+                "resolution": cm.info.resolution,
+                "origin_x": cm.info.origin.position.x,
+                "origin_y": cm.info.origin.position.y,
+            }
+        cells_arr = (
+            np.array(cluster.cells, dtype=np.int32)
+            if cluster is not None
+            else np.zeros((0, 2), dtype=np.int32)
+        )
+        path = _FRONTIER_DEBUG_DIR / f"goal_{goal_num:03d}.npz"
+        np.savez_compressed(
+            path,
+            map_data=map_data,
+            map_info=np.array(
+                [
+                    m.info.width,
+                    m.info.height,
+                    m.info.resolution,
+                    m.info.origin.position.x,
+                    m.info.origin.position.y,
+                ],
+                dtype=np.float64,
+            ),
+            costmap_data=cm_data if cm_data is not None else np.zeros((0, 0), dtype=np.int8),
+            costmap_info=np.array(
+                [
+                    cm_info["width"],
+                    cm_info["height"],
+                    cm_info["resolution"],
+                    cm_info["origin_x"],
+                    cm_info["origin_y"],
+                ]
+                if cm_info
+                else [],
+                dtype=np.float64,
+            ),
+            cluster_cells=cells_arr,
+            meta=np.array(
+                [cx, cy, goal_x, goal_y, robot_x, robot_y, 1.0 if is_patrol else 0.0],
+                dtype=np.float64,
+            ),
+        )
+        self._logger.info(
+            f"FrontierExplorer: DEBUG dumped goal#{goal_num} → {path}"
+            f" (costmap={'yes' if cm_data is not None else 'NO'})"
+        )
 
     def _odom_cb(self, msg: Odometry) -> None:
         # dt from node sim-clock — header.stamp on derpbot_0/odom is unreliable
@@ -384,6 +504,19 @@ class FrontierExplorer:
                     f" idle_since_last={_t_idle:.1f}s bfs={_t_bfs:.2f}s"
                 )
 
+            if _FRONTIER_DEBUG:
+                self._dump_frontier_debug(
+                    _goal_num,
+                    best,
+                    cx,
+                    cy,
+                    goal_x,
+                    goal_y,
+                    rx,
+                    ry,
+                    is_patrol,
+                )
+
             self._tl("nav2_send", _goal_num)
             result, _t_accept_lat, _t_first_move, _t_nav = self._send_goal_and_wait(
                 goal_x, goal_y, current_map.header.frame_id, _goal_num
@@ -505,6 +638,33 @@ class FrontierExplorer:
                 shifted[:, 0] = False
             frontier_mask |= free & shifted
 
+        # #10 clip frontier mask to observed extent (cells with data >= 0).
+        # Unknown cells beyond the known map bounds cause the costmap to expand
+        # indefinitely, creating phantom frontiers at the edge. Reject any cell
+        # outside the axis-aligned bbox of observed cells (free + occupied).
+        observed = data >= 0
+        if np.any(observed):
+            rows, cols = np.where(observed)
+            rmin, rmax = rows.min(), rows.max()
+            cmin, cmax = cols.min(), cols.max()
+            frontier_mask = frontier_mask & (
+                (np.arange(height)[:, None] >= rmin)
+                & (np.arange(height)[:, None] <= rmax)
+                & (np.arange(width)[None, :] >= cmin)
+                & (np.arange(width)[None, :] <= cmax)
+            )
+
+        # #10 drop frontier cells inside the global costmap inflation layer.
+        # SLAM marks a cell FREE as soon as a LiDAR beam reaches it, including
+        # cells right next to walls. The BFS then picks these wall-hugging
+        # ribbons — but Nav2's inflation layer (inscribed_radius=robot_radius)
+        # marks them unreachable. Filtering here prevents the stuck→blacklist→
+        # next-wall-hugger cascade and keeps goal cells in traversable space.
+        #
+        # Cells where costmap == -1 (unknown, e.g. right after ClearEntireCostmap)
+        # are kept; otherwise recovery would temporarily starve the explorer.
+        self._apply_costmap_filter(frontier_mask, grid)
+
         # BFS-cluster the frontier cells
         visited = np.zeros((height, width), dtype=bool)
         clusters: list[FrontierCluster] = []
@@ -576,16 +736,95 @@ class FrontierExplorer:
                 return True
         return False
 
+    def _apply_costmap_filter(
+        self, frontier_mask: np.ndarray, grid: OccupancyGrid
+    ) -> None:
+        """
+        Clear bits in `frontier_mask` whose world location has global costmap
+        value >= COSTMAP_LETHAL_THRESHOLD. Mutates frontier_mask in place.
+        No-op when the costmap snapshot is unavailable (first few seconds of run).
+
+        See issue #10: wall-hugging frontier ribbons look reachable in /map but
+        are inside Nav2's inflation-layer inscribed radius.
+        """
+        with self._costmap_lock:
+            cm = self._global_costmap
+        if cm is None:
+            return
+        cm_data = np.asarray(cm.data, dtype=np.int16).reshape(
+            (cm.info.height, cm.info.width)
+        )
+        # World coords of frontier cells → costmap grid indices. Vectorised over
+        # the (usually small) set of remaining frontier candidates.
+        rs, cs = np.where(frontier_mask)
+        if rs.size == 0:
+            return
+        map_res = grid.info.resolution
+        map_ox = grid.info.origin.position.x
+        map_oy = grid.info.origin.position.y
+        cm_res = cm.info.resolution
+        cm_ox = cm.info.origin.position.x
+        cm_oy = cm.info.origin.position.y
+        wx = map_ox + (cs + 0.5) * map_res
+        wy = map_oy + (rs + 0.5) * map_res
+        cm_c = np.floor((wx - cm_ox) / cm_res).astype(np.int64)
+        cm_r = np.floor((wy - cm_oy) / cm_res).astype(np.int64)
+        in_cm = (
+            (cm_r >= 0) & (cm_r < cm.info.height) & (cm_c >= 0) & (cm_c < cm.info.width)
+        )
+        lethal = np.zeros(rs.size, dtype=bool)
+        if np.any(in_cm):
+            idx_r = cm_r[in_cm]
+            idx_c = cm_c[in_cm]
+            values = cm_data[idx_r, idx_c]
+            lethal[in_cm] = values >= COSTMAP_LETHAL_THRESHOLD
+        dropped = int(lethal.sum())
+        if dropped > 0:
+            frontier_mask[rs[lethal], cs[lethal]] = False
+            self._logger.debug(
+                f"_apply_costmap_filter: dropped {dropped}/{rs.size} frontier cells"
+                f" with costmap >= {COSTMAP_LETHAL_THRESHOLD}"
+            )
+
+    def _costmap_value_for_cell(
+        self, r: int, c: int, grid_info
+    ) -> int:
+        """
+        Look up the global costmap value for a /map cell (r, c). Returns -1 when
+        the costmap snapshot is unavailable or the cell falls outside its extent
+        (match OccupancyGrid's `unknown` convention). Used by goal-cell selection
+        to steer goals away from inflation even inside an otherwise-free cluster.
+        """
+        with self._costmap_lock:
+            cm = self._global_costmap
+        if cm is None:
+            return -1
+        map_res = grid_info.resolution
+        map_ox = grid_info.origin.position.x
+        map_oy = grid_info.origin.position.y
+        wx = map_ox + (c + 0.5) * map_res
+        wy = map_oy + (r + 0.5) * map_res
+        cm_c = int(math.floor((wx - cm.info.origin.position.x) / cm.info.resolution))
+        cm_r = int(math.floor((wy - cm.info.origin.position.y) / cm.info.resolution))
+        if not (0 <= cm_r < cm.info.height and 0 <= cm_c < cm.info.width):
+            return -1
+        return int(cm.data[cm_r * cm.info.width + cm_c])
+
     def _goal_cell_from_cluster(
         self, cluster: FrontierCluster, grid_info
     ) -> tuple[float, float]:
         """
-        Return world (x, y) of the cluster cell closest to the centroid.
+        Pick the best cluster cell to navigate to and return its world (x, y).
 
-        Why not navigate directly to the centroid?
-        - Centroid is an average of cell coords and may fall in unknown/inflated space.
-        - Closest-to-centroid picks a guaranteed-free interior cell and forces
-          actual travel (unlike closest-to-robot, which Nav2 may satisfy immediately).
+        Selection rule: among cluster cells with non-lethal costmap value
+        (< COSTMAP_LETHAL_THRESHOLD, or -1 "unknown" when the costmap lags),
+        minimise a combined score of `costmap_value + DIST_WEIGHT * grid_distance_to_centroid`.
+        This steers the goal toward the interior of the cluster (away from walls)
+        while still requiring actual travel rather than picking a cell the robot
+        already satisfies within xy_goal_tolerance.
+
+        Fallback: if the costmap snapshot is unavailable or all cluster cells
+        were filtered, fall back to pure closest-to-centroid (legacy behaviour).
         """
         res = grid_info.resolution
         ox = grid_info.origin.position.x
@@ -593,14 +832,49 @@ class FrontierExplorer:
         cx, cy = cluster.centroid_world
         centroid_r = (cy - oy) / res - 0.5
         centroid_c = (cx - ox) / res - 0.5
-        goal_x, goal_y = cx, cy  # fallback (centroid itself)
-        min_d = math.inf
+
+        # Score weight: centroid-distance in cells is ~0–30 for typical clusters;
+        # costmap values are 0–99. Scale distance up so it can tie-break among
+        # equally low-cost cells without being drowned out by costmap noise.
+        DIST_WEIGHT = 2.0
+
+        best_score = math.inf
+        best_r, best_c = cluster.cells[0]
+        fallback_min_d = math.inf
+        fallback_r, fallback_c = cluster.cells[0]
+        any_passed = False
+
         for r, c in cluster.cells:
             d = math.hypot(r - centroid_r, c - centroid_c)
-            if d < min_d:
-                min_d = d
-                goal_x = ox + (c + 0.5) * res
-                goal_y = oy + (r + 0.5) * res
+            if d < fallback_min_d:
+                fallback_min_d = d
+                fallback_r, fallback_c = r, c
+
+            cost = self._costmap_value_for_cell(r, c, grid_info)
+            if cost >= COSTMAP_LETHAL_THRESHOLD:
+                continue
+            # Treat unknown (-1) as cost 0 — assume traversable until proven otherwise.
+            effective_cost = 0 if cost < 0 else cost
+            score = effective_cost + DIST_WEIGHT * d
+            if score < best_score:
+                best_score = score
+                best_r, best_c = r, c
+                any_passed = True
+
+        if not any_passed:
+            # Cluster contains only lethal cells per current costmap snapshot —
+            # should be rare because _apply_costmap_filter drops these earlier.
+            # Can happen if the costmap advanced (more inflation) between BFS
+            # and goal selection. Fall back to legacy closest-to-centroid so
+            # we still attempt something rather than stalling silently.
+            best_r, best_c = fallback_r, fallback_c
+            self._logger.debug(
+                "_goal_cell_from_cluster: all cluster cells lethal per current costmap; "
+                "falling back to closest-to-centroid"
+            )
+
+        goal_x = ox + (best_c + 0.5) * res
+        goal_y = oy + (best_r + 0.5) * res
         return goal_x, goal_y
 
     def _select_patrol_target(

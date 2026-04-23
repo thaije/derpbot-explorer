@@ -162,7 +162,10 @@ if [[ $START_AGENT -eq 1 ]]; then
     AGENT_FLAGS=""
     [[ $NO_PERCEPTION -eq 1 ]] && AGENT_FLAGS="--no-perception"
     echo "[5/5] Starting agent (flags: ${AGENT_FLAGS:-none})..."
-    tmux new -s agent -d "${ROS_ENV} cd $EXPLORER_ROOT && DERPBOT_READY_FLAG='$READY_FLAG' $EXPLORER_ROOT/.venv/bin/python agent/agent_node.py ${AGENT_FLAGS}"
+    # Pass through DERPBOT_FRONTIER_DEBUG (issue #10 diagnostic dumps) if set.
+    FRONTIER_DEBUG_FWD=""
+    [[ -n "${DERPBOT_FRONTIER_DEBUG:-}" ]] && FRONTIER_DEBUG_FWD="DERPBOT_FRONTIER_DEBUG='${DERPBOT_FRONTIER_DEBUG}'"
+    tmux new -s agent -d "${ROS_ENV} cd $EXPLORER_ROOT && DERPBOT_READY_FLAG='$READY_FLAG' $FRONTIER_DEBUG_FWD $EXPLORER_ROOT/.venv/bin/python agent/agent_node.py ${AGENT_FLAGS}"
 
     if [[ "${PAUSED:-0}" == "1" ]]; then
         # Poll for the agent's ready flag. The flag is created at the top of
