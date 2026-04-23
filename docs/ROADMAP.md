@@ -42,8 +42,8 @@ Titles only. Expand when a task is promoted to "Next".
 Known issues not currently prioritized. Full details in the linked issues; check before starting related work in case one is already tracked.
 
 - [#9](https://github.com/thaije/derpbot-explorer/issues/9) — Cold-start delay ~11 s on goals 1–2 (first_move)
-- [#10](https://github.com/thaije/derpbot-explorer/issues/10) — Frontier explorer picks off-map points
 - [#11](https://github.com/thaije/derpbot-explorer/issues/11) — MPPI "Failed to make progress" cascade mid-nav (may be fixed by Task 4)
+- [#21](https://github.com/thaije/derpbot-explorer/issues/21) — Tune costmap filter threshold and goal-picker DIST_WEIGHT (follow-up to #10)
 - [#13](https://github.com/thaije/derpbot-explorer/issues/13) — Enable `collision_monitor` realtime priority (needs rtprio grant)
 - [#14](https://github.com/thaije/derpbot-explorer/issues/14) — Client-side goal pre-validation via `PyCostmap2D`
 - [#15](https://github.com/thaije/derpbot-explorer/issues/15) — Use `ClearCostmapAroundPose` (Jazzy) for targeted clearing
