@@ -80,10 +80,12 @@ class DepthProjector:
 
         if create_subscriber:
             _sensor_qos = QoSProfile(
-                depth=5,
+                depth=1,  # Only keep latest to reduce queue overhead
                 reliability=ReliabilityPolicy.BEST_EFFORT,
                 durability=DurabilityPolicy.VOLATILE,
             )
+            self._last_cb_time = 0.0  # Wall-clock rate limiter
+            self._cb_interval = 0.2  # 5 Hz callback rate limit
             node.create_subscription(
                 Image,
                 "/derpbot_0/rgbd/depth_image",
@@ -98,6 +100,13 @@ class DepthProjector:
     # ------------------------------------------------------------------
 
     def _depth_cb(self, msg: Image) -> None:
+        # Rate limiter: only process at ~5 Hz to reduce GIL contention
+        import time
+        now = time.monotonic()
+        if now - self._last_cb_time < self._cb_interval:
+            return
+        self._last_cb_time = now
+
         try:
             img = self._bridge.imgmsg_to_cv2(msg, desired_encoding="32FC1")
         except Exception as exc:
