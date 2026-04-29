@@ -18,6 +18,7 @@ import os
 import threading
 import time
 from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -116,6 +117,7 @@ class FrontierExplorer:
         self._done_callback = done_callback
         self._logger = node.get_logger()
 
+        self._bfs_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bfs")
         self._map: Optional[OccupancyGrid] = None
         self._map_lock = threading.Lock()
 
@@ -361,6 +363,8 @@ class FrontierExplorer:
         self._exploring = False
         if self._active_goal_handle is not None:
             self._active_goal_handle.cancel_goal_async()
+        # Shutdown BFS executor
+        self._bfs_executor.shutdown(wait=False)
         # Write profile even on abnormal exit (sim died, time-limit, etc.)
         self._write_timeline()
 
@@ -459,7 +463,10 @@ class FrontierExplorer:
 
             self._tl("bfs_detect", _goal_num + 1)
             _t_bfs_start = self._sim_time()
-            frontiers = self._detect_frontiers(current_map)
+            # Run BFS in separate thread to allow camera callbacks to run concurrently
+            # (numpy releases GIL during computation)
+            future = self._bfs_executor.submit(self._detect_frontiers, current_map)
+            frontiers = future.result()  # Blocks until BFS completes
             _t_bfs = self._sim_time() - _t_bfs_start
             best = self._select_best_frontier(frontiers, rx, ry) if frontiers else None
 
