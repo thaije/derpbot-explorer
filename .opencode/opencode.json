@@ -5,5 +5,40 @@
       "mode": "subagent",
       "description": "ALWAYS use this agent to run ARST scenarios. Starts the full autonomy stack (sim + SLAM + Nav2 + agent) atomically, monitors the run, detects failures, and reports the final score. Never let the main agent start the sim or stack directly — timing constraints make that unreliable."
     }
+  },
+  "provider": {
+    "vLLM Spark": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "vLLM Spark",
+      "options": {
+        "baseURL": "http://192.168.2.31:8000/v1"
+      },
+      "models": {
+        "Qwen/Qwen3.6-35B-A3B-FP8": {
+          "name": "Qwen/Qwen3.6-35B-A3B-FP8",
+          "type": "api",
+          "key": "sk-local",
+          "maxContext": 256000
+        },
+        "Qwen/Qwen3.5-35B-A3B-FP8": {
+          "name": "Qwen/Qwen3.5-35B-A3B-FP8",
+          "type": "api",
+          "key": "sk-local",
+          "maxContext": 256000
+        },
+        "google/gemma-4-26B-A4B-it": {
+          "name": "google/gemma-4-26B-A4B-it",
+          "type": "api",
+          "key": "sk-local",
+          "maxContext": 128000
+        },
+        "Qwen/Qwen3-Coder-Next-FP8": {
+          "name": "Qwen/Qwen3-Coder-Next-FP8",
+          "type": "api",
+          "key": "sk-local",
+          "maxContext": 256000
+        }
+      }
+    }
   }
 }

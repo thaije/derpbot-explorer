@@ -387,7 +387,11 @@ collision_monitor:
       type: "polygon"
       action_type: "approach"
       footprint_topic: /local_costmap/published_footprint
-      time_before_collision: 1.5
+      # Was 1.5 — at rotate_to_heading_angular_vel=1.8 that simulated 155° of
+      # arc ahead; any scan point within the swept footprint (corner radius
+      # ~0.19m) throttled wz to TTC/1.5 ≈ 0.13–0.15 rad/s, stalling the shim's
+      # initial in-place rotation. 0.5 caps arc check at ~51°. See #9.
+      time_before_collision: 0.5
       simulation_time_step: 0.1
       min_points: 6
       visualize: false
