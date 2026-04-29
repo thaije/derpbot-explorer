@@ -66,7 +66,7 @@ class DepthProjector:
     Maintains the latest depth image and projects detection bboxes to world coords.
     """
 
-    def __init__(self, node: Node):
+    def __init__(self, node: Node, create_subscriber: bool = True):
         self._node = node
         self._logger = node.get_logger()
         self._bridge = CvBridge()
@@ -78,17 +78,20 @@ class DepthProjector:
         self._tf_buffer = tf2_ros.Buffer()
         self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, node)
 
-        _sensor_qos = QoSProfile(
-            depth=5,
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            durability=DurabilityPolicy.VOLATILE,
-        )
-        node.create_subscription(
-            Image,
-            "/derpbot_0/rgbd/depth_image",
-            self._depth_cb,
-            _sensor_qos,
-        )
+        if create_subscriber:
+            _sensor_qos = QoSProfile(
+                depth=5,
+                reliability=ReliabilityPolicy.BEST_EFFORT,
+                durability=DurabilityPolicy.VOLATILE,
+            )
+            node.create_subscription(
+                Image,
+                "/derpbot_0/rgbd/depth_image",
+                self._depth_cb,
+                _sensor_qos,
+            )
+        else:
+            self._logger.info("DepthProjector: subscriber disabled for GIL probe.")
 
     # ------------------------------------------------------------------
     # Depth image callback

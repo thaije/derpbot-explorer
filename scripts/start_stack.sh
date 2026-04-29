@@ -20,6 +20,7 @@ SEED=42
 SCENARIO="easy"
 START_AGENT=1
 NO_PERCEPTION=0
+NO_SUBSCRIBERS=0
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -29,6 +30,7 @@ while [[ $# -gt 0 ]]; do
         --scenario) SCENARIO="$2"; shift 2 ;;
         --no-agent) START_AGENT=0; shift ;;
         --no-perception) NO_PERCEPTION=1; shift ;;
+        --no-subscribers) NO_SUBSCRIBERS=1; shift ;;
         *) echo "Unknown arg: $1"; exit 1 ;;
     esac
 done
@@ -161,6 +163,7 @@ tmux new -s nav2 -d "${ROS_ENV} cd $EXPLORER_ROOT && ros2 launch $(cd $EXPLORER_
 if [[ $START_AGENT -eq 1 ]]; then
     AGENT_FLAGS=""
     [[ $NO_PERCEPTION -eq 1 ]] && AGENT_FLAGS="--no-perception"
+    [[ $NO_SUBSCRIBERS -eq 1 ]] && AGENT_FLAGS="$AGENT_FLAGS --no-subscribers"
     echo "[5/5] Starting agent (flags: ${AGENT_FLAGS:-none})..."
     # Pass through DERPBOT_FRONTIER_DEBUG (issue #10 diagnostic dumps) if set.
     FRONTIER_DEBUG_FWD=""

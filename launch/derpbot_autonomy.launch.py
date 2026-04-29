@@ -25,6 +25,10 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
+# Local helper to avoid import issues
+def _str_to_bool(s):
+    return s.lower() in ("true", "1", "yes")
+
 
 # Resolve config dir relative to this launch file's location
 _LAUNCH_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -37,11 +41,18 @@ NAV2_PARAMS = os.path.join(_CONFIG_DIR, "derpbot_nav2_params.yaml")
 
 def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time", default="true")
+    no_subscribers = LaunchConfiguration("no_subscribers", default="false")
 
     declare_use_sim_time = DeclareLaunchArgument(
         "use_sim_time",
         default_value="true",
         description="Use simulation (Gazebo) clock if true",
+    )
+
+    declare_no_subscribers = DeclareLaunchArgument(
+        "no_subscribers",
+        default_value="false",
+        description="Disable image/depth subscribers for GIL probe (detector subprocess still runs)",
     )
 
     # --- slam_toolbox: online async mode ---
@@ -83,8 +94,11 @@ def generate_launch_description():
                 name="derpbot_agent",
                 output="screen",
                 parameters=[{"use_sim_time": use_sim_time}],
+                arguments=["--no-subscribers"],
+                condition=IfCondition(no_subscribers),
                 # If running as plain Python script (no ROS package install):
                 # prefix="python3 " + os.path.join(_AGENT_DIR, "agent_node.py"),
+                # arguments=["--no-subscribers"],  # add if using script mode
             )
         ],
     )
@@ -92,6 +106,7 @@ def generate_launch_description():
     return LaunchDescription(
         [
             declare_use_sim_time,
+            declare_no_subscribers,
             slam_toolbox_node,
             nav2_launch,
             agent_node,

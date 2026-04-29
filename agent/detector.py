@@ -213,16 +213,21 @@ def _inference_worker(
 
 class Detector:
     """
-    Subscribes to the RGB image topic and runs open-vocabulary detection.
+    Wraps the OWLv2 object-detection subprocess and exposes a simple
+    detections: list[DetectionResult] property that the agent can poll.
 
-    Inference runs in a separate subprocess (no GIL contention with ROS2 executor).
-    All detection results are posted to self.detections (a thread-safe queue.Queue).
+    Runs the heavy inference in a *separate process* (spawn) so the
+    Python GIL does not block the ROS2 callbacks on the main thread.
+
+    NOTE: The main-thread callbacks only do:
+      - Convert ROS image → numpy (cheap)
+      - Push to multiprocessing.Queue (non-blocking when not full)
     """
 
-    def __init__(self, node: Node, targets: list[str]):
+    def __init__(self, node: Node, targets: list[str], create_subscriber: bool = True):
         self._node = node
-        self._targets = targets
         self._logger = node.get_logger()
+        self._create_subscriber = create_subscriber
         self._bridge = CvBridge()
 
         # Output queue consumed by Tracker
@@ -257,17 +262,20 @@ class Detector:
         self._relay_thread.start()
 
         # Subscribe to RGB image topic (RELIABLE publisher from Gazebo bridge)
-        _sensor_qos = QoSProfile(
-            depth=5,
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            durability=DurabilityPolicy.VOLATILE,
-        )
-        node.create_subscription(
-            Image,
-            "/derpbot_0/rgbd/image",
-            self._image_cb,
-            _sensor_qos,
-        )
+        if create_subscriber:
+            _sensor_qos = QoSProfile(
+                depth=5,
+                reliability=ReliabilityPolicy.BEST_EFFORT,
+                durability=DurabilityPolicy.VOLATILE,
+            )
+            node.create_subscription(
+                Image,
+                "/derpbot_0/rgbd/image",
+                self._image_cb,
+                _sensor_qos,
+            )
+        else:
+            self._logger.info("Detector: subscriber disabled for GIL probe.")
 
     def start(self) -> None:
         """Wait for subprocess warmup, then log ready."""

@@ -39,7 +39,7 @@ logger = logging.getLogger("agent_node")
 
 
 class AgentNode(Node):
-    def __init__(self, no_perception: bool = False):
+    def __init__(self, no_perception: bool = False, no_subscribers: bool = False):
         super().__init__(
             "derpbot_agent",
             parameter_overrides=[
@@ -51,6 +51,7 @@ class AgentNode(Node):
         self._state = "INIT"
         self._done_event = threading.Event()
         self._no_perception = no_perception
+        self._no_subscribers = no_subscribers
         self._t_start = self.get_clock().now().nanoseconds / 1e9
         self._logger = self.get_logger()
 
@@ -90,14 +91,14 @@ class AgentNode(Node):
             )
         else:
             t2_start = self.get_clock().now().nanoseconds / 1e9
-            self._detector = Detector(self, targets=mission.targets)
+            self._detector = Detector(self, targets=mission.targets, create_subscriber=not no_subscribers)
             self._detector.start()
             t2_end = self.get_clock().now().nanoseconds / 1e9
             self._logger.info(
                 f"[STARTUP TIMING] detector spawn+start: +{t2_end - t2_start:.2f}s (total {t2_end - self._t_start:.2f}s)"
             )
 
-            self._depth_projector = DepthProjector(self)
+            self._depth_projector = DepthProjector(self, create_subscriber=not no_subscribers)
 
             self._tracker = Tracker(
                 node=self,
@@ -181,10 +182,16 @@ def main():
         default=False,
         help="Disable OWLv2 detector/tracker; run nav+exploration only.",
     )
+    parser.add_argument(
+        "--no-subscribers",
+        action="store_true",
+        default=False,
+        help="Disable image/depth subscribers (GIL probe); detector subprocess still runs.",
+    )
     args, _ = parser.parse_known_args()
 
     rclpy.init()
-    node = AgentNode(no_perception=args.no_perception)
+    node = AgentNode(no_perception=args.no_perception, no_subscribers=args.no_subscribers)
 
     executor = rclpy.executors.MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)
