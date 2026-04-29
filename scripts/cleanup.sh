@@ -3,11 +3,16 @@
 # FDS_PORT defaults to 11811 if not set (from start_stack.sh)
 FDS_PORT="${FDS_PORT:-11811}"
 
+# Gracefully stop agent_node first so it can flush its profile.
+# SIGKILL (from tmux kill-session) skips Python finally blocks; SIGINT raises
+# KeyboardInterrupt in the main thread → except/finally → shutdown() → _write_timeline().
+pkill -INT -f "agent_node" 2>/dev/null || true
+sleep 3
+
 echo "Cleaning up tmux sessions..."
 for sess in agent nav2 slam sim fds; do
     tmux kill-session -t "$sess" 2>/dev/null || true
 done
-sleep 1
 
 echo "Killing remaining processes..."
 for _round in 1 2; do
