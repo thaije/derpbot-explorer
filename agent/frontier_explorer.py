@@ -18,6 +18,7 @@ import os
 import threading
 import time
 from collections import defaultdict, deque
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -89,6 +90,127 @@ MIN_FRONTIER_SIZE = 5  # cells
 COSTMAP_LETHAL_THRESHOLD = 99  # reject cells with costmap value >= this
 
 
+def bfs_worker(
+    grid_data: list,
+    width: int,
+    height: int,
+    resolution: float,
+    origin_x: float,
+    origin_y: float,
+    costmap_data: Optional[list] = None,
+    costmap_width: Optional[int] = None,
+    costmap_height: Optional[int] = None,
+    costmap_resolution: Optional[float] = None,
+    costmap_origin_x: Optional[float] = None,
+    costmap_origin_y: Optional[float] = None,
+) -> list:
+    """
+    Top-level function to run BFS in a separate process.
+    Returns list of (cells, centroid_world) tuples.
+    """
+    import numpy as np
+    from collections import deque
+
+    FREE = 0
+    UNKNOWN = -1
+    MIN_FRONTIER_SIZE = 5
+
+    data = np.array(grid_data, dtype=np.int8).reshape((height, width))
+
+    # Mark frontier cells
+    frontier_mask = np.zeros((height, width), dtype=bool)
+    free = data == FREE
+    unknown = data == UNKNOWN
+    for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+        shifted = np.roll(unknown, (dr, dc), axis=(0, 1))
+        if dr == -1:
+            shifted[-1, :] = False
+        elif dr == 1:
+            shifted[0, :] = False
+        if dc == -1:
+            shifted[:, -1] = False
+        elif dc == 1:
+            shifted[:, 0] = False
+        frontier_mask |= free & shifted
+
+    # Clip frontier mask to observed extent
+    observed = data >= 0
+    if np.any(observed):
+        rows, cols = np.where(observed)
+        rmin, rmax = rows.min(), rows.max()
+        cmin, cmax = cols.min(), cols.max()
+        frontier_mask = frontier_mask & (
+            (np.arange(height)[:, None] >= rmin)
+            & (np.arange(height)[:, None] <= rmax)
+            & (np.arange(width)[None, :] >= cmin)
+            & (np.arange(width)[None, :] <= cmax)
+        )
+
+    # Apply costmap filter
+    if costmap_data is not None and costmap_width is not None:
+        cm = np.asarray(costmap_data, dtype=np.int16).reshape(
+            (costmap_height, costmap_width)
+        )
+        rs, cs = np.where(frontier_mask)
+        if rs.size > 0:
+            map_res = resolution
+            map_ox = origin_x
+            map_oy = origin_y
+            cm_res = costmap_resolution
+            cm_ox = costmap_origin_x
+            cm_oy = costmap_origin_y
+            wx = map_ox + (cs + 0.5) * map_res
+            wy = map_oy + (rs + 0.5) * map_res
+            cm_c = np.floor((wx - cm_ox) / cm_res).astype(np.int64)
+            cm_r = np.floor((wy - cm_oy) / cm_res).astype(np.int64)
+            in_cm = (
+                (cm_r >= 0)
+                & (cm_r < costmap_height)
+                & (cm_c >= 0)
+                & (cm_c < costmap_width)
+            )
+            if np.any(in_cm):
+                idx_r = cm_r[in_cm]
+                idx_c = cm_c[in_cm]
+                values = cm[idx_r, idx_c]
+                lethal = np.zeros(rs.size, dtype=bool)
+                lethal[in_cm] = values >= COSTMAP_LETHAL_THRESHOLD
+                frontier_mask[rs[lethal], cs[lethal]] = False
+
+    # BFS-cluster the frontier cells
+    visited = np.zeros((height, width), dtype=bool)
+    clusters = []
+
+    rows, cols = np.where(frontier_mask)
+    for start_r, start_c in zip(rows, cols):
+        if visited[start_r, start_c]:
+            continue
+        q = deque()
+        q.append((start_r, start_c))
+        visited[start_r, start_c] = True
+        cells = []
+        while q:
+            r, c = q.popleft()
+            cells.append((r, c))
+            for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < height and 0 <= nc < width:
+                    if frontier_mask[nr, nc] and not visited[nr, nc]:
+                        visited[nr, nc] = True
+                        q.append((nr, nc))
+
+        if len(cells) < MIN_FRONTIER_SIZE:
+            continue
+
+        mean_r = sum(r for r, _ in cells) / len(cells)
+        mean_c = sum(c for _, c in cells) / len(cells)
+        wx = origin_x + (mean_c + 0.5) * resolution
+        wy = origin_y + (mean_r + 0.5) * resolution
+        clusters.append((cells, (wx, wy)))
+
+    return clusters
+
+
 @dataclass
 class FrontierCluster:
     cells: list[tuple[int, int]]  # (row, col) in grid frame
@@ -116,6 +238,7 @@ class FrontierExplorer:
         self._done_callback = done_callback
         self._logger = node.get_logger()
 
+        self._bfs_executor = ProcessPoolExecutor(max_workers=1)
         self._map: Optional[OccupancyGrid] = None
         self._map_lock = threading.Lock()
 
@@ -361,6 +484,8 @@ class FrontierExplorer:
         self._exploring = False
         if self._active_goal_handle is not None:
             self._active_goal_handle.cancel_goal_async()
+        # Shutdown BFS process pool
+        self._bfs_executor.shutdown(wait=False)
         # Write profile even on abnormal exit (sim died, time-limit, etc.)
         self._write_timeline()
 
@@ -613,96 +738,46 @@ class FrontierExplorer:
     def _detect_frontiers(self, grid: OccupancyGrid) -> list[FrontierCluster]:
         """
         Return list of frontier clusters.
-        A frontier cell is a FREE cell with at least one UNKNOWN neighbour.
+        Runs BFS in a separate process to bypass GIL contention.
         """
         width = grid.info.width
         height = grid.info.height
-        data = np.array(grid.data, dtype=np.int8).reshape((height, width))
+        resolution = grid.info.resolution
+        origin_x = grid.info.origin.position.x
+        origin_y = grid.info.origin.position.y
 
-        # Mark frontier cells
-        frontier_mask = np.zeros((height, width), dtype=bool)
-        # Free cells (== 0) adjacent to unknown cells (== -1)
-        free = data == 0
-        # Shift in 4 directions and check for unknown neighbours
-        unknown = data == UNKNOWN
-        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-            shifted = np.roll(unknown, (dr, dc), axis=(0, 1))
-            # Zero out wrapped edges
-            if dr == -1:
-                shifted[-1, :] = False
-            elif dr == 1:
-                shifted[0, :] = False
-            if dc == -1:
-                shifted[:, -1] = False
-            elif dc == 1:
-                shifted[:, 0] = False
-            frontier_mask |= free & shifted
+        # Get costmap data if available
+        with self._costmap_lock:
+            cm = self._global_costmap
+        costmap_args = {}
+        if cm is not None:
+            costmap_args = {
+                "costmap_data": list(cm.data),
+                "costmap_width": cm.info.width,
+                "costmap_height": cm.info.height,
+                "costmap_resolution": cm.info.resolution,
+                "costmap_origin_x": cm.info.origin.position.x,
+                "costmap_origin_y": cm.info.origin.position.y,
+            }
 
-        # #10 clip frontier mask to observed extent (cells with data >= 0).
-        # Unknown cells beyond the known map bounds cause the costmap to expand
-        # indefinitely, creating phantom frontiers at the edge. Reject any cell
-        # outside the axis-aligned bbox of observed cells (free + occupied).
-        observed = data >= 0
-        if np.any(observed):
-            rows, cols = np.where(observed)
-            rmin, rmax = rows.min(), rows.max()
-            cmin, cmax = cols.min(), cols.max()
-            frontier_mask = frontier_mask & (
-                (np.arange(height)[:, None] >= rmin)
-                & (np.arange(height)[:, None] <= rmax)
-                & (np.arange(width)[None, :] >= cmin)
-                & (np.arange(width)[None, :] <= cmax)
-            )
+        # Submit to process pool
+        future = self._bfs_executor.submit(
+            bfs_worker,
+            list(grid.data),
+            width,
+            height,
+            resolution,
+            origin_x,
+            origin_y,
+            **costmap_args,
+        )
+        results = future.result()  # Wait for result
 
-        # #10 drop frontier cells inside the global costmap inflation layer.
-        # SLAM marks a cell FREE as soon as a LiDAR beam reaches it, including
-        # cells right next to walls. The BFS then picks these wall-hugging
-        # ribbons — but Nav2's inflation layer (inscribed_radius=robot_radius)
-        # marks them unreachable. Filtering here prevents the stuck→blacklist→
-        # next-wall-hugger cascade and keeps goal cells in traversable space.
-        #
-        # Cells where costmap == -1 (unknown, e.g. right after ClearEntireCostmap)
-        # are kept; otherwise recovery would temporarily starve the explorer.
-        self._apply_costmap_filter(frontier_mask, grid)
-
-        # BFS-cluster the frontier cells
-        visited = np.zeros((height, width), dtype=bool)
-        clusters: list[FrontierCluster] = []
-
-        rows, cols = np.where(frontier_mask)
-        for start_r, start_c in zip(rows, cols):
-            if visited[start_r, start_c]:
-                continue
-            # BFS from this seed
-            q: deque[tuple[int, int]] = deque()
-            q.append((start_r, start_c))
-            visited[start_r, start_c] = True
-            cells: list[tuple[int, int]] = []
-            while q:
-                r, c = q.popleft()
-                cells.append((r, c))
-                for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                    nr, nc = r + dr, c + dc
-                    if 0 <= nr < height and 0 <= nc < width:
-                        if frontier_mask[nr, nc] and not visited[nr, nc]:
-                            visited[nr, nc] = True
-                            q.append((nr, nc))
-
-            if len(cells) < MIN_FRONTIER_SIZE:
-                continue
-
-            # Compute centroid in world frame
-            res = grid.info.resolution
-            ox = grid.info.origin.position.x
-            oy = grid.info.origin.position.y
-            mean_r = sum(r for r, _ in cells) / len(cells)
-            mean_c = sum(c for _, c in cells) / len(cells)
-            wx = ox + (mean_c + 0.5) * res
-            wy = oy + (mean_r + 0.5) * res
-
-            cluster = FrontierCluster(cells=cells, centroid_world=(wx, wy))
-            clusters.append(cluster)
-
+        # Convert results to FrontierCluster objects
+        clusters = [
+            FrontierCluster(cells=cells, centroid_world=centroid)
+            for cells, centroid in results
+        ]
         return clusters
 
     # ------------------------------------------------------------------
