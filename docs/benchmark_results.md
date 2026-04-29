@@ -4,6 +4,45 @@ Historical performance snapshots. Append new entries on top; keep older ones for
 
 ---
 
+## 2026-04-23 — Task 6 speed baseline (current master, #17, easy, 3 seeds, --no-perception)
+
+Establishes the Task 6 baseline after #17 (sleep tightening), #18 (startup pause), #10 (lethal costmap filter), #19 (profiler race fix) all landed. Profile writing fixed — cleanup.sh now sends SIGINT before tmux kill so Python finally block runs.
+
+| Seed | Score | avg_speed_kmh | Coverage | Collisions | Meters | Profile |
+|---|---|---|---|---|---|---|
+| 42 | 52.5 D | 0.327 | 62.3% | 0 | 27.4 m | `profile_20260423T222714.md` |
+| 55 | 51.2 D | 0.246 | 52.3% | 0 | 20.6 m | `profile_20260423T224509.md` |
+| 99 | 51.4 D | 0.368 | 60.9% | 0 | 31.0 m | `profile_20260423T224944.md` |
+| **mean** | **51.7 D** | **0.314** | **58.5%** | **0** | **26.3 m** | |
+
+**DoD: avg_speed_kmh ≥ 0.50 on ≥ 3 seeds. Current mean: 0.314 → need +59%.**
+
+**Time budget across seeds (profiles):**
+
+| Phase | seed=42 | seed=55 | seed=99 | mean % |
+|---|---|---|---|---|
+| traveling | 61.0% | 46.8% | 67.5% | 58.4% |
+| **rotating** | **26.3%** | **25.2%** | **18.6%** | **23.4%** |
+| startup | 5.4% | 5.7% | 5.2% | 5.4% |
+| waiting | 4.6% | 13.4% | 4.3% | 7.4% |
+| bfs_detect | 0.2% | 3.6% | 0.9% | 1.6% |
+| other | 2.5% | 5.3% | 4.1% | 3.9% |
+
+**Moving speed: 0.134–0.150 m/s mean** across seeds (well below 0.5 m/s max).
+
+**Key findings:**
+- `rotating` is the consistently dominant non-travel overhead (18–26% across all seeds) — primary lever for Task 6.
+- seed=55 was badly hurt by 2/4 goal failures (stuck-detect) producing 13.4% waiting; #9 first-move pattern still present (goal#1: 33.3 s rotating, goal#2: 27.2 s rotating, both failed).
+- Moving speed uniformly low (~0.147 m/s). MPPI not using the 0.5 m/s max — secondary lever.
+- Startup 5.2–5.7% (~16 s) still visible; the #18 fix shifted it from ~57 s but bringup settle still costs sim-time.
+
+**Levers ranked by impact (from profiles):**
+1. Fix `rotating` overhead (23% mean → target ≤ 10%): eliminate #9 first-move stalls; tune RotationShim thresholds
+2. Increase moving speed (0.147 → 0.20+ m/s): tune MPPI temperature / reduce CostCritic weight in open corridors
+3. Reduce goal failures on bad seeds (seed=55 had 2/4 failed, eating waiting budget)
+
+---
+
 ## 2026-04-14 — Task 6 sleep-tightening validation (#17, easy, speed=2, perception ON)
 
 Per-seed 2×2 A/B measuring inter-goal sleep reductions in `frontier_explorer.py`:
