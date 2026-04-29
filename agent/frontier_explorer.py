@@ -242,6 +242,13 @@ class FrontierExplorer:
         self._map: Optional[OccupancyGrid] = None
         self._map_lock = threading.Lock()
 
+        # Callback-based goal tracking (replaces polling in _send_goal_and_wait)
+        self._goal_response_event = threading.Event()
+        self._goal_result_event = threading.Event()
+        self._goal_accepted: Optional[bool] = None
+        self._goal_handle = None
+        self._goal_result = None
+
         # Global costmap snapshot: used to filter wall-hugging frontier cells
         # whose goal would land in the inflation layer (issue #10).
         self._global_costmap: Optional[OccupancyGrid] = None
@@ -480,10 +487,26 @@ class FrontierExplorer:
         t = threading.Thread(target=self._explore_loop, daemon=True)
         t.start()
 
+    # ------------------------------------------------------------------
+    # Nav2 goal callbacks (replaces polling in _send_goal_and_wait)
+    # ------------------------------------------------------------------
+
+    def _goal_response_callback(self, future) -> None:
+        """Called when Nav2 responds to goal request (accept/reject)."""
+        goal_handle = future.result()
+        self._goal_accepted = goal_handle.accepted
+        self._goal_handle = goal_handle
+        self._goal_response_event.set()
+
+    def _goal_result_callback(self, future) -> None:
+        """Called when Nav2 goal completes (success/failure)."""
+        self._goal_result = future.result()
+        self._goal_result_event.set()
+
     def stop(self) -> None:
         self._exploring = False
-        if self._active_goal_handle is not None:
-            self._active_goal_handle.cancel_goal_async()
+        if self._goal_handle is not None:
+            self._goal_handle.cancel_goal_async()
         # Shutdown BFS process pool
         self._bfs_executor.shutdown(wait=False)
         # Write profile even on abnormal exit (sim died, time-limit, etc.)
@@ -1104,20 +1127,28 @@ class FrontierExplorer:
         goal_msg.pose = pose
 
         _t_send = self._sim_time()
-        future = self._nav_client.send_goal_async(goal_msg)
-        # Poll — do NOT call spin_until_future_complete here; the node is already
-        # spinning in a MultiThreadedExecutor in agent_node.py.
-        deadline = time.time() + 90.0
-        while not future.done() and time.time() < deadline:
-            time.sleep(0.05)
-        if not future.done():
+
+        # Clear events and send goal with response callback
+        self._goal_response_event.clear()
+        self._goal_result_event.clear()
+        self._goal_accepted = None
+        self._goal_handle = None
+
+        future = self._nav_client.send_goal_async(
+            goal_msg,
+            goal_response_callback=self._goal_response_callback,
+        )
+
+        # Wait for goal response (accept/reject) via callback + event
+        if not self._goal_response_event.wait(timeout=90.0):
             self._logger.warning(
                 "FrontierExplorer: timeout waiting for goal acceptance — skipping (not blacklisting)."
             )
             return None, _nan, _nan, 0.0
-        goal_handle = future.result()
 
-        if not goal_handle or not goal_handle.accepted:
+        goal_handle = self._goal_handle
+
+        if not goal_handle or not self._goal_accepted:
             # Rejection is NOT the same as an unreachable frontier — Nav2 may be
             # temporarily busy (e.g. finishing a cancel/preempt cycle). Never
             # blacklist on rejection; just return and let the explore loop retry.
@@ -1131,7 +1162,8 @@ class FrontierExplorer:
         self._logger.info(f"FrontierExplorer: TIMING accept={accept_latency:.1f}s")
         self._tl("nav2_accepted", goal_num, f"accept_lat={accept_latency:.1f}s")
 
-        self._active_goal_handle = goal_handle
+        self._goal_handle = goal_handle
+        self._active_goal_handle = goal_handle  # Keep for compatibility
         self._last_move_time = _t_accept
 
         with self._odom_lock:
@@ -1141,19 +1173,14 @@ class FrontierExplorer:
             _accepted_x, _accepted_y = self._robot_x, self._robot_y
 
         result_future = goal_handle.get_result_async()
+        result_future.add_done_callback(self._goal_result_callback)
+
         _first_move_t = _nan  # sim-seconds from accept to first 0.15 m displacement
         _sub = "waiting"  # nav sub-phase for timeline profiling
         _wall_accept = time.time()  # wall-clock escape: catch dead sim (clock frozen)
 
-        while not result_future.done():
+        while not self._goal_result_event.is_set():
             time.sleep(0.2)
-
-            # Re-check immediately after sleep — goal may have completed while we
-            # were sleeping. Doing this BEFORE the stuck check avoids a race where
-            # the stuck timer fires in the same iteration the goal succeeds, causing
-            # a false-positive FAILED result (and spurious blacklist).
-            if result_future.done():
-                break
 
             # Stuck detection — use sim clock so RTF oscillations don't cause
             # false positives (wall-clock 30 s at RTF=0.1 = only 3 sim seconds).
@@ -1227,7 +1254,7 @@ class FrontierExplorer:
                     self._sim_time() - _t_accept,
                 )
 
-        result = result_future.result()
+        result = self._goal_result
         nav_time = self._sim_time() - _t_accept
         self._active_goal_handle = None
 
