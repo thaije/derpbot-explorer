@@ -4,6 +4,28 @@ Historical performance snapshots. Append new entries on top; keep older ones for
 
 ---
 
+## 2026-04-29 — Perception vs speed tradeoff (seed 42, easy, speed=2 vs 1)
+
+Four runs isolating the effect of perception on Task 6 speed progress. The April 23 baseline showed no-perception mean 0.314 km/h, closing toward the 0.50 DoD target. These runs show **perception overhead negates ~60% of that speed gain**.
+
+| Config | Score | Grade | avg_speed_kmh | Coverage | Found | Collisions | Meters |
+|---|---|---|---|---|---|---|---|
+| No-perc, spd=2 (Apr 23 baseline) | 52.5 | D | 0.327 | 62.3% | 0/6 | 0 | 27.4 |
+| No-perc, spd=2 (today) | 47.8 | D | **0.4** | 64.9% | 0/6 | 1 | 33.4 |
+| **Perc ON, spd=2** | **62.9** | **C** | **0.197** | 51.2% | **2/6** | 0 | 16.6 |
+| **Perc ON, spd=1** | **63.1** | **C** | **0.155** | 50.0% | **2/6** | 0 | 12.9 |
+
+**Key findings:**
+- **Speed progress wiped by perception:** no-perception runs hit 0.4 km/h (+29% vs Apr 23 baseline), but enabling perception drops to 0.155–0.197 km/h — back to square one for Task 6.
+- **Perception still raises overall score** (+15 points, 47.8→63.1) despite halved travel distance — finding 2/6 objects outweighs coverage loss.
+- **RTF (speed=1 vs 2) makes no meaningful difference** with perception (63.1 vs 62.9) — bottleneck is exploration logic, not sim compute.
+- **Perception cuts meters by ~60%** (33.4→12.9 m) — detector/confirmation loops dominate cycle time.
+- **Task 6 DoD (≥0.50 km/h) impossible with current perception pipeline.** Need to optimize detection-aware exploration or run perception asynchronously.
+
+**Verdict:** The 0.314→0.4 km/h speed progress (no-perception) is real, but the perception pipeline's time cost (~0.16 km/h) negates it entirely. Next lever: profile perception overhead and optimize detection→confirmation→BFS-resume cycle. See #22 for probe plan.
+
+---
+
 ## 2026-04-23 — Task 6 speed baseline (current master, #17, easy, 3 seeds, --no-perception)
 
 Establishes the Task 6 baseline after #17 (sleep tightening), #18 (startup pause), #10 (lethal costmap filter), #19 (profiler race fix) all landed. Profile writing fixed — cleanup.sh now sends SIGINT before tmux kill so Python finally block runs.
