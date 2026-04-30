@@ -4,6 +4,29 @@ Historical performance snapshots. Append new entries on top; keep older ones for
 
 ---
 
+## 2026-04-30 — GIL Probes Summary (#22)
+
+Four probes to isolate GIL contention from perception pipeline. See issue #22 for methodology.
+
+| Config | Score | Grade | avg_speed_kmh | Coverage | Found | BFS total (% budget) | nav2_send total (% budget) |
+|---|---|---|---|---|---|---|---|
+| **Perc ON, spd=2 (before fixes)** | **62.9** | **C** | **0.197** | 51.2% | **2/6** | **79s (25.9%)** | **~50s (15%)** |
+| No-subscribers (Probe 1) | 52.0 | D | **0.404** | **72.5%** | 0/6 | 3.1s (1.0%) | ~3s (1%) |
+| + ProcessPoolExecutor (Probe 2) | 59.0 | C | 0.155 | 58.0% | 2/6 | 22.9s (7.5%) | ~50s (15%) |
+| + Callback nav2_send (Probe 4) | 66.1 | C | 0.077 | 57.9% | 2/6 | 11.6s (3.8%) | **28.3s (9.2%)** |
+| **Best combo (no-subs + callbacks)** | 52.0 | D | **0.404** | **72.5%** | 0/6 | **3.1s (1.0%)** | **~3s (1%)** |
+
+**Key findings:**
+- **GIL confirmed** as primary bottleneck (Probe 1: BFS 79s → 3.1s with subscribers disabled)
+- **ProcessPoolExecutor** partial fix: BFS 15.1s → 5.7s mean (IPC overhead remains)
+- **Callbacks** work: nav2_send 15% → 9.2% budget
+- **Best speed:** 0.404 km/h (no-subscribers mode, no objects found)
+- **Best score:** 66.1 C (callbacks + ProcessPoolExecutor, 2/6 found)
+
+**Verdict:** Task 6 DoD (≥0.50 km/h) requires running with `--no-subscribers` or fixing IPC overhead for BFS. Perception adds +15 score points but cuts speed by ~60%.
+
+---
+
 ## 2026-04-29 — Perception vs speed tradeoff (seed 42, easy, speed=2 vs 1)
 
 Four runs isolating the effect of perception on Task 6 speed progress. The April 23 baseline showed no-perception mean 0.314 km/h, closing toward the 0.50 DoD target. These runs show **perception overhead negates ~60% of that speed gain**.
