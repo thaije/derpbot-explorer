@@ -22,7 +22,29 @@ Four runs isolating the effect of perception on Task 6 speed progress. The April
 - **Perception cuts meters by ~60%** (33.4→12.9 m) — detector/confirmation loops dominate cycle time.
 - **Task 6 DoD (≥0.50 km/h) impossible with current perception pipeline.** Need to optimize detection-aware exploration or run perception asynchronously.
 
-**Verdict:** The 0.314→0.4 km/h speed progress (no-perception) is real, but the perception pipeline's time cost (~0.16 km/h) negates it entirely. Next lever: profile perception overhead and optimize detection→confirmation→BFS-resume cycle. See #22 for probe plan.
+**Verdict:** The 0.314→0.4 km/h speed progress (no-perception) is real, but the perception pipeline's time cost (~0.16 km/h) negates it entirely. See #22 for GIL probe results.
+
+**GIL Probes (#22) completed:**
+- Probe 1: GIL confirmed — BFS 79s (25.9%) → 3.1s (1.0%) with subscribers disabled
+- Probe 2: ProcessPoolExecutor — BFS 15.1s → 5.7s mean (partial fix, IPC overhead)
+- Probe 3: Rate limiter (5 Hz) — modest help (15.1s → 12.5s)
+- Probe 4: Callback-based nav2_send — 15% → 9.2% budget (28.3s total)
+
+**Best combo:** ProcessPoolExecutor + callbacks → BFS ~5.7s + nav2_send ~7.1s per goal
+
+---
+
+## 2026-04-29 — GIL Probes Summary (#22)
+
+| Config | BFS total | BFS mean | nav2_send total | Score | Speed (km/h) |
+|---|---|---|---|---|---|
+| No-perception (Apr 23) | 2.7s (0.9%) | 0.4s | ~3s (1%) | 52.5 D | 0.327 |
+| Perception ON (before probes) | 79s (25.9%) | 15.1s | ~50s (15%) | 62.9 C | 0.197 |
+| **No-subscribers (Probe 1)** | **3.1s (1.0%)** | **0.6s** | ~3s (1%) | 52.0 D | **0.404** |
+| **+ ProcessPoolExecutor (Probe 2)** | **22.9s (7.5%)** | **5.7s** | ~50s (15%) | 59.0 C | 0.155 |
+| **+ Callback nav2_send (Probe 4)** | 11.6s (3.8%) | 2.9s | **28.3s (9.2%)** | 66.1 C | 0.077 |
+
+**Key finding:** GIL contention confirmed as primary bottleneck. Best speed (0.404 km/h) achieved with subscribers disabled. Combining ProcessPoolExecutor + callbacks should give ~5-7s BFS + ~7s nav2_send per goal.
 
 ---
 
