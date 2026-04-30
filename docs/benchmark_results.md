@@ -13,7 +13,7 @@ Four probes to isolate GIL contention from perception pipeline. See issue #22 fo
 | **Perc ON, spd=2 (before fixes)** | **62.9** | **C** | **0.197** | 51.2% | **2/6** | **79s (25.9%)** | **~50s (15%)** |
 | No-subscribers (Probe 1) | 52.0 | D | **0.404** | **72.5%** | 0/6 | 3.1s (1.0%) | ~3s (1%) |
 | + ProcessPoolExecutor (Probe 2) | 59.0 | C | 0.155 | 58.0% | 2/6 | 22.9s (7.5%) | ~50s (15%) |
-| + Callback nav2_send (Probe 4) | 66.1 | C | 0.077 | 57.9% | 2/6 | 11.6s (3.8%) | **28.3s (9.2%)** |
+| + Callback nav2_send (Probe 4) | 66.1 | C | **0.28** | 57.9% | 2/6 | 11.6s (3.8%) | **28.3s (9.2%)** |
 | **Best combo (no-subs + callbacks)** | 52.0 | D | **0.404** | **72.5%** | 0/6 | **3.1s (1.0%)** | **~3s (1%)** |
 
 **Key findings:**
