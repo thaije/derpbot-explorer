@@ -1134,10 +1134,8 @@ class FrontierExplorer:
         self._goal_accepted = None
         self._goal_handle = None
 
-        future = self._nav_client.send_goal_async(
-            goal_msg,
-            goal_response_callback=self._goal_response_callback,
-        )
+        future = self._nav_client.send_goal_async(goal_msg)
+        future.add_done_callback(self._goal_response_callback)
 
         # Wait for goal response (accept/reject) via callback + event
         if not self._goal_response_event.wait(timeout=90.0):
