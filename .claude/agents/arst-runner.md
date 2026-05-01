@@ -29,6 +29,14 @@ calls rtf_monitor.py / world_state.py / robot_control.py.
 
 ---
 
+## Scenario timing — read before doing anything
+
+The easy scenario runs for **300 sim-seconds maximum**. At the default `--speed 2` the sim runs at ~2× real-time, so the entire scenario completes in **~150 wall-seconds (~2.5 minutes)**. Speed=1 doubles that to ~300 wall-seconds (~5 minutes).
+
+**Never sleep longer than 30 wall-seconds at a time.** A single 8-minute sleep would outlast the entire run. The monitoring loop (step 4) already fires every 30s — match that cadence. If you need to wait for the scenario to end, poll with short sleeps, not one long one.
+
+---
+
 ## 1. Start the stack
 
 ```bash

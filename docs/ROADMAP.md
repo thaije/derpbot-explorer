@@ -42,12 +42,9 @@ Titles only. Expand when a task is promoted to "Next".
 Known issues not currently prioritized. Full details in the linked issues; check before starting related work in case one is already tracked.
 
 - [#9](https://github.com/thaije/derpbot-explorer/issues/9) — Cold-start delay ~11 s on goals 1–2 (first_move)
-- [#11](https://github.com/thaije/derpbot-explorer/issues/11) — MPPI "Failed to make progress" cascade mid-nav (may be fixed by Task 4)
-- [#21](https://github.com/thaije/derpbot-explorer/issues/21) — Tune costmap filter threshold and goal-picker DIST_WEIGHT (follow-up to #10)
-- [#13](https://github.com/thaije/derpbot-explorer/issues/13) — Enable `collision_monitor` realtime priority (needs rtprio grant)
-- [#14](https://github.com/thaije/derpbot-explorer/issues/14) — Client-side goal pre-validation via `PyCostmap2D`
-- [#15](https://github.com/thaije/derpbot-explorer/issues/15) — Use `ClearCostmapAroundPose` (Jazzy) for targeted clearing
-- [#23](https://github.com/thaije/derpbot-explorer/issues/23) — Detection/confirmation cycle too slow — hurts Task 6 speed
+- [#23](https://github.com/thaije/derpbot-explorer/issues/23) — Detection/confirmation cycle too slow — hurts Task 6 speed · [prompt](prompt_issue_23.md)
+- [#21](https://github.com/thaije/derpbot-explorer/issues/21) — Tune costmap filter threshold and goal-picker DIST_WEIGHT (follow-up to #10) · [prompt](prompt_issue_21.md)
+- [#11](https://github.com/thaije/derpbot-explorer/issues/11) — MPPI "Failed to make progress" cascade mid-nav (may be fixed by Task 4) · [prompt](prompt_issue_11.md)
 
 Run `gh issue list --state open --label backlog` for the live list.
 
