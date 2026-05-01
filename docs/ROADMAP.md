@@ -47,7 +47,7 @@ Known issues not currently prioritized. Full details in the linked issues; check
 - [#13](https://github.com/thaije/derpbot-explorer/issues/13) — Enable `collision_monitor` realtime priority (needs rtprio grant)
 - [#14](https://github.com/thaije/derpbot-explorer/issues/14) — Client-side goal pre-validation via `PyCostmap2D`
 - [#15](https://github.com/thaije/derpbot-explorer/issues/15) — Use `ClearCostmapAroundPose` (Jazzy) for targeted clearing
-- [#22](https://github.com/thaije/derpbot-explorer/issues/22) — Perception pipeline GIL contention — probe plan
+- [#23](https://github.com/thaije/derpbot-explorer/issues/23) — Detection/confirmation cycle too slow — hurts Task 6 speed
 
 Run `gh issue list --state open --label backlog` for the live list.
 
