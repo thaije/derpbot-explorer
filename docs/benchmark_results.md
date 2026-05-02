@@ -4,6 +4,51 @@ Historical performance snapshots. Append new entries on top; keep older ones for
 
 ---
 
+## 2026-05-01 — Issue #9 re-validation: collision monitor time_before_collision 1.5→0.5 (corrects prior entry)
+
+**Context:** Prior rejection (same date, entry below) was based on catastrophic artifacts — 26.3s first_move and stuck-in-startup — that did not repeat on re-validation. Re-ran both seeds to get a clean read.
+
+| Config | Seed | Score | Grade | avg_speed_kmh | Coverage | first_move G1 | Collisions |
+|---|---|---|---|---|---|---|---|
+| Baseline (1.5s) | 42 | 62.5 | C | 0.316 | 67.1% | 4.2s | 0 |
+| Baseline (1.5s) | 43 | 51.6 | D | 0.323 | 68.9% | 10.0s | 0 |
+| Fix (0.5s) re-val | 42 | 61.7 | C | 0.26 | 52.4% | 7.8s | 0 |
+| Fix (0.5s) re-val | 43 | 60.3 | C | 0.346 | 52.7% | 16.3s | 0 |
+
+**Findings:**
+- Previous rejection's extreme failures (26.3s first_move, stuck-in-startup on seed=43) were high-variance artifacts — neither repeated.
+- **Coverage regression is real and consistent:** both seeds drop ~15pp (67–69% → 52–53%). Not noise.
+- Speed: mixed — seed=42 slower (0.316→0.26), seed=43 faster (0.323→0.346).
+- No collisions on any run.
+- Later goals also show 20–21s first_move outliers in other runs (goals 3 and 4), confirming this is not a cold-start/goals-1–2 effect but general rotation-near-walls overhead.
+
+**Conclusion:** Fix still rejected — consistent ~15pp coverage regression. Additionally, issue #9's framing ("cold-start delay on goals 1–2") is incorrect; the delay affects any goal with tight geometry, not specifically the first goals. Issue #9 closed as wrong root cause. Rotation overhead (~18–26% of budget) remains an open problem requiring a different approach.
+
+---
+
+## 2026-05-01 — Issue #9 validation: collision monitor time_before_collision 1.5→0.5
+
+**Fix tested:** Reduce FootprintApproach `time_before_collision` from 1.5s to 0.5s to cut first_move rotation latency.
+
+**Result: REJECTED** — fix degraded performance on both seeds.
+
+| Config | Seed | Score | Grade | avg_speed_kmh | Coverage | first_move G1 | Collisions |
+|---|---|---|---|---|---|---|---|
+| Baseline (1.5s) | 42 | 62.5 | C | 0.316 | 67.1% | 4.2s | 0 |
+| Baseline (1.5s) | 43 | 51.6 | D | 0.323 | 68.9% | 10.0s | 0 |
+| Fix (0.5s) | 42 | 53.3 | D | 0.22 ❌ | 52.1% ❌ | 26.3s ❌ | 0 |
+| Fix (0.5s) | 43 | 47.5 | D | 0.358 ✅ | 24.2% ❌ | stuck ❌ | 0 |
+
+**Findings:**
+- first_move got **worse** (4.2s → 26.3s on seed=42)
+- Seed=43 with fix: robot stuck in startup entire run, 0 goals dispatched
+- Coverage dropped on both seeds
+- No collision regression (0 on all runs)
+
+**Conclusion:** Root cause of first_move delay is NOT the collision monitor arc. Investigation needed on local_costmap warmup, slam_toolbox convergence, or controller startup. Issue #9 remains open.
+
+---
+
 ## 2026-04-30 — GIL Probes Summary (#22)
 
 Four probes to isolate GIL contention from perception pipeline. See issue #22 for methodology.
