@@ -229,6 +229,7 @@ class Detector:
         self._logger = node.get_logger()
         self._create_subscriber = create_subscriber
         self._bridge = CvBridge()
+        self._targets = targets  # saved for _restart_worker
 
         # Output queue consumed by Tracker
         self.detections: queue.Queue[DetectionResult] = queue.Queue(maxsize=100)

@@ -116,6 +116,9 @@ def tracker_worker(
                 return obj
         return None
 
+    # Track last-published centroid per track_id to avoid duplicate publishes
+    last_published: dict[str, tuple[float, float]] = {}
+
     ready_event.set()
     sys.stderr.write("[tracker_worker] started, ready_event set\n")
 
@@ -149,19 +152,31 @@ def tracker_worker(
             obj.positions.append((wx, wy))
             obj.robot_poses.append((rx, ry))
 
-            # Check if confirmed; send to main process for publishing
-            if obj.is_confirmed():
-                sys.stderr.write(
-                    f"[tracker_worker] confirmed {obj.class_name} "
-                    f"at ({obj.world_x:.1f}, {obj.world_y:.1f}) "
-                    f"sightings={obj.sighting_count}, diverse={obj.diverse_sightings()}\n"
-                )
-                output_queue.put({
+            # Only publish on first confirmation or centroid shift ≥ REPUBLISH_SHIFT_M
+            if not obj.is_confirmed():
+                continue
+            cx, cy = obj.world_x, obj.world_y
+            prev = last_published.get(obj.track_id)
+            if prev is not None and math.hypot(cx - prev[0], cy - prev[1]) < REPUBLISH_SHIFT_M:
+                continue
+
+            last_published[obj.track_id] = (cx, cy)
+            sys.stderr.write(
+                f"[tracker_worker] confirmed {obj.class_name} "
+                f"at ({cx:.1f}, {cy:.1f}) "
+                f"sightings={obj.sighting_count}, diverse={obj.diverse_sightings()}\n"
+            )
+            try:
+                output_queue.put_nowait({
                     "track_id": obj.track_id,
                     "class_name": obj.class_name,
-                    "world_x": obj.world_x,
-                    "world_y": obj.world_y,
+                    "world_x": cx,
+                    "world_y": cy,
                 })
+            except Exception:
+                sys.stderr.write(
+                    f"[tracker_worker] output_queue full, dropping {obj.class_name}\n"
+                )
 
 
 # ---------------------------------------------------------------------------
