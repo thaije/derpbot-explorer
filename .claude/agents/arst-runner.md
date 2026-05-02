@@ -31,9 +31,17 @@ calls rtf_monitor.py / world_state.py / robot_control.py.
 
 ## Scenario timing — read before doing anything
 
-The easy scenario runs for **300 sim-seconds maximum**. At the default `--speed 2` the sim runs at ~2× real-time, so the entire scenario completes in **~150 wall-seconds (~2.5 minutes)**. Speed=1 doubles that to ~300 wall-seconds (~5 minutes).
+Timeout and wall-time budgets vary by tier (at `--speed 2`):
 
-**Never sleep longer than 30 wall-seconds at a time.** A single 8-minute sleep would outlast the entire run. The monitoring loop (step 4) already fires every 30s — match that cadence. If you need to wait for the scenario to end, poll with short sleeps, not one long one.
+| Tier | Sim timeout | Wall-time budget (speed=2) |
+|---|---|---|
+| easy | 300 s | ~150 wall-s (~2.5 min) |
+| medium | 600 s | ~300 wall-s (~5 min) |
+| hard | 300 s | ~150 wall-s (~2.5 min) |
+| brutal | 180 s | ~90 wall-s (~1.5 min) |
+| perception_stress | 600 s | ~300 wall-s (~5 min) |
+
+**Never sleep longer than 30 wall-seconds at a time.** The monitoring loop (step 4) fires every 30s — match that cadence for all tiers. For medium/perception_stress, expect up to 10+ polling cycles before the scenario ends; that is normal. For brutal, expect only 3 cycles — do not declare the run stuck just because it ends quickly.
 
 ---
 
