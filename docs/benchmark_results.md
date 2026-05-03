@@ -4,6 +4,73 @@ Historical performance snapshots. Append new entries on top; keep older ones for
 
 ---
 
+## 2026-05-03 — Issue #24: Multi-tier benchmark sweep (5 seeds × 4 tiers, full perception)
+
+20 runs total (seeds 42, 1, 2, 3, 4) across easy/medium/hard/brutal with full perception stack (OWLv2 + depth projector + tracker), speed=2.
+
+### Easy (timeout 300s)
+
+| seed | score | grade | avg_speed_kmh | found/6 | coverage% | path_m | collisions | notes |
+|---|---|---|---|---|---|---|---|---|
+| 42 | 61.3 | C | 0.313 | 4/6 | 35.65 | 26.36 | 0 | |
+| 1 | 48.1 | D | 0.007 | 0/6 | 35.32 | 0.57 | 2 | FAIL: Nav stuck — 5 consecutive frontier goals blacklisted |
+| 2 | 52.5 | D | 0.249 | 0/6 | 51.32 | 20.96 | 0 | FAIL: Detection pipeline silent despite 51% coverage |
+| 3 | 45.9 | D | 0.140 | 1/6 | 45.47 | 11.75 | 8 | FAIL: 8 collisions (abnormally high) |
+| 4 | 70.3 | B | 0.195 | 4/6 | 50.22 | 16.39 | 0 | |
+| **mean** | **55.6** | **D** | **0.181** | **1.8/6** | **43.6** | **15.2** | **2.0** | |
+
+### Medium (timeout 600s)
+
+| seed | score | grade | avg_speed_kmh | found/6 | coverage% | path_m | collisions | notes |
+|---|---|---|---|---|---|---|---|---|
+| 42 | 51.7 | D | 0.198 | 2/6 | 66.56 | 33.06 | 0 | |
+| 1 | 63.5 | C | 0.228 | 4/6 | 69.54 | 38.23 | 0 | |
+| 2 | 52.5 | D | 0.184 | 2/6 | 40.51 | 30.72 | 0 | |
+| 3 | 47.8 | D | 0.276 | 2/6 | 53.53 | 46.13 | 0 | |
+| 4 | 60.1 | C | 0.247 | 3/6 | 92.38 | 41.36 | 0 | |
+| **mean** | **55.1** | **D** | **0.227** | **2.6/6** | **64.5** | **37.9** | **0** | |
+
+### Hard (timeout 300s)
+
+| seed | score | grade | avg_speed_kmh | found/6 | coverage% | path_m | collisions | notes |
+|---|---|---|---|---|---|---|---|---|
+| 42 | 51.2 | D | 0.167 | 1/6 | 23.18 | 13.93 | 0 | FAIL: Very low coverage (23%), barely moved |
+| 1 | 51.2 | D | 0.167 | 1/6 | 23.18 | 13.93 | 0 | FAIL: Same symptoms as seed=42 |
+| 2 | 51.2 | D | 0.189 | 0/6 | 62.36 | 15.83 | 0 | FAIL: 0/6 found despite 62% coverage |
+| 3 | 49.0 | D | 0.352 | 0/6 | 65.12 | 29.73 | 0 | FAIL: 0/6 found despite 65% coverage |
+| 4 | 57.2 | C | 0.211 | 2/6 | 37.64 | 17.64 | 0 | |
+| **mean** | **51.9** | **D** | **0.217** | **0.8/6** | **42.3** | **18.2** | **0** | |
+
+### Brutal (timeout 180s)
+
+| seed | score | grade | avg_speed_kmh | found/6 | coverage% | path_m | collisions | notes |
+|---|---|---|---|---|---|---|---|---|
+| 42 | 56.1 | C | 0.181 | 1/6 | 23.84 | 9.11 | 0 | |
+| 1 | 52.5 | D | 0.221 | 0/6 | 32.89 | 11.30 | 0 | |
+| 2 | 53.9 | D | 0.188 | 0/6 | 38.74 | 9.48 | 0 | |
+| 3 | 42.2 | D | 0.030 | 0/6 | 76.60 | 1.55 | 9 | FAIL: Navigation failure — 1.5m traveled, 9 collisions |
+| 4 | 50.2 | D | 0.135 | 0/6 | 65.56 | 6.82 | 1 | |
+| **mean** | **51.0** | **D** | **0.151** | **0.2/6** | **47.5** | **7.7** | **2.0** | |
+
+### Summary vs par values
+
+| Tier | Mean score | Mean found | Mean coverage | Par time | Par path | Gap |
+|---|---|---|---|---|---|---|
+| easy | 55.6 D | 1.8/6 | 43.6% | 91.1s | 36.4m | Score 15-20 below par, detection gated by perception |
+| medium | 55.1 D | 2.6/6 | 64.5% | 91.6s | 38.9m | Coverage good, detection rate low |
+| hard | 51.9 D | 0.8/6 | 42.3% | 101.6s | 38.1m | Poor detection + navigation struggles with closed doors |
+| brutal | 51.0 D | 0.2/6 | 47.5% | 103.2s | 38.9m | Patrol bot + flicker + closed doors overwhelm stack |
+
+**Key findings:**
+- All tiers score D or below. Easy has wide variance (45.9-70.3).
+- Detection pipeline fails silently in multiple runs (easy seeds 1-2, hard seeds 2-3).
+- Navigation fails on some seeds (easy/1, hard/1-3, brutal/3).
+- Speed consistently low (0.15-0.23 km/h) across all tiers.
+
+---
+
+## 2026-05-01 — Issue #9 re-validation: collision monitor time_before_collision 1.5→0.5 (corrects prior entry)
+
 ## 2026-05-01 — Issue #9 re-validation: collision monitor time_before_collision 1.5→0.5 (corrects prior entry)
 
 **Context:** Prior rejection (same date, entry below) was based on catastrophic artifacts — 26.3s first_move and stuck-in-startup — that did not repeat on re-validation. Re-ran both seeds to get a clean read.
