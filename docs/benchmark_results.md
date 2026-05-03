@@ -560,3 +560,17 @@ Source run for the old Task 3 ("Reduce inter-goal idle time") analysis. Establis
 | Config | patrol mode + OWL_CONF_THRESHOLD=0.15, W_DIST=1.5 |
 
 Target: ≥ 70 (grade B) before moving to medium tier.
+
+---
+
+## 2026-05-03 — Post-fix #27 regression check (soft-exclusion TTL for succeeded goals)
+
+Seeds 42 and 43, easy scenario, W_DIST=3.0, OWL_CONF=0.15.
+
+| Seed | Score | Grade | Coverage | Found | Collisions | Notes |
+|------|-------|-------|----------|-------|------------|-------|
+| 42 | 67.2 | C | 70.1% | 3/6 | 0 | Soft-exclusion TTL active per logs; no regression |
+| 43 | 68.6 | C | 72.1% | 4/6 | 0 | Soft-exclusion TTL active per logs; 1 FP detection |
+
+Seed=1 run unusable: collision at t=0.6s (spawn-position pathology), robot traveled 0.51m total.
+No frontier-exhaustion behavior observable from seed=1; separate issue.
