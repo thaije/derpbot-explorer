@@ -171,8 +171,8 @@ local_costmap:
   local_costmap:
     ros__parameters:
       use_sim_time: true
-      update_frequency: 2.0        # 3.0→2.0Hz: 10cm/6m window at 2Hz = 7,200 cell-updates/s (vs 10,800 at 3m/5cm/3Hz)
-                                   # 2Hz chosen over 1.5Hz to handle dynamic obstacles (people, moving furniture)
+      update_frequency: 5.0        # 2.0→5.0Hz: fixes post-clear "Costmap timed out" race (#11).
+                                   # At 10cm/6m: 3,600 cells × 5Hz = 18,000 cell-updates/s — well within budget.
       publish_frequency: 1.0
       global_frame: odom
       robot_base_frame: base_link
