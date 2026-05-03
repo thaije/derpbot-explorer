@@ -64,6 +64,11 @@ STUCK_TIME_THRESHOLD = (
 # Blacklist radius: frontiers within this distance of a failed goal are blacklisted
 BLACKLIST_RADIUS = 0.5  # metres
 
+# Succeeded goals are soft-excluded for this many sim-seconds so SLAM has time to
+# mark the area as explored. Short enough to allow revisits if the frontier genuinely
+# persists; does NOT permanently block valid frontiers. Issue #27.
+SUCCESS_EXCLUSION_TTL = 45.0  # sim-seconds
+
 # Patrol mode: kicks in after all LIDAR frontiers are exhausted.
 # Selects free cells that are far from any previously visited goal (LIDAR coverage
 # does not imply camera coverage; the robot must physically visit all regions).
@@ -275,7 +280,8 @@ class FrontierExplorer:
         self._last_moved_y: float = 0.0
         self._last_move_time: float = 0.0  # set to sim time when each goal starts
 
-        self._blacklist: list[tuple[float, float]] = []  # world coords of failed goals
+        self._blacklist: list[tuple[float, float]] = []  # failed goal centroids (permanent)
+        self._success_exclusion: list[tuple[float, float, float]] = []  # (x, y, expire_t)
         self._visited_goals: list[
             tuple[float, float]
         ] = []  # all goal positions attempted
@@ -684,12 +690,16 @@ class FrontierExplorer:
                 self._tl("goal_reached", _goal_num, f"nav={_t_nav:.1f}s")
                 self._logger.info(
                     f"FrontierExplorer: goal#{_goal_num} ({cx:.2f}, {cy:.2f}) SUCCEEDED"
-                    f" accept={_accept_str} first_move={_move_str} nav={_t_nav:.1f}s — blacklisting."
+                    f" accept={_accept_str} first_move={_move_str} nav={_t_nav:.1f}s"
+                    f" — soft-excluding for {SUCCESS_EXCLUSION_TTL:.0f}s."
                 )
-                # Blacklist centroid on success. If frontier cells persist after the
-                # robot visited (unknown area is behind a wall), blacklisting prevents
-                # the robot from repeatedly returning to the same inaccessible spot.
-                self._blacklist.append((cx, cy))
+                # Soft-exclude centroid for SUCCESS_EXCLUSION_TTL sim-seconds so SLAM
+                # has time to mark the area explored before it can be re-selected.
+                # Permanent blacklisting on success caused premature frontier exhaustion
+                # in low-frontier maps (issue #27).
+                self._success_exclusion.append(
+                    (cx, cy, self._sim_time() + SUCCESS_EXCLUSION_TTL)
+                )
             elif result is False:
                 self._tl("goal_failed", _goal_num, f"nav={_t_nav:.1f}s")
                 self._logger.info(
@@ -831,6 +841,10 @@ class FrontierExplorer:
     def _is_blacklisted(self, x: float, y: float) -> bool:
         for bx, by in self._blacklist:
             if math.hypot(x - bx, y - by) < BLACKLIST_RADIUS:
+                return True
+        now = self._sim_time()
+        for bx, by, expire_t in self._success_exclusion:
+            if expire_t > now and math.hypot(x - bx, y - by) < BLACKLIST_RADIUS:
                 return True
         return False
 

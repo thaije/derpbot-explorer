@@ -76,7 +76,7 @@ Anything in committed config/code is omitted. Only things a fresh agent would re
 
 ### Frontier exploration
 - **Pick closest-to-centroid cell, not closest-to-robot.** Centroid can land in unknown/inflated space; "closest-to-robot" causes immediate Nav2 success with no map update. Closest-to-centroid picks a free interior cell that actually requires navigation.
-- **Blacklist frontier centroids on success too.** With `xy_goal_tolerance=0.5 m`, Nav2 succeeds when the robot is within 0.5 m. Without success-blacklist, the same cluster gets re-selected every loop; legitimate frontiers disappear naturally once the map updates.
+- **Succeeded goals use a soft TTL exclusion (45 sim-s), not permanent blacklist.** Permanent blacklisting exhausted all frontiers in low-density maps (issue #27). The TTL covers SLAM update lag; after expiry the frontier can be re-selected if it genuinely persists. Failures stay permanently blacklisted.
 - **Frontier W_DIST=1.5** balances coverage. ≥4.0 keeps the robot local; ≤0.5 causes cross-map thrashing. Never go below 1.0 without testing.
 - **OWL_CONF_THRESHOLD=0.15** is the tuned value. 0.10=3FP/3real, 0.12=3FP/3real, 0.15=1FP/4real. Don't lower without a new mechanism.
 - **Robot avg_speed is ~0.022 m/s (mostly idle).** Most time is spent waiting on Nav2 goal acceptance and rotating at waypoints. Coverage comes from LiDAR sweeps during rotation, not path length. Reducing inter-goal idle time is the primary speed-score lever.
