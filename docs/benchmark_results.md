@@ -4,6 +4,32 @@ Historical performance snapshots. Append new entries on top; keep older ones for
 
 ---
 
+## 2026-05-04 — Issue #20 post-fix regression test (easy, seed=42, full perception)
+
+Single run verifying detector fixes (watchdog reset logic, frame-starvation detection, relay thread protection, bare put() timeout). Results file: `robot-sandbox/results/office_easy_001_20260504T222620.json`
+
+| Metric | Value |
+|---|---|
+| Score / grade | **69.0 C** |
+| Found | 3/6 — FE#2 @ t=27.7s, FA#1 @ t=27.8s, Person @ t=57.3s |
+| Coverage | 77.26% |
+| Collisions | 0 |
+| avg_speed_kmh | 0.307 |
+| meters_traveled | 25.78 m |
+| mean_localization_error | 0.518 m |
+| false_positives | 0 |
+| Inferences | 63 (detector alive full run) |
+| Watchdog fires | 0 |
+
+**Key findings:**
+- New high score on seed=42 easy (prev best: 66.1 C, 2026-04-07).
+- Coverage up from 44% (last verification run) to 77% — strong improvement.
+- No watchdog fires, no frame_q_empty, detector subprocess healthy for full run — issue #20 fixes confirmed.
+- 3 missed targets (FE#1, FE#3, FA#2) in rooms not reached before TIME_LIMIT — coverage-gated, not detection-gated.
+- Speed score 21 F (0.307 km/h) remains primary score drag.
+
+---
+
 ## 2026-05-03 — Issue #24: Multi-tier benchmark sweep (5 seeds × 4 tiers, full perception)
 
 20 runs total (seeds 42, 1, 2, 3, 4) across easy/medium/hard/brutal with full perception stack (OWLv2 + depth projector + tracker), speed=2.
