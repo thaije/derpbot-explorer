@@ -41,12 +41,10 @@ Titles only. Expand when a task is promoted to "Next".
 
 Known issues not currently prioritized. Full details in the linked issues; check before starting related work in case one is already tracked.
 
-- [#27](https://github.com/thaije/derpbot-explorer/issues/27) — Bug: Succeeded goals being blacklisted (easy/1 rerun)
 - [#26](https://github.com/thaije/derpbot-explorer/issues/26) — Investigate silent detection failures on hard tier + easy/2
 - [#25](https://github.com/thaije/derpbot-explorer/issues/25) — Investigate collision clusters on easy/3 and brutal/3
 - [#28](https://github.com/thaije/derpbot-explorer/issues/28) — Residual "Costmap timed out" after costmap clear (rare, easy scenario)
 - [#23](https://github.com/thaije/derpbot-explorer/issues/23) — Detection/confirmation cycle too slow — hurts Task 6 speed · [prompt](prompt_issue_23.md)
-- [#21](https://github.com/thaije/derpbot-explorer/issues/21) — Tune costmap filter threshold and goal-picker DIST_WEIGHT (follow-up to #10) · [prompt](prompt_issue_21.md)
 
 Run `gh issue list --state open --label backlog` for the live list.
 
