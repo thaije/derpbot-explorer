@@ -45,6 +45,7 @@ Known issues not currently prioritized. Full details in the linked issues; check
 - [#25](https://github.com/thaije/derpbot-explorer/issues/25) — Investigate collision clusters on easy/3 and brutal/3
 - [#28](https://github.com/thaije/derpbot-explorer/issues/28) — Residual "Costmap timed out" after costmap clear (rare, easy scenario)
 - [#23](https://github.com/thaije/derpbot-explorer/issues/23) — Detection/confirmation cycle too slow — hurts Task 6 speed · [prompt](prompt_issue_23.md)
+- [#31](https://github.com/thaije/derpbot-explorer/issues/31) — Extended time limit run (900 sim-s, easy) to measure coverage ceiling and determine if TIME_LIMIT or exploration is the bottleneck
 
 Run `gh issue list --state open --label backlog` for the live list.
 
