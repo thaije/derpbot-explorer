@@ -208,7 +208,11 @@ def _inference_worker(
                 }
             )
 
-        result_queue.put({"detections": detections})
+        try:
+            result_queue.put({"detections": detections}, timeout=5.0)
+        except Exception:
+            # Queue full or blocked — drop result, don't hang subprocess
+            pass
 
 
 class Detector:
@@ -379,9 +383,11 @@ class Detector:
                 now = _time.monotonic()
                 # Watchdog: restart subprocess if it stalls (CUDA hang, OOM, etc.)
                 if now - last_result_time > STALL_TIMEOUT and self._worker.is_alive():
+                    frame_q_empty = self._mp_frames.empty()
                     self._logger.error(
                         f"Detector: no inference results for {STALL_TIMEOUT:.0f}s — "
-                        f"subprocess hung, restarting."
+                        f"subprocess hung, restarting. "
+                        f"(frame_q_empty={frame_q_empty})"
                     )
                     self._restart_worker()
                     last_result_time = _time.monotonic()
@@ -400,44 +406,50 @@ class Detector:
                 )
                 continue
 
-            if "ready" in result:
-                self._model_name = result["ready"]
-                continue
-            if "error" in result:
-                self._logger.error(f"Detector: subprocess error — {result['error']}")
-                continue
-            if "warning" in result:
-                self._logger.warning(f"Detector: {result['warning']}")
-                continue
-
-            dets = result.get("detections", [])
-            inference_count += 1
-            last_result_time = (
-                _time.monotonic()
-            )  # reset watchdog + heartbeat on activity
+            # Reset watchdog on ANY result from subprocess (ready/error/warning/detections)
+            last_result_time = _time.monotonic()
             last_heartbeat = last_result_time
-            if inference_count % 5 == 0:
-                self._logger.info(
-                    f"Detector: inference #{inference_count}, {len(dets)} boxes"
-                )
-            for d in dets:
-                det = DetectionResult(
-                    class_name=d["class_name"],
-                    confidence=d["confidence"],
-                    cx_px=d["cx_px"],
-                    cy_px=d["cy_px"],
-                    w_px=d["w_px"],
-                    h_px=d["h_px"],
-                    stamp=(d["stamp_sec"], d["stamp_nanosec"]),
-                )
-                try:
-                    self.detections.put_nowait(det)
-                except queue.Full:
+
+            try:
+                if "ready" in result:
+                    self._model_name = result["ready"]
+                    continue
+                if "error" in result:
+                    self._logger.error(f"Detector: subprocess error — {result['error']}")
+                    continue
+                if "warning" in result:
+                    self._logger.warning(f"Detector: {result['warning']}")
+                    continue
+
+                dets = result.get("detections", [])
+                inference_count += 1
+                if inference_count % 5 == 0:
+                    self._logger.info(
+                        f"Detector: inference #{inference_count}, {len(dets)} boxes"
+                    )
+                for d in dets:
+                    det = DetectionResult(
+                        class_name=d["class_name"],
+                        confidence=d["confidence"],
+                        cx_px=d["cx_px"],
+                        cy_px=d["cy_px"],
+                        w_px=d["w_px"],
+                        h_px=d["h_px"],
+                        stamp=(d["stamp_sec"], d["stamp_nanosec"]),
+                    )
                     try:
-                        self.detections.get_nowait()
                         self.detections.put_nowait(det)
-                    except queue.Empty:
-                        pass
+                    except queue.Full:
+                        try:
+                            self.detections.get_nowait()
+                            self.detections.put_nowait(det)
+                        except queue.Empty:
+                            pass
+            except Exception as exc:
+                self._logger.error(
+                    f"Detector: relay_loop result processing error — {type(exc).__name__}: {exc}"
+                )
+                continue
 
     def stop(self) -> None:
         self._running = False
