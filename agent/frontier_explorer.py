@@ -49,11 +49,16 @@ UNKNOWN = -1
 
 # Frontier scoring weights
 # Score = W_SIZE * cluster.size - W_DIST * dist
+# W_DIST is dynamic: scales with the largest frontier in the current frame.
+# Large frontiers → area is fresh → stay local (high W_DIST).
+# Small frontiers → area is nearly exhausted → look farther (low W_DIST).
+# Generic proxy — no room/class/phase awareness, works on any map.
 W_SIZE = (
     1.0  # prefer large frontier clusters (larger cluster = more open frontier edge)
 )
-W_DIST = 3.0  # penalise distance from robot — tuned: 3.0 gives best avg speed (0.373 km/h vs 0.27 at 1.5), 70.9% coverage, 0 stuck on seeds 42/43. Balances coverage vs speed better than 4.0.
-# toward distant unexplored areas; 4.0 is too local, 0.5 causes thrashing)
+W_DIST_MAX = 3.5  # when frontiers are large (new area) — stay local
+W_DIST_MIN = 1.5  # when frontiers are tiny (area exhausted) — look farther
+W_DIST_SIZE_NORM = 150.0  # max cluster size that saturates W_DIST at MAX
 
 # Stuck detection
 STUCK_DIST_THRESHOLD = 0.10  # metres — robot must move this far
@@ -826,6 +831,24 @@ class FrontierExplorer:
         robot_x: float,
         robot_y: float,
     ) -> Optional[FrontierCluster]:
+        # Dynamic W_DIST: scales with the largest frontier in this BFS round.
+        # Large frontier nearby → new unexplored area → stay local (high W_DIST).
+        # All frontiers tiny → area nearly exhausted → look farther (low W_DIST).
+        if clusters:
+            eligible_sizes = [
+                c.size for c in clusters
+                if not self._is_blacklisted(*c.centroid_world)
+            ]
+            max_size = max(eligible_sizes) if eligible_sizes else 0
+            if max_size > 0:
+                scale = min(1.0, max_size / W_DIST_SIZE_NORM)
+                w_dist = W_DIST_MIN + (W_DIST_MAX - W_DIST_MIN) * scale
+            else:
+                w_dist = W_DIST_MIN
+        else:
+            w_dist = W_DIST_MIN
+            max_size = 0
+
         best_score = -math.inf
         best_cluster = None
         scored: list[tuple[float, FrontierCluster]] = []
@@ -835,7 +858,7 @@ class FrontierExplorer:
             if self._is_blacklisted(cx, cy):
                 continue
             dist = math.hypot(cx - robot_x, cy - robot_y)
-            score = W_SIZE * cluster.size - W_DIST * dist
+            score = W_SIZE * cluster.size - w_dist * dist
             scored.append((score, cluster))
             if score > best_score:
                 best_score = score
@@ -849,7 +872,7 @@ class FrontierExplorer:
         )
         self._logger.info(
             f"FrontierExplorer: {len(clusters)} clusters "
-            f"({n_bl} BL, {len(scored)} eligible). Top5: [{top5}]"
+            f"({n_bl} BL, {len(scored)} eligible), max_sz={max_size if clusters else 0}, W_DIST={w_dist:.2f}. Top5: [{top5}]"
         )
 
         return best_cluster
