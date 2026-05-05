@@ -21,6 +21,7 @@ SCENARIO="easy"
 START_AGENT=1
 NO_PERCEPTION=0
 NO_SUBSCRIBERS=0
+TIMEOUT=""
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -31,6 +32,7 @@ while [[ $# -gt 0 ]]; do
         --no-agent) START_AGENT=0; shift ;;
         --no-perception) NO_PERCEPTION=1; shift ;;
         --no-subscribers) NO_SUBSCRIBERS=1; shift ;;
+        --timeout) TIMEOUT="$2"; shift 2 ;;
         *) echo "Unknown arg: $1"; exit 1 ;;
     esac
 done
