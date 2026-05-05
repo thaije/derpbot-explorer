@@ -44,7 +44,7 @@ Known issues not currently prioritized. Full details in the linked issues; check
 - [#26](https://github.com/thaije/derpbot-explorer/issues/26) — Investigate silent detection failures on hard tier + easy/2
 - [#28](https://github.com/thaije/derpbot-explorer/issues/28) — Residual "Costmap timed out" after costmap clear (rare, easy scenario)
 - [#23](https://github.com/thaije/derpbot-explorer/issues/23) — Detection/confirmation cycle too slow — hurts Task 6 speed · [prompt](prompt_issue_23.md)
-- [#31](https://github.com/thaije/derpbot-explorer/issues/31) — Extended time limit run (900 sim-s, easy) to measure coverage ceiling and determine if TIME_LIMIT or exploration is the bottleneck
+- [#32](https://github.com/thaije/derpbot-explorer/issues/32) — Frontier explorer consistently skips Meeting Room (FA#2 at 6.4, 11.7) — blind spot in goal selection, missed in all 6 seed=42 easy_900s runs
 
 Run `gh issue list --state open --label backlog` for the live list.
 
