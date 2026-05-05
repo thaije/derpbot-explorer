@@ -4,6 +4,49 @@ Historical performance snapshots. Append new entries on top; keep older ones for
 
 ---
 
+## 2026-05-05 — Issue #31 verification: 900s extended runs × 2 batches (seed=42, easy_900s, full perception)
+
+6 total runs (3 original batch + 3 independent verification) to establish coverage ceiling and run-to-run variance with 3× time budget.
+
+### Verification batch (my runs)
+
+| Run | Score | Grade | Found | Coverage | Collisions | Speed km/h | Meters |
+|-----|-------|-------|-------|----------|------------|-----------|--------|
+| R1 | 64.1 | C | 5/6 | 69.98% | 0 | 0.248 | 62.2 |
+| R2 | 45.9 | D | 2/6 | 94.7% | 0 | 0.226 | 56.6 |
+| R3 | 58.8 | C | 3/6 | 93.82% | 1 | 0.235 | 58.8 |
+| **mean** | **56.3** | **C** | **3.3/6** | **86.2%** | **0.33** | **0.24** | **59.2** |
+
+Results: `robot-sandbox/results/office_easy_001_20260505T13{1557,2538,3532}.json`
+
+### First batch (prior agent)
+
+| Run | Score | Grade | Found | Coverage | Collisions | Speed km/h | Meters | Notes |
+|-----|-------|-------|-------|----------|------------|-----------|--------|-------|
+| R1 | 46.5 | D | 3/6 | 84.88% | 3 | 0.265 | 66.3 | |
+| R2 | 56.4 | C | 3/6 | 62.36% | 0 | 0.209 | 52.5 | |
+| R3 | 39.2 | F | 0/6 | 15.78% | 0 | 0.0 | 0.0 | **Startup/nav crash** — 0m, no profile file |
+| **mean** | **47.4** | **D** | **2/6** | **54.3%** | **1.0** | **0.16** | **39.6** | Skewed by crash |
+
+Results: `robot-sandbox/results/office_easy_001_20260505T12{3447,4434,5615}.json`
+
+### Comparison to reference 300s run
+
+| Config | Score | Coverage | Found | Speed km/h |
+|--------|-------|----------|-------|-----------|
+| 300s ref (2026-05-04) | **69.0 C** | 77% | 3/6 | 0.307 |
+| 900s — 5 healthy runs mean | 56.6 C | 82.9% | 3.2/6 | 0.243 |
+
+**Key findings:**
+- Score comparison is not apples-to-apples: speed category bottoms at 7.08 F in all 900s runs because par_value=91.1s was calibrated for 300s scenarios. 900s runs structurally score lower regardless of exploration quality.
+- Coverage ceiling is **70–95%** across 5 healthy runs (mean 82.9%). First batch's 54.3% mean was dominated by a startup crash; discard that run from analysis.
+- Detection is inconsistent and NOT coverage-gated: R2 (verification) hit 94.7% coverage but found only 2/6 — detector fired 0 boxes on FE#1/FA#1 zones despite physical traversal. Issue #26 (silent detection failures).
+- Meeting Room (FA#2 at 6.4, 11.7) chronically skipped by frontier explorer across all 6 runs.
+- NW corridor (FE#1 at 1.4,7.5 / FE#2 at 1.7,4.7) physically reached but silently missed by detector in multiple runs.
+- One startup-crash mode observed (1/6 runs): 0m traveled, 0 detections, no profile file — separate fragility from detection failures.
+
+---
+
 ## 2026-05-04 — Issue #20 post-fix regression test (easy, seed=42, full perception)
 
 Single run verifying detector fixes (watchdog reset logic, frame-starvation detection, relay thread protection, bare put() timeout). Results file: `robot-sandbox/results/office_easy_001_20260504T222620.json`
