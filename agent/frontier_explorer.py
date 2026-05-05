@@ -73,9 +73,12 @@ SUCCESS_EXCLUSION_TTL = 45.0  # sim-seconds
 # Selects free cells that are far from any previously visited goal (LIDAR coverage
 # does not imply camera coverage; the robot must physically visit all regions).
 PATROL_MIN_DIST = (
-    2.0  # metres — patrol target must be > this far from all visited goals
+    1.0  # metres — patrol target must be > this far from all visited goals.
+    # 2.0m excluded rooms adjacent to corridor goals (e.g. Meeting Room at 1.2m from
+    # corridor frontier centroid); 1.0m allows entering them while still skipping
+    # cells the robot was essentially on top of. See issue #32.
+    # Note: 3.0m excluded fire_ext#2 at (1.7,4.7) which is ~2.7m from robot start.
 )
-# 3.0m excluded fire_ext#2 at (1.7,4.7) which is ~2.7m from robot start
 PATROL_STEP_M = 1.0  # metres — coarse grid sampling resolution for patrol targets
 
 # Minimum cluster size to be considered a meaningful frontier
@@ -641,10 +644,10 @@ class FrontierExplorer:
                 self._tl(
                     "frontier_select",
                     _goal_num,
-                    f"({cx:.1f},{cy:.1f}) size={best.size} dist={math.hypot(cx - rx, cy - ry):.1f}",
+                    f"({cx:.1f},{cy:.1f}) goal=({goal_x:.1f},{goal_y:.1f}) size={best.size} dist={math.hypot(cx - rx, cy - ry):.1f}",
                 )
             else:
-                self._tl("frontier_select", _goal_num, f"PATROL ({cx:.1f},{cy:.1f})")
+                self._tl("frontier_select", _goal_num, f"PATROL ({cx:.1f},{cy:.1f}) goal=({goal_x:.1f},{goal_y:.1f})")
             if not is_patrol:
                 self._logger.info(
                     f"FrontierExplorer: goal#{_goal_num} ({goal_x:.2f}, {goal_y:.2f})"
@@ -825,6 +828,7 @@ class FrontierExplorer:
     ) -> Optional[FrontierCluster]:
         best_score = -math.inf
         best_cluster = None
+        scored: list[tuple[float, FrontierCluster]] = []
 
         for cluster in clusters:
             cx, cy = cluster.centroid_world
@@ -832,9 +836,21 @@ class FrontierExplorer:
                 continue
             dist = math.hypot(cx - robot_x, cy - robot_y)
             score = W_SIZE * cluster.size - W_DIST * dist
+            scored.append((score, cluster))
             if score > best_score:
                 best_score = score
                 best_cluster = cluster
+
+        n_bl = len(clusters) - len(scored)
+        scored.sort(key=lambda t: t[0], reverse=True)
+        top5 = " | ".join(
+            f"({c.centroid_world[0]:.1f},{c.centroid_world[1]:.1f}) sz={c.size} sc={s:.0f}"
+            for s, c in scored[:5]
+        )
+        self._logger.info(
+            f"FrontierExplorer: {len(clusters)} clusters "
+            f"({n_bl} BL, {len(scored)} eligible). Top5: [{top5}]"
+        )
 
         return best_cluster
 
