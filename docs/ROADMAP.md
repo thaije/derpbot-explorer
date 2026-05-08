@@ -49,6 +49,7 @@ Known issues not currently prioritized. Full details in the linked issues; check
 - [#28](https://github.com/thaije/derpbot-explorer/issues/28) — Residual "Costmap timed out" after costmap clear (rare, easy scenario)
 - [#23](https://github.com/thaije/derpbot-explorer/issues/23) — Detection/confirmation cycle too slow — hurts Task 6 speed · [prompt](prompt_issue_23.md)
 - [#32](https://github.com/thaije/derpbot-explorer/issues/32) — Frontier explorer consistently skips Meeting Room (FA#2 at 6.4, 11.7) — blind spot in goal selection, missed in all 6 seed=42 easy_900s runs
+- [#34](https://github.com/thaije/derpbot-explorer/issues/34) — OWLv2 subprocess stalls at ~63 inferences; 90s watchdog restart creates detection blind window (likely CUDA VRAM leak on shared GPU)
 
 Run `gh issue list --state open --label backlog` for the live list.
 
