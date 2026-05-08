@@ -216,3 +216,5 @@ Checks: all expected files present, JSON schema valid, `overall_score` in [0, 10
 ### Submitting
 
 Open a PR adding your YAML + results directory to `results/submissions/`. Submissions that fail validation will not be merged.
+
+Accepted submissions appear on the **[leaderboard](leaderboard.html)**. Ranking is by `found_ratio` (objects found / total objects); other per-run metrics are available on hover.
