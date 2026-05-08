@@ -130,6 +130,7 @@ def _inference_worker(
         return
 
     # Warmup pass
+    _dummy = _inputs = None
     try:
         _dummy = PILImage.fromarray(np.zeros((480, 640, 3), dtype=np.uint8))
         _inputs = processor(text=queries, images=_dummy, return_tensors="pt")
@@ -137,14 +138,18 @@ def _inference_worker(
             k: (v.half() if v.dtype == torch.float32 else v).to(f"cuda:{GPU_DEVICE}")
             for k, v in _inputs.items()
         }
-        with torch.no_grad():
+        with torch.inference_mode():
             model(**_inputs)
     except Exception as exc:
         result_queue.put({"warning": f"OWL-v2 warmup failed: {exc}"})
+    finally:
+        del _dummy, _inputs
+        torch.cuda.empty_cache()
 
     result_queue.put({"ready": "owlv2"})
     ready_event.set()
 
+    _inf_n = 0
     while True:
         try:
             item = frame_queue.get(timeout=1.0)
@@ -157,6 +162,7 @@ def _inference_worker(
         frame_bytes, shape, stamp_sec, stamp_nanosec = item
         frame = np.frombuffer(frame_bytes, dtype=np.uint8).reshape(shape)
 
+        outputs = inputs = target_sizes = results = None
         try:
             rgb = _cv2.cvtColor(frame, _cv2.COLOR_BGR2RGB)
             pil_image = PILImage.fromarray(rgb)
@@ -167,27 +173,40 @@ def _inference_worker(
                 )
                 for k, v in inputs.items()
             }
-
-            with torch.no_grad():
-                outputs = model(**inputs)
-
             target_sizes = torch.tensor(
                 [(shape[0], shape[1])], dtype=torch.int32, device=f"cuda:{GPU_DEVICE}"
             )
+            with torch.inference_mode():
+                outputs = model(**inputs)
             results = processor.post_process_grounded_object_detection(
                 outputs,
                 target_sizes=target_sizes,
                 threshold=OWL_CONF_THRESHOLD,
             )[0]
+            # Convert GPU tensors to CPU/numpy immediately to release CUDA memory.
+            # post_process returns {"scores": tensor, "labels": tensor, "boxes": tensor}
+            # on GPU — keeping them alive prevents the CUDA allocator from reclaiming.
+            det_scores = results["scores"].cpu().tolist()
+            det_labels = results["labels"].cpu().tolist()
+            det_boxes = results["boxes"].cpu().tolist()
         except Exception as exc:
             result_queue.put({"warning": f"inference error: {exc}"})
             continue
+        finally:
+            del outputs, inputs, target_sizes, results
+            torch.cuda.empty_cache()
+
+        _inf_n += 1
+        if _inf_n % 20 == 0:
+            _alloc = torch.cuda.memory_allocated() / 1024 / 1024
+            _reserved = torch.cuda.memory_reserved() / 1024 / 1024
+            result_queue.put({
+                "vram": f"inf#{_inf_n} alloc={_alloc:.0f}MB reserved={_reserved:.0f}MB"
+            })
 
         detections = []
-        for score, label_idx, box in zip(
-            results["scores"], results["labels"], results["boxes"]
-        ):
-            x1, y1, x2, y2 = box.tolist()
+        for score, label_idx, box in zip(det_scores, det_labels, det_boxes):
+            x1, y1, x2, y2 = box
             cx = (x1 + x2) / 2
             cy = (y1 + y2) / 2
             w = x2 - x1
@@ -298,9 +317,15 @@ class Detector:
     # ------------------------------------------------------------------
 
     def _image_cb(self, msg: Image) -> None:
-        # Rate limiter: only process at ~5 Hz to reduce GIL contention
         import time
         now = time.monotonic()
+        # Diagnostic: log every 500th raw callback to verify camera is publishing
+        self._raw_cb_count = getattr(self, "_raw_cb_count", 0) + 1
+        if self._raw_cb_count % 500 == 1:
+            self._logger.info(
+                f"Detector: _image_cb raw count={self._raw_cb_count}, "
+                f"rate_limited_count={self._frame_count}"
+            )
         if now - self._last_cb_time < self._cb_interval:
             return
         self._last_cb_time = now
@@ -317,13 +342,11 @@ class Detector:
             self._logger.warning(f"Detector: cv_bridge error — {exc}")
             return
 
-        # Send to subprocess via multiprocessing Queue (must be picklable)
         stamp = msg.header.stamp
         item = (frame.tobytes(), frame.shape, stamp.sec, stamp.nanosec)
         try:
             self._mp_frames.put_nowait(item)
         except Exception:
-            # Queue full — drop oldest, add newest
             try:
                 self._mp_frames.get_nowait()
                 self._mp_frames.put_nowait(item)
@@ -382,16 +405,27 @@ class Detector:
             except _queue.Empty:
                 now = _time.monotonic()
                 # Watchdog: restart subprocess if it stalls (CUDA hang, OOM, etc.)
+                # But skip if no frames are queued — the robot is stationary/patrolling
+                # and a restart won't help (no images to process).
                 if now - last_result_time > STALL_TIMEOUT and self._worker.is_alive():
                     frame_q_empty = self._mp_frames.empty()
-                    self._logger.error(
-                        f"Detector: no inference results for {STALL_TIMEOUT:.0f}s — "
-                        f"subprocess hung, restarting. "
-                        f"(frame_q_empty={frame_q_empty})"
-                    )
-                    self._restart_worker()
-                    last_result_time = _time.monotonic()
-                    last_heartbeat = last_result_time
+                    if frame_q_empty:
+                        # No work available — not a stall, just idle.
+                        # Reset timer so we don't keep hitting this branch.
+                        last_result_time = now
+                        self._logger.info(
+                            f"Detector: no results for {STALL_TIMEOUT:.0f}s but "
+                            f"frame_q_empty — subprocess idle, not hung."
+                        )
+                    else:
+                        self._logger.error(
+                            f"Detector: no inference results for {STALL_TIMEOUT:.0f}s — "
+                            f"subprocess hung, restarting. "
+                            f"(frame_q_empty={frame_q_empty})"
+                        )
+                        self._restart_worker()
+                        last_result_time = _time.monotonic()
+                        last_heartbeat = last_result_time
                 # Heartbeat log every 30s to confirm loop is alive
                 elif now - last_heartbeat > 30.0:
                     self._logger.info(
@@ -419,6 +453,9 @@ class Detector:
                     continue
                 if "warning" in result:
                     self._logger.warning(f"Detector: {result['warning']}")
+                    continue
+                if "vram" in result:
+                    self._logger.info(f"Detector: {result['vram']}")
                     continue
 
                 dets = result.get("detections", [])
