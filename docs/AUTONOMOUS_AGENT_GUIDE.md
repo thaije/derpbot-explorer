@@ -1,7 +1,6 @@
 # Autonomous Agent Guide — ARST
 
 Gazebo Harmonic + ROS 2 Jazzy simulation testbed. Your task: deploy a fully autonomous agent and complete the scenario.
-See the original here: https://github.com/thaije/robot-sandbox/blob/main/docs/AUTONOMOUS_AGENT_GUIDE.md
 
 ---
 
@@ -175,4 +174,45 @@ A mission brief is also printed to stdout at scenario start and again just befor
 - Use `--seed N` to freeze the layout while iterating on your algorithm.
 - `scripts/robot_control.py` — manual drive / camera snapshot (dev/cheat tool).
 - `scripts/world_state.py` — PNG map + object ground-truth positions (dev/cheat tool).
-- Reference docs: [`docs/STATE.md`](STATE.md) (architecture, invariants) · [`docs/ROADMAP.md`](ROADMAP.md) (next work).
+
+---
+
+## 7. Benchmark submission
+
+### Protocol
+
+| Property | Value |
+|---|---|
+| Scenario | `office_explore_detect` |
+| Difficulties | easy / medium / hard / brutal / perception_stress |
+| Seeds | 1 – 5 (fixed) |
+| Runs per seed | 3 |
+| **Total per entry** | **15 runs per difficulty** |
+
+Use `--seed N` to pin the layout. **Do not use `--enable-oracle`** for scored runs — you must publish your own detections via `/derpbot_0/rgbd`.
+
+### Result file naming
+
+Each run produces a JSON scorecard in `results/` (e.g. `results/office_easy_001_20260101T120000.json`). Copy the relevant files into `results/submissions/<your-agent-name>/` and rename them to:
+
+```
+<difficulty>_seed<N>_run<K>.json
+```
+
+Example: `easy_seed1_run1.json`, `brutal_seed3_run2.json`.
+
+### Submission YAML
+
+Copy `results/submissions/example_benchmark_submission.yaml`, fill in your details, and place it alongside your results directory.
+
+### Validate before submitting
+
+```bash
+python3.12 scripts/validate_submission.py path/to/benchmark_submission.yaml
+```
+
+Checks: all expected files present, JSON schema valid, `overall_score` in [0, 100], `sandbox_version` tag exists. Exit 0 = pass, exit 1 = fail with itemised errors.
+
+### Submitting
+
+Open a PR adding your YAML + results directory to `results/submissions/`. Submissions that fail validation will not be merged.
