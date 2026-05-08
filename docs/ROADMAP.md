@@ -16,6 +16,10 @@ Current state lives in [`STATE.md`](STATE.md). History lives in closed issues + 
 
 ## Next
 
+### Task 8 — Automated benchmark submission · [#33](https://github.com/thaije/derpbot-explorer/issues/33)
+Formal 75-run benchmark (5 difficulties × 5 seeds × 3 runs). Script `scripts/run_benchmark.sh` written; ready to execute unattended overnight. Run: `./scripts/run_benchmark.sh --agent-name derpbot-explorer-v1 --speed 2`.
+**DoD:** all 75 runs complete, submission passes `validate_submission.py`, summary in `benchmark_results.md`.
+
 ### Task 6 — 2× average speed · [#17](https://github.com/thaije/derpbot-explorer/issues/17)
 Double avg_speed from ~0.07 → ~0.14 m/s by reducing downtime. Profiling shows robot moving only 50% of the time; biggest levers: Nav2 dispatch overhead (13.6%), inter-goal loop stalls (11.9%), rotation (9.4%). #18 landed — startup phase down from 18.5% → 3.9% of budget. Next lever: Nav2 first_move latency (goals stuck in `rotating` for 25+ sim-s after accept).
 **Blocked on:** Task 6a ✅
