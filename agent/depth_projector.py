@@ -26,6 +26,7 @@ from typing import Optional
 import numpy as np
 
 import rclpy
+from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from sensor_msgs.msg import Image
@@ -80,10 +81,14 @@ class DepthProjector:
 
         if create_subscriber:
             _sensor_qos = QoSProfile(
-                depth=1,  # Only keep latest to reduce queue overhead
+                depth=5,
                 reliability=ReliabilityPolicy.BEST_EFFORT,
                 durability=DurabilityPolicy.VOLATILE,
             )
+            # ReentrantCallbackGroup: depth callback must not be serialized behind
+            # odom/map callbacks in the default MutuallyExclusiveCallbackGroup.
+            # _depth_cb is thread-safe (only touches self._depth_lock).
+            _cb_group = ReentrantCallbackGroup()
             self._last_cb_time = 0.0  # Wall-clock rate limiter
             self._cb_interval = 0.2  # 5 Hz callback rate limit
             node.create_subscription(
@@ -91,6 +96,7 @@ class DepthProjector:
                 "/derpbot_0/rgbd/depth_image",
                 self._depth_cb,
                 _sensor_qos,
+                callback_group=_cb_group,
             )
         else:
             self._logger.info("DepthProjector: subscriber disabled for GIL probe.")

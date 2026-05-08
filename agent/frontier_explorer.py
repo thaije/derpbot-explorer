@@ -318,6 +318,7 @@ class FrontierExplorer:
             "/derpbot_0/odom",
             self._odom_cb,
             rclpy.qos.QoSProfile(depth=10),
+            callback_group=reentrant,
         )
 
         # Subscribe to global costmap (used both in production for frontier

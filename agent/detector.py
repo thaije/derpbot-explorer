@@ -46,6 +46,7 @@ MODELS_DIR = os.path.join(_REPO_ROOT, "models")
 import numpy as np
 
 import rclpy
+from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from sensor_msgs.msg import Image
@@ -285,13 +286,18 @@ class Detector:
         )
         self._relay_thread.start()
 
-        # Subscribe to RGB image topic (RELIABLE publisher from Gazebo bridge)
+        # Subscribe to RGB image topic.
+        # ReentrantCallbackGroup: image callback must not be serialized behind
+        # odom/map callbacks in the default MutuallyExclusiveCallbackGroup —
+        # starvation there caused #35 (image_cb stops firing after ~100 calls).
+        # _image_cb is thread-safe (only touches self._lock and mp.Queue).
         if create_subscriber:
             _sensor_qos = QoSProfile(
-                depth=1,  # Only keep latest to reduce queue overhead
+                depth=5,
                 reliability=ReliabilityPolicy.BEST_EFFORT,
                 durability=DurabilityPolicy.VOLATILE,
             )
+            _cb_group = rclpy.callback_groups.ReentrantCallbackGroup()
             self._last_cb_time = 0.0  # Wall-clock rate limiter
             self._cb_interval = 0.2  # 5 Hz callback rate limit
             node.create_subscription(
@@ -299,6 +305,13 @@ class Detector:
                 "/derpbot_0/rgbd/image",
                 self._image_cb,
                 _sensor_qos,
+                callback_group=_cb_group,
+            )
+            # Watchdog timer: warn if _image_cb stops being called (#35)
+            self._image_watchdog_timer = node.create_timer(
+                30.0,
+                self._image_watchdog,
+                callback_group=_cb_group,
             )
         else:
             self._logger.info("Detector: subscriber disabled for GIL probe.")
@@ -312,6 +325,16 @@ class Detector:
         else:
             self._logger.error("Detector: subprocess did not become ready in 30s.")
 
+    def _image_watchdog(self) -> None:
+        """Timer callback: warns if _image_cb hasn't been called recently (#35)."""
+        import time
+        if self._last_cb_time > 0 and time.monotonic() - self._last_cb_time > 30.0:
+            self._logger.warning(
+                f"Detector: no image callback for {time.monotonic() - self._last_cb_time:.0f}s "
+                f"(raw_count={getattr(self, '_raw_cb_count', 0)}) — "
+                f"camera topic may have stopped publishing"
+            )
+
     # ------------------------------------------------------------------
     # Image callback — fast path: convert and enqueue frame
     # ------------------------------------------------------------------
@@ -321,10 +344,10 @@ class Detector:
         now = time.monotonic()
         # Diagnostic: log every 500th raw callback to verify camera is publishing
         self._raw_cb_count = getattr(self, "_raw_cb_count", 0) + 1
-        if self._raw_cb_count % 500 == 1:
+        if self._raw_cb_count % 100 == 1:
             self._logger.info(
-                f"Detector: _image_cb raw count={self._raw_cb_count}, "
-                f"rate_limited_count={self._frame_count}"
+                f"Detector: _image_cb raw={self._raw_cb_count}, "
+                f"passed_rate_limiter={self._frame_count}"
             )
         if now - self._last_cb_time < self._cb_interval:
             return
