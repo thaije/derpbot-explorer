@@ -11,7 +11,7 @@ Project spec: [`AUTONOMOUS_AGENT_GUIDE.md`](AUTONOMOUS_AGENT_GUIDE.md) · Archit
 
 | Run | Score | Coverage | Found | Collisions | Notes |
 |---|---|---|---|---|---|
-| Best easy (full perception) | 66.1 C | 98% | 4/6 | 1 | seed=42, patrol mode, OWL_CONF=0.15, W_DIST=1.5 |
+| Best easy (full perception) | 69.0 C | 77% | 3/6 | 0 | seed=42, post-#20 detector fixes, OWL_CONF=0.15, W_DIST=1.5 |
 | Task 4 nav baseline (`--no-perception`) | 54.9 D | 71.3% | — | 0 | seed=42, footprint-aware MPPI |
 
 **Target:** ≥ 70 (B) on easy before starting medium tier. Score is currently gated by perception, not nav. See [#8](https://github.com/thaije/derpbot-explorer/issues/8) (Task 5 — detection-aware exploration).
@@ -40,7 +40,7 @@ agent/
   frontier_explorer.py BFS /map frontiers → NavigateToPose, stuck detection, patrol mode
   detector.py          OWLv2 in subprocess (spawn), 5 Hz, conf=0.15, 90 s watchdog
   depth_projector.py   bbox → depth → world (x, y) via TF2
-  tracker.py           multi-sighting fusion (≥2, >0.2 m apart), MATCH_RADIUS=2.0 m
+  tracker.py           multi-sighting fusion (≥2, >0.2 m apart), MATCH_RADIUS=2.0 m (agent-internal merge radius; scorer match_threshold=1.5 m — distinct)
   agent_node.py        INIT → EXPLORE → DONE, MultiThreadedExecutor
 
 config/
@@ -77,7 +77,7 @@ Anything in committed config/code is omitted. Only things a fresh agent would re
 ### Frontier exploration
 - **Pick closest-to-centroid cell, not closest-to-robot.** Centroid can land in unknown/inflated space; "closest-to-robot" causes immediate Nav2 success with no map update. Closest-to-centroid picks a free interior cell that actually requires navigation.
 - **Succeeded goals use a soft TTL exclusion (45 sim-s), not permanent blacklist.** Permanent blacklisting exhausted all frontiers in low-density maps (issue #27). The TTL covers SLAM update lag; after expiry the frontier can be re-selected if it genuinely persists. Failures stay permanently blacklisted.
-- **Frontier W_DIST=1.5** balances coverage. ≥4.0 keeps the robot local; ≤0.5 causes cross-map thrashing. Never go below 1.0 without testing.
+- **Frontier W_DIST is dynamic (1.5–3.5)** based on max frontier cluster size (#32). High when large frontiers exist (stay local); low when frontiers shrink (look farther). W_DIST_SIZE_NORM=150. Never set W_DIST_MIN below 1.0 without testing.
 - **OWL_CONF_THRESHOLD=0.15** is the tuned value. 0.10=3FP/3real, 0.12=3FP/3real, 0.15=1FP/4real. Don't lower without a new mechanism.
 - **Robot avg_speed is ~0.022 m/s (mostly idle).** Most time is spent waiting on Nav2 goal acceptance and rotating at waypoints. Coverage comes from LiDAR sweeps during rotation, not path length. Reducing inter-goal idle time is the primary speed-score lever.
 - **LIDAR coverage ≠ camera coverage.** LIDAR (10–20 m) maps remote areas before the camera visits them. Patrol mode navigates to physically unvisited free cells after frontier exhaustion.
@@ -86,7 +86,7 @@ Anything in committed config/code is omitted. Only things a fresh agent would re
 
 ## How to run
 
-Delegate to the `arst-runner` subagent for scored runs — it handles atomic startup, RTF/TF-flood checks, monitoring, and score reporting. For interactive observation use the `arst-test` skill.
+Delegate to the `arst-runner` subagent for scored runs — it handles atomic startup, RTF/TF-flood checks, monitoring, and score reporting.
 
 Manual debug-only:
 ```bash
