@@ -14,21 +14,18 @@ Current state lives in [`STATE.md`](STATE.md). History lives in closed issues + 
 
 ---
 
-## Next
+## Completed
 
-### Task 8 — Automated benchmark submission · [#33](https://github.com/thaije/derpbot-explorer/issues/33)
-Formal 75-run benchmark (5 difficulties × 5 seeds × 3 runs). Script `scripts/run_benchmark.sh` written; ready to execute unattended overnight. Run: `./scripts/run_benchmark.sh --agent-name derpbot-explorer-v1 --speed 2`.
-**DoD:** all 75 runs complete, submission passes `validate_submission.py`, summary in `benchmark_results.md`.
+- **Task 5 — Detection-aware exploration · #8** — Benchmark submitted and on leaderboard. Future detection improvements tracked as separate issues. Results: https://github.com/thaije/robot-sandbox/tree/main/results/submissions/derpbot-explorer-v1
+
+---
+
+## Next
 
 ### Task 6 — 2× average speed · [#17](https://github.com/thaije/derpbot-explorer/issues/17)
 Double avg_speed from ~0.07 → ~0.14 m/s by reducing downtime. Profiling shows robot moving only 50% of the time; biggest levers: Nav2 dispatch overhead (13.6%), inter-goal loop stalls (11.9%), rotation (9.4%). #18 landed — startup phase down from 18.5% → 3.9% of budget. Next lever: Nav2 first_move latency (goals stuck in `rotating` for 25+ sim-s after accept).
-**Blocked on:** Task 6a ✅
+**Blocked on:** #35 (image callback starvation — must fix before speed can be measured correctly)
 **DoD:** `avg_speed_kmh` ≥ 0.50 on ≥ 3 seeds, 0 collision regression.
-
-### Task 5 — Detection-aware exploration · [#8](https://github.com/thaije/derpbot-explorer/issues/8)
-Revisit partially-detected areas so the detection rate exceeds the pure-coverage ceiling. Nav is now good enough (Task 4: 71% coverage, 0 collisions); score is gated by perception. Next big lever.
-**Blocked on:** Tasks 1–4 ✅
-**DoD:** confirmed detections up vs Task 4 baseline, no FP increase, target score ≥ 70 B.
 
 ---
 
@@ -45,11 +42,11 @@ Titles only. Expand when a task is promoted to "Next".
 
 Known issues not currently prioritized. Full details in the linked issues; check before starting related work in case one is already tracked.
 
-- [#26](https://github.com/thaije/derpbot-explorer/issues/26) — Investigate silent detection failures on hard tier + easy/2
-- [#28](https://github.com/thaije/derpbot-explorer/issues/28) — Residual "Costmap timed out" after costmap clear (rare, easy scenario)
-- [#23](https://github.com/thaije/derpbot-explorer/issues/23) — Detection/confirmation cycle too slow — hurts Task 6 speed · [prompt](prompt_issue_23.md)
-- [#32](https://github.com/thaije/derpbot-explorer/issues/32) — Frontier explorer consistently skips Meeting Room (FA#2 at 6.4, 11.7) — blind spot in goal selection, missed in all 6 seed=42 easy_900s runs
-- [#34](https://github.com/thaije/derpbot-explorer/issues/34) — OWLv2 subprocess stalls at ~63 inferences; 90s watchdog restart creates detection blind window (likely CUDA VRAM leak on shared GPU)
+- [#35](https://github.com/thaije/derpbot-explorer/issues/35) — Camera image callback stops firing mid-run (~100/4500 callbacks received); detector starved of frames — blocks Task 6 speed measurements
+- [#30](https://github.com/thaije/derpbot-explorer/issues/30) — Reduce global inflation radius — patrol bot blocks corridor
+- [#15](https://github.com/thaije/derpbot-explorer/issues/15) — Use ClearCostmapAroundPose (Jazzy) for targeted clearing
+- [#14](https://github.com/thaije/derpbot-explorer/issues/14) — Client-side goal pre-validation via PyCostmap2D
+- [#13](https://github.com/thaije/derpbot-explorer/issues/13) — Harden: enable collision_monitor use_realtime_priority
 
 Run `gh issue list --state open --label backlog` for the live list.
 
