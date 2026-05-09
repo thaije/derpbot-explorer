@@ -16,16 +16,17 @@ Current state lives in [`STATE.md`](STATE.md). History lives in closed issues + 
 
 ## Completed
 
-- **Task 5 — Detection-aware exploration · #8** — Benchmark submitted and on leaderboard. Future detection improvements tracked as separate issues. Results: https://github.com/thaije/robot-sandbox/tree/main/results/submissions/derpbot-explorer-v1
+- **Task 8 — Automated benchmark submission · #33** — Benchmark v1 submitted and on leaderboard. Results: https://github.com/thaije/robot-sandbox/tree/main/results/submissions/derpbot-explorer-v1
+- **Task 6 — 2× average speed · #17** — Closed as not feasible. Profiling and GIL probes (#22) brought speed from ~0.07 to ~0.24 km/h but 0.50 km/h DoD is structurally unachievable with current sim/architecture.
 
 ---
 
 ## Next
 
-### Task 6 — 2× average speed · [#17](https://github.com/thaije/derpbot-explorer/issues/17)
-Double avg_speed from ~0.07 → ~0.14 m/s by reducing downtime. Profiling shows robot moving only 50% of the time; biggest levers: Nav2 dispatch overhead (13.6%), inter-goal loop stalls (11.9%), rotation (9.4%). #18 landed — startup phase down from 18.5% → 3.9% of budget. Next lever: Nav2 first_move latency (goals stuck in `rotating` for 25+ sim-s after accept).
-**Blocked on:** Task 6a ✅
-**DoD:** `avg_speed_kmh` ≥ 0.50 on ≥ 3 seeds, 0 collision regression.
+### Task 5 — Detection-aware exploration · [#8](https://github.com/thaije/derpbot-explorer/issues/8)
+Revisit partially-detected areas so the detection rate exceeds the pure-coverage ceiling. Nav is now good enough (Task 4: 71% coverage, 0 collisions); score is gated by perception.
+**Blocked on:** Tasks 1–4 ✅
+**DoD:** confirmed detections up vs Task 4 baseline, no FP increase, target score ≥ 70 B.
 
 ---
 
