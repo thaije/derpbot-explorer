@@ -24,7 +24,7 @@ Current state lives in [`STATE.md`](STATE.md). History lives in closed issues + 
 
 ### Task 6 — 2× average speed · [#17](https://github.com/thaije/derpbot-explorer/issues/17)
 Double avg_speed from ~0.07 → ~0.14 m/s by reducing downtime. Profiling shows robot moving only 50% of the time; biggest levers: Nav2 dispatch overhead (13.6%), inter-goal loop stalls (11.9%), rotation (9.4%). #18 landed — startup phase down from 18.5% → 3.9% of budget. Next lever: Nav2 first_move latency (goals stuck in `rotating` for 25+ sim-s after accept).
-**Blocked on:** #35 (image callback starvation — must fix before speed can be measured correctly)
+**Blocked on:** Task 6a ✅
 **DoD:** `avg_speed_kmh` ≥ 0.50 on ≥ 3 seeds, 0 collision regression.
 
 ---
@@ -42,7 +42,6 @@ Titles only. Expand when a task is promoted to "Next".
 
 Known issues not currently prioritized. Full details in the linked issues; check before starting related work in case one is already tracked.
 
-- [#35](https://github.com/thaije/derpbot-explorer/issues/35) — Camera image callback stops firing mid-run (~100/4500 callbacks received); detector starved of frames — blocks Task 6 speed measurements
 - [#30](https://github.com/thaije/derpbot-explorer/issues/30) — Reduce global inflation radius — patrol bot blocks corridor
 - [#15](https://github.com/thaije/derpbot-explorer/issues/15) — Use ClearCostmapAroundPose (Jazzy) for targeted clearing
 - [#14](https://github.com/thaije/derpbot-explorer/issues/14) — Client-side goal pre-validation via PyCostmap2D

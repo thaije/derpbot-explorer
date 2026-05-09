@@ -14,7 +14,7 @@ Project spec: [`AUTONOMOUS_AGENT_GUIDE.md`](AUTONOMOUS_AGENT_GUIDE.md) · Archit
 | Best easy (full perception) | 69.0 C | 77% | 3/6 | 0 | seed=42, post-#20 detector fixes, OWL_CONF=0.15, W_DIST=1.5 |
 | Task 4 nav baseline (`--no-perception`) | 54.9 D | 71.3% | — | 0 | seed=42, footprint-aware MPPI |
 
-**Target:** ≥ 70 (B) on easy before starting medium tier. Benchmark v1 submitted — results on [leaderboard](https://github.com/thaije/robot-sandbox/blob/main/docs/leaderboard.html). Score gated by perception (#35 — image callback starvation) and speed (#17).
+**Target:** ≥ 70 (B) on easy before starting medium tier. Benchmark v1 submitted — results on [leaderboard](https://github.com/thaije/robot-sandbox/blob/main/docs/leaderboard.html). Score gated by speed (#17).
 
 ---
 
