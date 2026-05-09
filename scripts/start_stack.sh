@@ -116,7 +116,7 @@ sleep 1
 
 # --- #18 fix: pause Gazebo so wall-time stack bringup burns zero sim-s ---
 # Without this, ~15–25 wall-s of slam+nav2+agent cold-launch is multiplied by
-# RTF on the sim clock, consuming ~40 sim-s of the 300 s mission budget before
+# RTF on the sim clock, consuming ~40 sim-s of the mission budget before
 # the agent ever processes its first /map.
 #
 # Discover the world control service dynamically so this works for any tier.

@@ -98,7 +98,7 @@ Publish your detections on `/derpbot_0/detections` as `vision_msgs/Detection2DAr
 ./scripts/run_scenario.sh config/scenarios/office_explore_detect/medium.yaml --headless --seed 42
 
 # Shorten timeout for iteration
-./scripts/run_scenario.sh config/scenarios/office_explore_detect/easy.yaml --headless --timeout 300
+./scripts/run_scenario.sh config/scenarios/office_explore_detect/easy.yaml --headless --timeout 900
 
 # Enable oracle detections (dev/cheat — bbox camera feeds /detections directly)
 ./scripts/run_scenario.sh config/scenarios/office_explore_detect/easy.yaml --headless --enable-oracle

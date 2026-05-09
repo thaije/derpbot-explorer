@@ -2,6 +2,8 @@
 
 Historical performance snapshots. Append new entries on top; keep older ones for regression comparison.
 
+> **Note (2026-05-09):** The easy scenario timeout changed from **300 s to 900 s**. Previous easy-scenario benchmark runs (all entries below before the 2026-05-05 900s batch) used a 300 s time limit. Speed-category scores (`avg_speed_kmh`, speed grade) are not directly comparable between 300 s and 900 s runs because the speed par_value was calibrated for 300 s — 900 s runs structurally score lower on speed regardless of exploration quality. Coverage and detection metrics remain comparable if noting the longer time budget.
+
 ---
 
 ## 2026-05-05 — Issue #31 verification: 900s extended runs × 2 batches (seed=42, easy_900s, full perception)
@@ -77,7 +79,7 @@ Single run verifying detector fixes (watchdog reset logic, frame-starvation dete
 
 20 runs total (seeds 42, 1, 2, 3, 4) across easy/medium/hard/brutal with full perception stack (OWLv2 + depth projector + tracker), speed=2.
 
-### Easy (timeout 300s)
+### Easy (timeout 300s — now 900s; scores not directly comparable)
 
 | seed | score | grade | avg_speed_kmh | found/6 | coverage% | path_m | collisions | notes |
 |---|---|---|---|---|---|---|---|---|

@@ -5,8 +5,9 @@ Endpoint: GET http://localhost:7400/mission
 Expected response:
   {
     "targets": ["fire extinguisher", "hazard sign", ...],
-    "time_limit": 300
+    "time_limit_seconds": 900
   }
+Time limits vary by tier: easy=900, medium=600, hard=300, brutal=180.
 """
 
 import time

@@ -35,7 +35,7 @@ Timeout and wall-time budgets vary by tier (at `--speed 2`):
 
 | Tier | Sim timeout | Wall-time budget (speed=2) |
 |---|---|---|
-| easy | 300 s | ~150 wall-s (~2.5 min) |
+| easy | 900 s | ~450 wall-s (~7.5 min) |
 | medium | 600 s | ~300 wall-s (~5 min) |
 | hard | 300 s | ~150 wall-s (~2.5 min) |
 | brutal | 180 s | ~90 wall-s (~1.5 min) |

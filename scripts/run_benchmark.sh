@@ -39,7 +39,7 @@ DRY_RUN=0
 
 # Difficulty → scenario file stem (easy uses 900s variant per updated guide).
 declare -A SCENARIO_STEM=(
-    [easy]="easy_900s"
+    [easy]="easy"
     [medium]="medium"
     [hard]="hard"
     [brutal]="brutal"
