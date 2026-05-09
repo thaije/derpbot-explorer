@@ -14,13 +14,6 @@ Current state lives in [`STATE.md`](STATE.md). History lives in closed issues + 
 
 ---
 
-## Completed
-
-- **Task 8 — Automated benchmark submission · #33** — Benchmark v1 submitted and on leaderboard. Results: https://github.com/thaije/robot-sandbox/tree/main/results/submissions/derpbot-explorer-v1
-- **Task 6 — 2× average speed · #17** — Closed as not feasible. Profiling and GIL probes (#22) brought speed from ~0.07 to ~0.24 km/h but 0.50 km/h DoD is structurally unachievable with current sim/architecture.
-
----
-
 ## Next
 
 ### Task 5 — Detection-aware exploration · [#8](https://github.com/thaije/derpbot-explorer/issues/8)
