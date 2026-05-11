@@ -28,8 +28,17 @@ Runs are scored 0–100 across five categories, combined as a weighted sum.
 | **Efficiency** | Coverage-per-metre (0.60) + path length vs par (0.40) |
 | **Effectiveness** | Detection completeness (0.65) + exploration coverage % (0.35) |
 
+Par values are derived from a **human perception baseline** (teleop + manual keypress detections, 5 seeds per tier). At par, a category scores ~70 (B grade). Faster, more accurate, or more efficient than par scores above 70; worse scores below.
+
 Grade thresholds: **S** ≥ 95 · **A** ≥ 85 · **B** ≥ 70 · **C** ≥ 55 · **D** ≥ 40 · **F** < 40.
-A B-grade means *competent performance for that difficulty level*.
+
+| Tier | `completion_time_par` (s) | `path_length_par` (m) | `coverage_per_meter_par` |
+|---|---|---|---|
+| easy | 167.1 | 39.8 | 2.36 |
+| medium | 160.2 | 43.8 | 2.10 |
+| hard | 212.9 | 61.9 | 1.58 |
+| brutal | 182.3 | 64.1 | 1.56 |
+| perception_stress | 176.1 | 56.3 | 1.79 |
 
 Full score breakdown is written to `results/` as JSON after each run.
 
@@ -56,7 +65,8 @@ Ground robot (differential drive — currently the only supported model).
 | RGBD — depth | `/derpbot_0/rgbd/depth_image` | 10 Hz | float32 metres, 0.15–6.0 m range, Gaussian noise σ=0.01 m, `sensor_msgs/Image` |
 | RGBD — intrinsics | `/derpbot_0/rgbd/camera_info` | 10 Hz | `sensor_msgs/CameraInfo` — required for 3-D back-projection |
 | RGBD — point cloud | `/derpbot_0/rgbd/points` | 10 Hz | `sensor_msgs/PointCloud2` — **off by default**, enable with `--enable-pointcloud` |
-| Odometry | `/derpbot_0/odom` | — | `nav_msgs/Odometry`, wheel-encoder dead-reckoning |
+| Odometry | `/derpbot_0/odom` | — | `nav_msgs/Odometry`, IMU-fused (EKF) — yaw drift corrected |
+| Raw wheel odometry | `/derpbot_0/odom_raw` | — | `nav_msgs/Odometry`, raw wheel-encoder dead-reckoning (for custom sensor fusion) |
 
 ### Control & TF
 
@@ -64,7 +74,13 @@ Ground robot (differential drive — currently the only supported model).
 |---|---|
 | `/derpbot_0/cmd_vel` | `geometry_msgs/Twist` — drive command |
 | `/derpbot_0/joint_states` | `sensor_msgs/JointState` |
-| TF tree | `odom → base_footprint → base_link` |
+| TF tree | `odom → base_footprint → base_link → lidar_link / camera_link` |
+
+### Odometry
+
+`/derpbot_0/odom` is **IMU-fused** (EKF via `robot_localization`). It combines wheel-encoder odometry with IMU yaw-rate to correct differential-drive yaw drift. Use this topic for all position and heading estimates.
+
+`/derpbot_0/odom_raw` is the **raw wheel-encoder** odometry before EKF fusion. It is available for agents that want to implement their own sensor fusion (e.g. SLAM). Expect significant yaw drift on long runs — up to several metres after 2–3 minutes of driving.
 
 ### Detection output
 
@@ -98,7 +114,7 @@ Publish your detections on `/derpbot_0/detections` as `vision_msgs/Detection2DAr
 ./scripts/run_scenario.sh config/scenarios/office_explore_detect/medium.yaml --headless --seed 42
 
 # Shorten timeout for iteration
-./scripts/run_scenario.sh config/scenarios/office_explore_detect/easy.yaml --headless --timeout 900
+./scripts/run_scenario.sh config/scenarios/office_explore_detect/easy.yaml --headless --timeout 300
 
 # Enable oracle detections (dev/cheat — bbox camera feeds /detections directly)
 ./scripts/run_scenario.sh config/scenarios/office_explore_detect/easy.yaml --headless --enable-oracle
@@ -217,4 +233,4 @@ Checks: all expected files present, JSON schema valid, `overall_score` in [0, 10
 
 Open a PR adding your YAML + results directory to `results/submissions/`. Submissions that fail validation will not be merged.
 
-Accepted submissions appear on the **[leaderboard](leaderboard.html)**. Ranking is by `found_ratio` (objects found / total objects); other per-run metrics are available on hover.
+Accepted submissions appear on the **[leaderboard](leaderboard.html)**. Ranking is by `found_ratio` (mission targets found / total mission targets); other per-run metrics are available on hover. After adding a submission, regenerate with `python3.12 scripts/generate_leaderboard.py`.

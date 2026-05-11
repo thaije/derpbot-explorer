@@ -49,8 +49,6 @@ Run `gh issue list --state open --label backlog` for the live list.
 
 Not tracked as issues — reconsider only if triggered.
 
-- **IMU-fused odometry (robot_localization EKF).** If odometry angular accuracy degrades (different sim versions, real hardware), add an EKF fusing `/derpbot_0/imu` (100 Hz gyro) with `/derpbot_0/odom`. Publishes `/odom_fused`; point `slam_toolbox`'s `odom_frame` at it. ~20 lines of YAML + one launch node.
-
 ---
 
 ## Workflow
