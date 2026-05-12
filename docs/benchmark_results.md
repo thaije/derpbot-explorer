@@ -16,6 +16,25 @@ Historical performance snapshots. Append new entries on top; keep older ones for
 
 ---
 
+## 2026-05-12 — Task 5 initial test: detection-aware exploration (seeds 1–3, easy, full perception #8)
+
+First test of detection-aware exploration (commit `beeebf0`). Pending candidates (1-sighting objects) are injected as high-priority pseudo-frontiers, causing the robot to detour toward partially-detected objects for re-detection. Compared against recalibrated v2 baseline (5 seeds × 3 runs, 15 runs total).
+
+| Seed | Score | Grade | Cov% | Found/6 | FP | Detections | Collisions |
+|------|-------|-------|------|---------|----|------------|------------|
+| 1 | 53.6 | D | 52.5% | 3/6 | 2 | 3 | 1 |
+| 2 | 41.6 | D | 52.5% | 1/6 | 4 | 1 | 0 |
+| 3 | 61.2 | C | 94.4% | 3/6 | 2 | 3 | 0 |
+| **Mean** | **52.1** | **D** | **66.5%** | **2.3/6** | **2.7** | **2.3** | **0.3** |
+
+v2 baseline for comparison (5 seeds × 3 runs): mean 54.7 D, 64.1% cov, 2.5/6 found, 0.8 coll.
+
+**Assessment:** Too few runs to conclude — range overlaps baseline. Seed=2 had 4 false positives from candidate detours. Need A/B comparison with `--no-detect-explore` and ≥2 runs per seed.
+
+Results: `robot-sandbox/results/office_easy_001_20260512T{214104,215324,220741}.json`
+
+---
+
 ## 2026-05-05 — Issue #31 verification: 900s extended runs × 2 batches (seed=42, easy_900s, full perception)
 
 6 total runs (3 original batch + 3 independent verification) to establish coverage ceiling and run-to-run variance with 3× time budget.
