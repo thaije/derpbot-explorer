@@ -9,17 +9,29 @@ Project spec: [`AUTONOMOUS_AGENT_GUIDE.md`](AUTONOMOUS_AGENT_GUIDE.md) · Archit
 
 ## Current performance
 
-Recalibrated v2 scoring (5 seeds × 3 runs, easy tier, full perception). See [`benchmark_results.md`](benchmark_results.md) for full history.
+Recalibrated v2 scoring. See [`benchmark_results.md`](benchmark_results.md) for full history.
 
-| Metric | Mean | Range |
-|---|---|---|
-| Score | 54.7 C | 42.4–67.5 |
-| Coverage | 64.1% | 19–97% |
-| Found | 2.5/6 | 0–5/6 |
-| Collisions | 0.8 | 0–8 |
-| Nav-only baseline (`--no-perception`) | 54.9 D, 71.3% cov, 0 coll | seed=42 |
+### Easy tier — v2 baseline (5 seeds × 3 runs, detection-aware exploration OFF)
 
-Score gated by perception (#8). Medium tier baseline in progress.
+| Seed | Score | Cov% | Found | Coll |
+|------|-------|------|-------|------|
+| 1 | 56.5 C | 78.9% | 4.0/6 | 4.0 |
+| 2 | 51.4 D | 80.2% | 2.0/6 | 0.0 |
+| 3 | 55.5 D | 50.0% | 2.3/6 | 0.0 |
+| 4 | 61.4 C | 73.4% | 3.3/6 | 0.0 |
+| 5 | 48.4 D | 37.9% | 0.7/6 | 0.0 |
+| **Mean** | **54.7 D** | **64.1%** | **2.5/6** | **0.8** |
+
+### Easy tier — Task 5 detection-aware exploration (3 seeds × 1 run, #8 WIP)
+
+| Seed | Score | Cov% | Found | FP | Coll |
+|------|-------|------|-------|----|------|
+| 1 | 53.6 D | 52.5% | 3/6 | 2 | 1 |
+| 2 | 41.6 D | 52.5% | 1/6 | 4 | 0 |
+| 3 | 61.2 C | 94.4% | 3/6 | 2 | 0 |
+| **Mean** | **52.1 D** | **66.5%** | **2.3/6** | **2.7** | **0.3** |
+
+Too few runs to conclude — range overlaps baseline. Need A/B comparison (`--no-detect-explore`) and ≥2 runs per seed.
 
 ---
 
@@ -86,6 +98,11 @@ Anything in committed config/code is omitted. Only things a fresh agent would re
 - **OWL_CONF_THRESHOLD=0.15** is the tuned value. 0.10=3FP/3real, 0.12=3FP/3real, 0.15=1FP/4real. Don't lower without a new mechanism.
 - **Robot avg_speed is ~0.022 m/s (mostly idle).** Most time is spent waiting on Nav2 goal acceptance and rotating at waypoints. Coverage comes from LiDAR sweeps during rotation, not path length. Reducing inter-goal idle time is the primary speed-score lever.
 - **LIDAR coverage ≠ camera coverage.** LIDAR (10–20 m) maps remote areas before the camera visits them. Patrol mode navigates to physically unvisited free cells after frontier exhaustion.
+
+### Detection-aware exploration (#8)
+- **Pending candidates expire after 60 sim-seconds.** `CANDIDATE_TIMEOUT_S=60` in tracker.py — candidates without a 2nd sighting are pruned.
+- **Each candidate is visited once.** `_candidate_visited` set in frontier_explorer.py prevents re-detouring to the same track_id regardless of outcome.
+- **Candidate detours always beat geographic frontiers.** Score override = `max(best_frontier_score, 0) + 1.0`. Use `--no-detect-explore` flag for A/B baseline (detector runs but explorer ignores candidates).
 
 ---
 
