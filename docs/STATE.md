@@ -9,12 +9,17 @@ Project spec: [`AUTONOMOUS_AGENT_GUIDE.md`](AUTONOMOUS_AGENT_GUIDE.md) · Archit
 
 ## Current performance
 
-| Run | Score | Coverage | Found | Collisions | Notes |
-|---|---|---|---|---|---|
-| Best easy (full perception) | 69.0 C | 77% | 3/6 | 0 | seed=42, post-#20 detector fixes, OWL_CONF=0.15, W_DIST=1.5 |
-| Task 4 nav baseline (`--no-perception`) | 54.9 D | 71.3% | — | 0 | seed=42, footprint-aware MPPI |
+Recalibrated v2 scoring (5 seeds × 3 runs, easy tier, full perception). See [`benchmark_results.md`](benchmark_results.md) for full history.
 
-**Target:** ≥ 70 (B) on easy before starting medium tier. Benchmark v1 submitted — results on [leaderboard](https://github.com/thaije/robot-sandbox/blob/main/docs/leaderboard.html). Score gated by perception (#8).
+| Metric | Mean | Range |
+|---|---|---|
+| Score | 54.7 C | 42.4–67.5 |
+| Coverage | 64.1% | 19–97% |
+| Found | 2.5/6 | 0–5/6 |
+| Collisions | 0.8 | 0–8 |
+| Nav-only baseline (`--no-perception`) | 54.9 D, 71.3% cov, 0 coll | seed=42 |
+
+Score gated by perception (#8). Medium tier baseline in progress.
 
 ---
 

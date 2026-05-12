@@ -89,6 +89,16 @@ PATROL_STEP_M = 1.0  # metres — coarse grid sampling resolution for patrol tar
 # Minimum cluster size to be considered a meaningful frontier
 MIN_FRONTIER_SIZE = 5  # cells
 
+# --- Detection-aware exploration (Task 5 / #8) ---
+# When the tracker reports a pending candidate (1-sighting object), the explorer
+# creates a "detection frontier" at the candidate's world position. These get
+# score_override so they are preferred over geographic frontiers, forcing the
+# robot to detour toward partially-detected objects for re-detection.
+# Only one detour per candidate (deduplicated by track_id).
+
+CANDIDATE_SCORE_MULTIPLIER = 10.0  # override = max_frontier_score * this
+CANDIDATE_BLACKLIST_RADIUS = 0.5    # metres — ignore candidates near blacklisted points
+
 # Frontier cells with global_costmap >= this value are rejected: they sit inside
 # the inflation layer's inscribed-radius zone, so Nav2 cannot position the robot
 # there even though SLAM marks them free. Without this filter, the BFS picks
@@ -234,6 +244,20 @@ class FrontierCluster:
         return len(self.cells)
 
 
+@dataclass
+class DetectionFrontier:
+    """Pseudo-frontier for a pending detection candidate (1-sighting object)."""
+    track_id: str
+    class_name: str
+    world_x: float
+    world_y: float
+    score_override: float  # assigned at creation; always beats geographic frontiers
+
+
+# Type alias: a navigation target is either a geographic frontier or a detection
+ExplorationTarget = FrontierCluster | DetectionFrontier
+
+
 class FrontierExplorer:
     """
     Frontier-based exploration using Nav2 NavigateToPose.
@@ -246,10 +270,11 @@ class FrontierExplorer:
         Called with no arguments when exploration is complete (no frontiers left).
     """
 
-    def __init__(self, node: Node, done_callback: Callable[[], None]):
+    def __init__(self, node: Node, done_callback: Callable[[], None], tracker=None):
         self._node = node
         self._done_callback = done_callback
         self._logger = node.get_logger()
+        self._tracker = tracker  # tracker.Tracker or None
 
         self._bfs_executor = ProcessPoolExecutor(max_workers=1)
         self._map: Optional[OccupancyGrid] = None
@@ -297,6 +322,12 @@ class FrontierExplorer:
         self._exploring = False
         self._goal_stats: list[GoalStats] = []
         self._timeline: list[dict] = []
+
+        # Detection-aware exploration (Task 5 / #8)
+        # Set of track_ids that have already been visited as detection frontiers.
+        # Each candidate is visited once; after the detour, SLAM may have updated
+        # and the object may be confirmed or the candidate expired.
+        self._candidate_visited: set[str] = set()
 
         # Subscriptions
         # /map is published TRANSIENT_LOCAL — subscriber must also use TRANSIENT_LOCAL
@@ -624,10 +655,20 @@ class FrontierExplorer:
             _t_bfs_start = self._sim_time()
             frontiers = self._detect_frontiers(current_map)
             _t_bfs = self._sim_time() - _t_bfs_start
-            best = self._select_best_frontier(frontiers, rx, ry) if frontiers else None
 
+            # Build detection frontiers from pending tracker candidates
+            detection_frontiers = self._build_detection_frontiers(rx, ry)
+
+            best = self._select_best_frontier(
+                frontiers, rx, ry, detection_frontiers
+            ) if (frontiers or detection_frontiers) else None
+
+            is_detection = isinstance(best, DetectionFrontier)
             is_patrol = False
-            if best is not None:
+            if is_detection:
+                cx, cy = best.world_x, best.world_y
+                goal_x, goal_y = best.world_x, best.world_y
+            elif best is not None:
                 cx, cy = best.centroid_world  # used for scoring/blacklisting
                 goal_x, goal_y = self._goal_cell_from_cluster(best, current_map.info)
             else:
@@ -646,15 +687,23 @@ class FrontierExplorer:
             _goal_num += 1
             _t_idle = self._sim_time() - _t_last_goal_end  # BFS + selection overhead
             _t_goal_start = self._sim_time()
-            if not is_patrol:
+            if is_detection:
+                self._tl(
+                    "detection_select",
+                    _goal_num,
+                    f"candidate {best.class_name} ({cx:.1f},{cy:.1f}) dist={math.hypot(cx - rx, cy - ry):.1f}",
+                )
+                self._logger.info(
+                    f"FrontierExplorer: DETECTION#{_goal_num} {best.class_name} ({goal_x:.2f}, {goal_y:.2f})"
+                    f" [track {best.track_id}]"
+                    f" idle_since_last={_t_idle:.1f}s bfs={_t_bfs:.2f}s"
+                )
+            elif not is_patrol:
                 self._tl(
                     "frontier_select",
                     _goal_num,
                     f"({cx:.1f},{cy:.1f}) goal=({goal_x:.1f},{goal_y:.1f}) size={best.size} dist={math.hypot(cx - rx, cy - ry):.1f}",
                 )
-            else:
-                self._tl("frontier_select", _goal_num, f"PATROL ({cx:.1f},{cy:.1f}) goal=({goal_x:.1f},{goal_y:.1f})")
-            if not is_patrol:
                 self._logger.info(
                     f"FrontierExplorer: goal#{_goal_num} ({goal_x:.2f}, {goal_y:.2f})"
                     f" [centroid ({cx:.2f}, {cy:.2f})],"
@@ -662,22 +711,24 @@ class FrontierExplorer:
                     f" idle_since_last={_t_idle:.1f}s bfs={_t_bfs:.2f}s"
                 )
             else:
+                self._tl("frontier_select", _goal_num, f"PATROL ({cx:.1f},{cy:.1f}) goal=({goal_x:.1f},{goal_y:.1f})")
                 self._logger.info(
                     f"FrontierExplorer: PATROL#{_goal_num} ({goal_x:.2f}, {goal_y:.2f})"
                     f" idle_since_last={_t_idle:.1f}s bfs={_t_bfs:.2f}s"
                 )
 
             if _FRONTIER_DEBUG:
+                debug_cluster = best if isinstance(best, FrontierCluster) else None
                 self._dump_frontier_debug(
                     _goal_num,
-                    best,
+                    debug_cluster,
                     cx,
                     cy,
                     goal_x,
                     goal_y,
                     rx,
                     ry,
-                    is_patrol,
+                    is_patrol or is_detection,
                 )
 
             self._tl("nav2_send", _goal_num)
@@ -709,6 +760,12 @@ class FrontierExplorer:
                 self._success_exclusion.append(
                     (cx, cy, self._sim_time() + SUCCESS_EXCLUSION_TTL)
                 )
+                # Detection frontier: mark as visited (one detour per candidate)
+                if is_detection:
+                    self._candidate_visited.add(best.track_id)
+                    self._logger.info(
+                        f"FrontierExplorer: detection candidate {best.track_id} visited, will not retry."
+                    )
             elif result is False:
                 self._tl("goal_failed", _goal_num, f"nav={_t_nav:.1f}s")
                 self._logger.info(
@@ -716,6 +773,12 @@ class FrontierExplorer:
                     f" accept={_accept_str} first_move={_move_str} nav={_t_nav:.1f}s — blacklisting."
                 )
                 self._blacklist.append((cx, cy))
+                # Detection frontier: mark as visited (don't retry failed candidate)
+                if is_detection:
+                    self._candidate_visited.add(best.track_id)
+                    self._logger.info(
+                        f"FrontierExplorer: detection candidate {best.track_id} failed, will not retry."
+                    )
                 # Back up + clear costmap after failure to prevent "Start occupied"
                 # cascade: robot may be inside an inflation zone after a stuck/abort;
                 # backing up first moves it to free space before the costmap rebuilds.
@@ -823,6 +886,56 @@ class FrontierExplorer:
         return clusters
 
     # ------------------------------------------------------------------
+    # Detection-aware exploration — candidate frontier injection
+    # ------------------------------------------------------------------
+
+    def _build_detection_frontiers(
+        self, robot_x: float, robot_y: float
+    ) -> list[DetectionFrontier]:
+        """
+        Query tracker for pending candidates (1-sighting objects) and convert
+        them into DetectionFrontier pseudo-frontiers. Filters out candidates
+        that are already visited, blacklisted, or too close to the robot
+        (already being seen — no detour needed).
+        """
+        if self._tracker is None:
+            return []
+
+        sim_time = self._sim_time()
+        candidates = self._tracker.get_pending_candidates(sim_time)
+        if not candidates:
+            return []
+
+        frontiers = []
+        for cand in candidates:
+            tid = cand["track_id"]
+            if tid in self._candidate_visited:
+                continue
+            wx, wy = cand["world_x"], cand["world_y"]
+
+            # Skip candidates near blacklisted locations
+            if self._is_blacklisted(wx, wy):
+                continue
+            # Skip candidates too close to robot (already seeing it — let tracker confirm)
+            if math.hypot(wx - robot_x, wy - robot_y) < 1.0:
+                continue
+
+            frontiers.append(DetectionFrontier(
+                track_id=tid,
+                class_name=cand["class_name"],
+                world_x=wx,
+                world_y=wy,
+                score_override=0.0,  # assigned later by _select_best_frontier
+            ))
+
+        if frontiers:
+            self._logger.info(
+                f"FrontierExplorer: {len(frontiers)} pending detection candidates "
+                f"({len(candidates)} total, {len(self._candidate_visited)} visited)"
+            )
+        return frontiers
+
+    # ------------------------------------------------------------------
     # Frontier selection — scoring
     # ------------------------------------------------------------------
 
@@ -831,7 +944,8 @@ class FrontierExplorer:
         clusters: list[FrontierCluster],
         robot_x: float,
         robot_y: float,
-    ) -> Optional[FrontierCluster]:
+        detection_frontiers: Optional[list[DetectionFrontier]] = None,
+    ) -> Optional[FrontierCluster | DetectionFrontier]:
         # Dynamic W_DIST: scales with the largest frontier in this BFS round.
         # Large frontier nearby → new unexplored area → stay local (high W_DIST).
         # All frontiers tiny → area nearly exhausted → look farther (low W_DIST).
@@ -851,7 +965,7 @@ class FrontierExplorer:
             max_size = 0
 
         best_score = -math.inf
-        best_cluster = None
+        best_target: Optional[FrontierCluster | DetectionFrontier] = None
         scored: list[tuple[float, FrontierCluster]] = []
 
         for cluster in clusters:
@@ -863,7 +977,26 @@ class FrontierExplorer:
             scored.append((score, cluster))
             if score > best_score:
                 best_score = score
-                best_cluster = cluster
+                best_target = cluster
+
+        # Detection frontiers always beat geographic frontiers by score override.
+        # Pick the closest unvisited, un-blacklisted candidate.
+        if detection_frontiers:
+            best_cand_dist = math.inf
+            best_cand = None
+            for df in detection_frontiers:
+                if self._is_blacklisted(df.world_x, df.world_y):
+                    continue
+                d = math.hypot(df.world_x - robot_x, df.world_y - robot_y)
+                if d < best_cand_dist:
+                    best_cand_dist = d
+                    best_cand = df
+            if best_cand is not None:
+                # Override score so detection frontier always beats geographic frontiers.
+                # If no geographic frontiers scored, use 0 as baseline.
+                override = max(best_score, 0.0) + 1.0
+                best_cand.score_override = override
+                best_target = best_cand
 
         n_bl = len(clusters) - len(scored)
         scored.sort(key=lambda t: t[0], reverse=True)
@@ -871,12 +1004,15 @@ class FrontierExplorer:
             f"({c.centroid_world[0]:.1f},{c.centroid_world[1]:.1f}) sz={c.size} sc={s:.0f}"
             for s, c in scored[:5]
         )
+        cand_info = ""
+        if detection_frontiers:
+            cand_info = f", candidates={len(detection_frontiers)}"
         self._logger.info(
             f"FrontierExplorer: {len(clusters)} clusters "
-            f"({n_bl} BL, {len(scored)} eligible), max_sz={max_size if clusters else 0}, W_DIST={w_dist:.2f}. Top5: [{top5}]"
+            f"({n_bl} BL, {len(scored)} eligible), max_sz={max_size if clusters else 0}, W_DIST={w_dist:.2f}.{cand_info} Top5: [{top5}]"
         )
 
-        return best_cluster
+        return best_target
 
     def _is_blacklisted(self, x: float, y: float) -> bool:
         for bx, by in self._blacklist:

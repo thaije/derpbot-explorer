@@ -47,6 +47,9 @@ MIN_POSE_DISTANCE = 0.2     # robot must move ≥0.2m between diverse sightings
 PUBLISH_RATE_HZ = 5.0       # rate to check for newly confirmed objects
 REPUBLISH_SHIFT_M = 0.5     # republish if centroid moves more than this
 
+CANDIDATE_TIMEOUT_S = 60.0  # sim-seconds — discard pending candidate without 2nd sighting
+CANDIDATE_PUBLISH_HZ = 2.0  # rate to send pending candidates to explorer
+
 
 @dataclass
 class TrackedObject:
@@ -101,12 +104,18 @@ def tracker_worker(
     Runs in a spawned subprocess. Receives (class_name, world_pos, robot_pose)
     via input_queue, runs tracking logic, and sends confirmed detections back
     via output_queue.
+
+    Also periodically sends "candidate" messages for objects with exactly 1
+    sighting so the explorer can navigate toward them for re-detection.
     """
     import sys
+    import time as _time
     objects: list[TrackedObject] = []
     next_id = 1
     lock = threading.Lock()
     _count = 0
+    _last_candidate_send = _time.monotonic()
+    CANDIDATE_SEND_INTERVAL = 1.0  # wall-seconds between candidate broadcasts
 
     def find_match(class_name: str, wx: float, wy: float) -> Optional[TrackedObject]:
         for obj in objects:
@@ -168,6 +177,7 @@ def tracker_worker(
             )
             try:
                 output_queue.put_nowait({
+                    "type": "confirmed",
                     "track_id": obj.track_id,
                     "class_name": obj.class_name,
                     "world_x": cx,
@@ -177,6 +187,25 @@ def tracker_worker(
                 sys.stderr.write(
                     f"[tracker_worker] output_queue full, dropping {obj.class_name}\n"
                 )
+
+        # Periodically broadcast pending candidates (1 sighting, not yet confirmed)
+        now_wall = _time.monotonic()
+        if now_wall - _last_candidate_send >= CANDIDATE_SEND_INTERVAL:
+            _last_candidate_send = now_wall
+            with lock:
+                for obj in objects:
+                    if not obj.is_confirmed():
+                        try:
+                            output_queue.put_nowait({
+                                "type": "candidate",
+                                "track_id": obj.track_id,
+                                "class_name": obj.class_name,
+                                "world_x": obj.world_x,
+                                "world_y": obj.world_y,
+                                "sighting_count": obj.sighting_count,
+                            })
+                        except Exception:
+                            pass
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +276,11 @@ class Tracker:
         # Tracked objects snapshot for status logging (updated by publisher thread)
         self._published_objects: list[dict] = []
         self._published_lock = threading.Lock()
+
+        # Pending candidates: objects with < MIN_SIGHTINGS, exposed for explorer
+        # Dict from track_id → {class_name, world_x, world_y, first_sim_t}
+        self._pending_candidates: dict[str, dict] = {}
+        self._pending_candidates_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Relay: detector queue → project + robot pose → worker process
@@ -321,6 +355,28 @@ class Tracker:
             except queue.Empty:
                 continue
 
+            msg_type = item.get("type", "confirmed")
+
+            if msg_type == "candidate":
+                with self._pending_candidates_lock:
+                    tid = item["track_id"]
+                    existing = self._pending_candidates.get(tid)
+                    sim_t = self._node.get_clock().now().nanoseconds / 1e9
+                    if existing is None:
+                        self._pending_candidates[tid] = {
+                            "class_name": item["class_name"],
+                            "world_x": item["world_x"],
+                            "world_y": item["world_y"],
+                            "first_sim_t": sim_t,
+                            "sighting_count": item["sighting_count"],
+                        }
+                    else:
+                        existing["world_x"] = item["world_x"]
+                        existing["world_y"] = item["world_y"]
+                        existing["sighting_count"] = item["sighting_count"]
+                continue
+
+            # confirmed message — publish to ROS
             _count += 1
             self._logger.info(
                 f"Tracker: publishing detection #{_count}: "
@@ -351,6 +407,10 @@ class Tracker:
                 item["world_x"], item["world_y"]
             )
 
+            # Remove from pending candidates if confirmed
+            with self._pending_candidates_lock:
+                self._pending_candidates.pop(item["track_id"], None)
+
             with self._published_lock:
                 self._published_objects.append(item)
 
@@ -361,6 +421,14 @@ class Tracker:
     def _log_status(self) -> None:
         with self._published_lock:
             published = list(self._published_objects)
+        with self._pending_candidates_lock:
+            candidates = dict(self._pending_candidates)
+        cand_str = ""
+        if candidates:
+            cand_str = ", pending=" + ", ".join(
+                f"{c['class_name']}({c['world_x']:.1f},{c['world_y']:.1f})"
+                for c in candidates.values()
+            )
         if published:
             self._logger.info(
                 f"Tracker: confirmed={len(published)} "
@@ -368,7 +436,38 @@ class Tracker:
                     f"{o['class_name']}({o['world_x']:.1f},{o['world_y']:.1f})"
                     for o in published
                 )
+                + cand_str
             )
+
+    def get_pending_candidates(self, sim_time: float) -> list[dict]:
+        """
+        Return pending candidates (1-sighting objects) that haven't timed out.
+
+        Each candidate is a dict with: track_id, class_name, world_x, world_y.
+        Candidates older than CANDIDATE_TIMEOUT_S sim-seconds are pruned.
+        """
+        with self._pending_candidates_lock:
+            expired = [
+                tid
+                for tid, c in self._pending_candidates.items()
+                if sim_time - c["first_sim_t"] > CANDIDATE_TIMEOUT_S
+            ]
+            for tid in expired:
+                self._logger.info(
+                    f"Tracker: candidate {tid} expired ("
+                    f"age={sim_time - self._pending_candidates[tid]['first_sim_t']:.1f}s)"
+                )
+                del self._pending_candidates[tid]
+
+            return [
+                {
+                    "track_id": tid,
+                    "class_name": c["class_name"],
+                    "world_x": c["world_x"],
+                    "world_y": c["world_y"],
+                }
+                for tid, c in self._pending_candidates.items()
+            ]
 
     def stop(self) -> None:
         self._running = False

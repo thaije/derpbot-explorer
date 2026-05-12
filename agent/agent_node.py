@@ -39,7 +39,7 @@ logger = logging.getLogger("agent_node")
 
 
 class AgentNode(Node):
-    def __init__(self, no_perception: bool = False, no_subscribers: bool = False):
+    def __init__(self, no_perception: bool = False, no_subscribers: bool = False, no_detect_explore: bool = False):
         super().__init__(
             "derpbot_agent",
             parameter_overrides=[
@@ -52,6 +52,7 @@ class AgentNode(Node):
         self._done_event = threading.Event()
         self._no_perception = no_perception
         self._no_subscribers = no_subscribers
+        self._no_detect_explore = no_detect_explore
         self._t_start = self.get_clock().now().nanoseconds / 1e9
         self._logger = self.get_logger()
 
@@ -113,9 +114,14 @@ class AgentNode(Node):
 
         # --- Frontier explorer ---
         t4_start = self.get_clock().now().nanoseconds / 1e9
+        explorer_tracker = self._tracker
+        if self._no_detect_explore and explorer_tracker is not None:
+            self._logger.info("AgentNode: detection-aware exploration disabled (--no-detect-explore).")
+            explorer_tracker = None
         self._explorer = FrontierExplorer(
             node=self,
             done_callback=self._on_exploration_done,
+            tracker=explorer_tracker,
         )
         t4_end = self.get_clock().now().nanoseconds / 1e9
         self._logger.info(
@@ -188,10 +194,16 @@ def main():
         default=False,
         help="Disable image/depth subscribers (GIL probe); detector subprocess still runs.",
     )
+    parser.add_argument(
+        "--no-detect-explore",
+        action="store_true",
+        default=False,
+        help="Run detector/tracker but disable detection-aware exploration (A/B baseline).",
+    )
     args, _ = parser.parse_known_args()
 
     rclpy.init()
-    node = AgentNode(no_perception=args.no_perception, no_subscribers=args.no_subscribers)
+    node = AgentNode(no_perception=args.no_perception, no_subscribers=args.no_subscribers, no_detect_explore=args.no_detect_explore)
 
     executor = rclpy.executors.MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)
