@@ -2,6 +2,16 @@
 
 Historical performance snapshots. Append new entries on top; keep older ones for regression comparison.
 
+> **Note (2026-05-12):** The robot-sandbox scorer recalibrated par values / human baseline. New runs score slightly higher, especially on harder tiers. Results before 2026-05-12 are **not directly comparable** — the same raw metrics produce different scores and grades. For comparison, the recalibrated v2 scoring was applied to the derpbot-explorer-v2-imu-odom submission; those results are at `~/Projects/robot-sandbox/results/submissions/derpbot-explorer-v2-imu-odom/` and [on GitHub](https://github.com/thaije/robot-sandbox/tree/main/results/submissions/derpbot-explorer-v2-imu-odom). Summary of recalibrated v2 results (5 seeds × 3 runs each, tier means):
+>
+> | Tier | Avg Score | Avg Cov | Avg Detections | Avg Collisions |
+> |------|-----------|---------|-----------------|-----------------|
+> | easy | 54.7 | 64.1% | 2.5/6 | 0.8 |
+> | medium | 52.8 | 46.8% | 1.5/6 | 1.0 |
+> | hard | 57.7 | 44.1% | 0.8/6 | 0.0 |
+> | brutal | 62.2 | 50.9% | 0.5/6 | 0.9 |
+> | perception_stress | 45.6 | 56.1% | 0.6/6 | 11.4 |
+
 > **Note (2026-05-09):** The easy scenario timeout changed from **300 s to 900 s**. Previous easy-scenario benchmark runs (all entries below before the 2026-05-05 900s batch) used a 300 s time limit. Speed-category scores (`avg_speed_kmh`, speed grade) are not directly comparable between 300 s and 900 s runs because the speed par_value was calibrated for 300 s — 900 s runs structurally score lower on speed regardless of exploration quality. Coverage and detection metrics remain comparable if noting the longer time budget.
 
 ---
