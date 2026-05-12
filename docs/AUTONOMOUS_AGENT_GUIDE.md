@@ -221,6 +221,10 @@ Example: `easy_seed1_run1.json`, `brutal_seed3_run2.json`.
 
 Copy `results/submissions/example_benchmark_submission.yaml`, fill in your details, and place it alongside your results directory.
 
+**`sandbox_version`** must be the **latest release tag** of robot-sandbox (e.g. `v1.0.0`), not a branch name or commit hash. This ensures reproducibility — the tag pins the exact benchmark version used for your runs. Check available tags with `git tag --list`.
+
+**`code_url`** (optional but recommended) — link to the exact tag or commit of your agent code that produced the results (e.g. a GitHub release URL like `https://github.com/you/your-agent/releases/tag/v1.0`). This ensures anyone can reproduce or inspect the exact code that was tested.
+
 ### Validate before submitting
 
 ```bash
@@ -233,4 +237,4 @@ Checks: all expected files present, JSON schema valid, `overall_score` in [0, 10
 
 Open a PR adding your YAML + results directory to `results/submissions/`. Submissions that fail validation will not be merged.
 
-Accepted submissions appear on the **[leaderboard](leaderboard.html)**. Ranking is by `found_ratio` (mission targets found / total mission targets); other per-run metrics are available on hover. After adding a submission, regenerate with `python3.12 scripts/generate_leaderboard.py`.
+Accepted submissions appear on the **[leaderboard](leaderboard.html)**. Ranking is by `found_ratio` (mission targets found / total mission targets); click a score cell to expand per-metric details. After adding a submission, regenerate with `python3.12 scripts/generate_leaderboard.py`.
