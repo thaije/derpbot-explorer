@@ -929,9 +929,13 @@ class FrontierExplorer:
             ))
 
         if frontiers:
+            det_info = ", ".join(
+                f"{f.class_name}@({f.world_x:.1f},{f.world_y:.1f})"
+                for f in frontiers
+            )
             self._logger.info(
-                f"FrontierExplorer: {len(frontiers)} pending detection candidates "
-                f"({len(candidates)} total, {len(self._candidate_visited)} visited)"
+                f"FrontierExplorer: {len(frontiers)} detection candidates "
+                f"({len(candidates)} total, {len(self._candidate_visited)} visited): [{det_info}]"
             )
         return frontiers
 
@@ -1004,12 +1008,18 @@ class FrontierExplorer:
             f"({c.centroid_world[0]:.1f},{c.centroid_world[1]:.1f}) sz={c.size} sc={s:.0f}"
             for s, c in scored[:5]
         )
+        target_type = "GEOGRAPHIC"
+        if isinstance(best_target, DetectionFrontier):
+            target_type = f"DETECTION({best_target.class_name}@{best_target.world_x:.1f},{best_target.world_y:.1f})"
+        elif best_target is None:
+            target_type = "NONE"
         cand_info = ""
         if detection_frontiers:
-            cand_info = f", candidates={len(detection_frontiers)}"
+            cand_info = f", {len(detection_frontiers)} candidates=[{', '.join(f'{df.class_name}@({df.world_x:.1f},{df.world_y:.1f})' for df in detection_frontiers)}]"
         self._logger.info(
             f"FrontierExplorer: {len(clusters)} clusters "
-            f"({n_bl} BL, {len(scored)} eligible), max_sz={max_size if clusters else 0}, W_DIST={w_dist:.2f}.{cand_info} Top5: [{top5}]"
+            f"({n_bl} BL, {len(scored)} eligible), max_sz={max_size if clusters else 0}, W_DIST={w_dist:.2f}.{cand_info} "
+            f"SELECTED={target_type} Top5: [{top5}]"
         )
 
         return best_target

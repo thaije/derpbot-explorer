@@ -370,6 +370,11 @@ class Tracker:
                             "first_sim_t": sim_t,
                             "sighting_count": item["sighting_count"],
                         }
+                        self._logger.info(
+                            f"Tracker: NEW candidate {tid} {item['class_name']} "
+                            f"at ({item['world_x']:.1f},{item['world_y']:.1f}) "
+                            f"sightings={item['sighting_count']}"
+                        )
                     else:
                         existing["world_x"] = item["world_x"]
                         existing["world_y"] = item["world_y"]
@@ -409,7 +414,11 @@ class Tracker:
 
             # Remove from pending candidates if confirmed
             with self._pending_candidates_lock:
-                self._pending_candidates.pop(item["track_id"], None)
+                removed = self._pending_candidates.pop(item["track_id"], None)
+                if removed is not None:
+                    self._logger.info(
+                        f"Tracker: {item['track_id']} CONFIRMED (was candidate, now published)"
+                    )
 
             with self._published_lock:
                 self._published_objects.append(item)

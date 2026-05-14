@@ -40,6 +40,10 @@ ros2 launch $(pwd)/launch/navigation_launch.py \
 
 # Terminal 3 — Agent
 cd agent && python3 agent_node.py
+# Available flags:
+#   --no-perception       disable OWLv2 detector/tracker (nav-only, found_ratio=0)
+#   --no-subscribers     disable image/depth subscribers (GIL probe)
+#   --no-detect-explore  run detector+tracker but skip candidate detours (A/B baseline)
 
 # Nav-only benchmarking (skips OWLv2 detector / tracker):
 cd agent && python3 agent_node.py --no-perception
