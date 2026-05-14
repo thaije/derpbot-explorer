@@ -58,6 +58,8 @@ ros2 launch launch/derpbot_autonomy.launch.py
 
 ```bash
 # Terminal 4 — RViz (optional, for visualisation)
+#   If using start_stack.sh (discovery server), source ros_env.sh first.
+#   If running manually, skip it — the env vars point at a non-existent server.
 rviz2 -d config/derpbot_rviz.rviz
 ```
 
