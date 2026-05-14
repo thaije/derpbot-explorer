@@ -484,8 +484,13 @@ class Detector:
                 dets = result.get("detections", [])
                 inference_count += 1
                 if inference_count % 5 == 0:
+                    box_summary = ""
+                    if dets:
+                        box_summary = " [" + ", ".join(
+                            f"{d_['class_name']}({d_['confidence']:.2f})" for d_ in dets
+                        ) + "]"
                     self._logger.info(
-                        f"Detector: inference #{inference_count}, {len(dets)} boxes"
+                        f"Detector: inference #{inference_count}, {len(dets)} boxes{box_summary}"
                     )
                 for d in dets:
                     det = DetectionResult(
