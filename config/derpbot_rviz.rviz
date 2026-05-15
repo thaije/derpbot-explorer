@@ -10,7 +10,7 @@ Panels:
         - /RobotModel1
         - /TF1
       Splitter Ratio: 0.5
-    Tree Height: 70
+    Tree Height: 373
   - Class: rviz_common/Selection
     Name: Selection
   - Class: rviz_common/Tool Properties
@@ -142,7 +142,50 @@ Visualization Manager:
         Expand Joint Details: false
         Expand Link Details: false
         Expand Tree: false
-        Link Tree Style: ""
+        Link Tree Style: Links in Alphabetic Order
+        base_footprint:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        base_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        camera_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        caster_wheel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        imu_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        left_wheel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        lidar_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        rear_caster_wheel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        right_wheel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
       Mass Properties:
         Inertia: false
         Mass: false
@@ -321,12 +364,12 @@ Visualization Manager:
 Window Geometry:
   Displays:
     collapsed: false
-  Height: 1136
+  Height: 629
   Hide Left Dock: false
   Hide Right Dock: false
   Navigation2:
     collapsed: false
-  QMainWindow State: 000000ff00000000fd0000000100000000000001850000041afc0200000006fb00000014005200470042002000430061006d006500720061010000003b0000010f0000001600fffffffb000000100044006900730070006c0061007900730000000057000000c7000000c700fffffffb0000001200530065006c0065006300740069006f006e000000005c000000730000005c00fffffffb0000001e0054006f006f006c002000500072006f00700065007200740069006500730000000060000000820000005c00fffffffb0000000a00560069006500770073000000006500000104000000a000fffffffb00000016004e0061007600690067006100740069006f006e0032010000015000000305000001c700ffffff000005b40000041a00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd0000000200000000000001850000021ffc0200000005fb00000014005200470042002000430061006d006500720061010000003b0000021f0000001600fffffffb000000100044006900730070006c0061007900730000000057000000c7000000c700fffffffb0000001200530065006c0065006300740069006f006e000000005c000000730000005c00fffffffb0000001e0054006f006f006c002000500072006f00700065007200740069006500730000000060000000820000005c00fffffffb0000000a00560069006500770073000000006500000104000000a000ffffff00000001000001850000021ffc0200000001fb00000016004e0061007600690067006100740069006f006e0032010000003b0000021f000001b600ffffff000004af0000021f00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   RGB Camera:
     collapsed: false
   Selection:
@@ -335,6 +378,6 @@ Window Geometry:
     collapsed: false
   Views:
     collapsed: false
-  Width: 1855
-  X: 65
-  Y: 32
+  Width: 1989
+  X: 31
+  Y: 38

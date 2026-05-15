@@ -32,6 +32,7 @@ for _round in 1 2; do
     pkill -9 -f "smoother_server" 2>/dev/null || true
     pkill -9 -f "map_publisher" 2>/dev/null || true
     pkill -9 -f "agent_node" 2>/dev/null || true
+    pkill -9 -f "ekf_node" 2>/dev/null || true
     pkill -9 -f "robot_state_publisher" 2>/dev/null || true
     pkill -9 -f "fastdds discovery" 2>/dev/null || true
     sleep 1
