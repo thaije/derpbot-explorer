@@ -67,7 +67,7 @@ controller_server:
       # < 22.5° so brief heading mismatches don't bounce control back.
       plugin: "nav2_rotation_shim_controller::RotationShimController"
       primary_controller: "nav2_mppi_controller::MPPIController"
-      angular_dist_threshold: 0.35         # 20° — engage aggressively (was 45°, left MPPI to do too many slow turns)
+      angular_dist_threshold: 0.20         # 11.5° — lower threshold reduces RotationShim↔MPPI oscillation at doorways
       angular_disengage_threshold: 0.15    # 8.6° — tight hysteresis, disengage only when close to aligned
       forward_sampling_distance: 0.5
       rotate_to_heading_angular_vel: 1.8   # was 1.5, closer to wz_max=2.0
@@ -77,18 +77,21 @@ controller_server:
       # --- MPPI (primary controller) params below ---
       time_steps: 40
       model_dt: 0.05
-      batch_size: 500
+      # Task 4 — more samples for better trajectory coverage in narrow passages
+      # and pure-rotation candidate discovery. Was 500 (too sparse for 20 Hz).
+      batch_size: 1200
       ax_max: 3.0
       ax_min: -3.0
       ay_max: 3.0
       az_max: 3.5
-      # Task 4 — tighter sampling stds for precision in narrow passages.
-      # Was 0.2/0.4. Combined with consider_footprint:true and the steeper
-      # local inflation, MPPI now needs precision over exploration in the
-      # rollout cloud.
-      vx_std: 0.15
+      # wz_std=0.6 (~30% of wz_max=2.0) for adequate angular exploration in turns.
+      # vx_std=0.20 for slightly more forward-velocity spread.
+      # batch_size=1200: denser sampling finds pure-rotation trajectories.
+      # Previously 0.15/0.3/500 — too conservative, caused shallow turns and
+      # doorway oscillation (MPPI couldn't sample sharp enough curves).
+      vx_std: 0.20
       vy_std: 0.0
-      wz_std: 0.3
+      wz_std: 0.6
       vx_max: 0.5
       vx_min: -0.35
       vy_max: 0.0      # differential drive: no strafe
@@ -147,7 +150,7 @@ controller_server:
         enabled: true
         cost_power: 1
         cost_weight: 14.0
-        max_path_occupancy_ratio: 0.05
+        max_path_occupancy_ratio: 0.20
         trajectory_point_step: 4
         threshold_to_consider: 0.5
         offset_from_furthest: 20
@@ -156,12 +159,12 @@ controller_server:
         enabled: true
         cost_power: 1
         cost_weight: 5.0
-        offset_from_furthest: 5
+        offset_from_furthest: 8
         threshold_to_consider: 1.4
       PathAngleCritic:
         enabled: true
         cost_power: 1
-        cost_weight: 2.0
+        cost_weight: 5.0
         offset_from_furthest: 4
         threshold_to_consider: 0.5
         max_angle_to_furthest: 1.0
