@@ -27,8 +27,12 @@ slam_toolbox:
     map_update_interval: 5.0        # Save map to file every 5 s (optional)
     resolution: 0.05                # 5 cm grid resolution
     max_laser_range: 12.0           # DerpBot LiDAR max range
-    minimum_travel_distance: 0.05    # Lower threshold to build first map faster (was 0.2)
-    minimum_travel_heading: 0.02    # Lower threshold (was 0.05, ~3°)
+    minimum_travel_distance: 0.2     # Process a new scan node only after 0.2m of travel (default).
+                                      # 0.05 caused constant scan processing → 10° yaw jitter in
+                                      # feature-poor areas as Ceres optimizer oscillated between
+                                      # nearly-equivalent yaw solutions at 60 Hz.
+    minimum_travel_heading: 0.05     # ~3° heading change before processing a new scan (default).
+                                      # 0.02 caused same jitter as above.
 
     # Scan matching — raise minimum_response to reject weak/ambiguous matches
     # (reduces map smearing near featureless walls/furniture)
