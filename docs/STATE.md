@@ -61,8 +61,9 @@ agent/
   agent_node.py        INIT → EXPLORE → DONE, MultiThreadedExecutor
 
 config/
-  slam_toolbox_params.yaml   base_frame: base_footprint, link_match_minimum_response_fine: 0.35
+  slam_toolbox_params.yaml   minimum_travel_distance: 0.2, minimum_travel_heading: 0.05, loop_match_minimum_response_fine: 0.6
   derpbot_nav2_params.yaml   robot_radius: 0.22, global inflation=0.55/csf=3.0, local=0.35/csf=5.0
+  robot-sandbox/config/robots/ekf.yaml   odom0_differential: true, sensor covariance overrides
 ```
 
 TF chain: `map → odom → base_footprint → base_link → camera_link / lidar_link`
@@ -72,6 +73,10 @@ TF chain: `map → odom → base_footprint → base_link → camera_link / lidar
 ## Invariants (will bite again — keep in context)
 
 Anything in committed config/code is omitted. Only things a fresh agent would rediscover the hard way.
+
+### EKF / odometry
+- **Gazebo diff-drive plugin quantizes yaw to ~3 distinct quaternions.** Raw `/odom_raw` orientation snaps between 2–3 values even when stationary (yaw wrapping at ±π). The EKF must use `odom0_differential: true` to consume velocity deltas instead of absolute pose, eliminating quantization artefacts.
+- **Gazebo sensors publish zero covariances.** `/odom_raw` and `/imu` both report all-zeros covariance matrices. Without overrides (`odom0_pose_covariance`, `imu0_orientation_covariance`), `robot_localization` treats inputs as infinitely certain → position covariance diverges to 10⁸–10¹⁰ and yaw oscillates between competing "perfect" sources.
 
 ### ROS 2 / Nav2
 - **`/map` subscribers must use `TRANSIENT_LOCAL` QoS.** slam_toolbox publishes with TRANSIENT_LOCAL; a VOLATILE subscriber misses the held message and waits forever.
