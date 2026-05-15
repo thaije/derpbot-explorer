@@ -54,10 +54,10 @@ Nav2 stack — launch/navigation_launch.py (trimmed, no docking/route server)
 
 agent/
   mission_client.py    HTTP → targets[]  (dicts like {"type": "fire_extinguisher"})
-  frontier_explorer.py BFS /map frontiers → NavigateToPose, stuck detection, patrol mode
+  frontier_explorer.py BFS /map frontiers → NavigateToPose, stuck detection, patrol mode, detection preemption
   detector.py          OWLv2 in subprocess (spawn), 5 Hz, conf=0.15, 90 s watchdog
   depth_projector.py   bbox → depth → world (x, y) via TF2
-  tracker.py           multi-sighting fusion (≥2, >0.2 m apart), MATCH_RADIUS=2.0 m (agent-internal merge radius; scorer match_threshold=1.5 m — distinct)
+  tracker.py           multi-sighting fusion (≥2, >0.2 m apart), MATCH_RADIUS=2.0 m, CANDIDATE_TIMEOUT_S=180
   agent_node.py        INIT → EXPLORE → DONE, MultiThreadedExecutor
 
 config/
@@ -100,8 +100,10 @@ Anything in committed config/code is omitted. Only things a fresh agent would re
 - **LIDAR coverage ≠ camera coverage.** LIDAR (10–20 m) maps remote areas before the camera visits them. Patrol mode navigates to physically unvisited free cells after frontier exhaustion.
 
 ### Detection-aware exploration (#8)
-- **Pending candidates expire after 60 sim-seconds.** `CANDIDATE_TIMEOUT_S=60` in tracker.py — candidates without a 2nd sighting are pruned.
-- **Each candidate is visited once.** `_candidate_visited` set in frontier_explorer.py prevents re-detouring to the same track_id regardless of outcome.
+- **Interrupt-and-detour:** geographic goals are preemptable — if a detection candidate appears mid-navigation, the current Nav2 goal is cancelled and the explorer detours toward the candidate. Detection detours are NOT preemptable (commit to avoid oscillation).
+- **Pending candidates expire after 180 sim-seconds.** `CANDIDATE_TIMEOUT_S=180` in tracker.py — generous enough to survive typical navigation durations (20–100 sim-s).
+- **Candidates retried on failure.** `_candidate_visited` is only set on successful detour; failed detours leave the candidate eligible for retry. Blacklist radius (0.5m) prevents infinite loops for unreachable areas.
+- **Preemption polls every ~5 sim-seconds** during geographic goals via `_send_goal_and_wait(preemptable=True)`.
 - **Candidate detours always beat geographic frontiers.** Score override = `max(best_frontier_score, 0) + 1.0`. Use `--no-detect-explore` flag for A/B baseline (detector runs but explorer ignores candidates).
 
 ---

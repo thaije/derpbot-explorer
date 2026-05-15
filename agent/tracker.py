@@ -47,7 +47,7 @@ MIN_POSE_DISTANCE = 0.2     # robot must move ≥0.2m between diverse sightings
 PUBLISH_RATE_HZ = 5.0       # rate to check for newly confirmed objects
 REPUBLISH_SHIFT_M = 0.5     # republish if centroid moves more than this
 
-CANDIDATE_TIMEOUT_S = 60.0  # sim-seconds — discard pending candidate without 2nd sighting
+CANDIDATE_TIMEOUT_S = 180.0  # sim-seconds — discard pending candidate without 2nd sighting
 CANDIDATE_PUBLISH_HZ = 2.0  # rate to send pending candidates to explorer
 
 

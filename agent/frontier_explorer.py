@@ -732,9 +732,26 @@ class FrontierExplorer:
                 )
 
             self._tl("nav2_send", _goal_num)
+            # Geographic goals are preemptable: if a detection candidate
+            # appears mid-navigation, cancel and detour toward it.
+            # Detection detours are NOT preemptable — we commit to avoid oscillation.
             result, _t_accept_lat, _t_first_move, _t_nav = self._send_goal_and_wait(
-                goal_x, goal_y, current_map.header.frame_id, _goal_num
+                goal_x, goal_y, current_map.header.frame_id, _goal_num,
+                preemptable=(not is_detection and not is_patrol),
             )
+
+            # Handle preemption: geographic goal cancelled because a detection
+            # candidate appeared. Don't count as a goal; loop back to re-select.
+            if result is self.PREEMPTED:
+                self._logger.info(
+                    f"FrontierExplorer: goal#{_goal_num} PREEMPTED by detection candidate"
+                    f" — re-evaluating frontiers."
+                )
+                # Don't increment goal_num or add to stats — preemption is not a goal outcome.
+                _goal_num -= 1  # undo the increment above
+                _t_last_goal_end = self._sim_time()
+                self._sim_sleep(0.5)  # brief pause for Nav2 cleanup after cancel
+                continue
 
             _t_after_nav = self._sim_time()
             self._visited_goals.append((cx, cy))
@@ -773,11 +790,13 @@ class FrontierExplorer:
                     f" accept={_accept_str} first_move={_move_str} nav={_t_nav:.1f}s — blacklisting."
                 )
                 self._blacklist.append((cx, cy))
-                # Detection frontier: mark as visited (don't retry failed candidate)
+                # Detection frontier: only mark visited on SUCCESS, not on failure.
+                # On Nav2 failure/abort the candidate may be in an unreachable area —
+                # leave it eligible for retry. The blacklist radius (0.5m) prevents
+                # infinite loops for truly unreachable locations.
                 if is_detection:
-                    self._candidate_visited.add(best.track_id)
                     self._logger.info(
-                        f"FrontierExplorer: detection candidate {best.track_id} failed, will not retry."
+                        f"FrontierExplorer: detection candidate {best.track_id} detour failed — NOT marking visited (eligible for retry)."
                     )
                 # Back up + clear costmap after failure to prevent "Start occupied"
                 # cascade: robot may be inside an inflation zone after a stuck/abort;
@@ -1299,15 +1318,26 @@ class FrontierExplorer:
         ):
             time.sleep(0.1)
 
+    # Sentinel returned by _send_goal_and_wait when a geographic goal is
+    # preempted by a detection candidate during navigation.
+    PREEMPTED = "preempted"
+
     def _send_goal_and_wait(
-        self, goal_x: float, goal_y: float, frame_id: str, goal_num: int = 0
-    ) -> tuple[Optional[bool], float, float, float]:
+        self, goal_x: float, goal_y: float, frame_id: str, goal_num: int = 0,
+        preemptable: bool = False,
+    ) -> tuple[Optional[bool] | str, float, float, float]:
         """
         Send a NavigateToPose goal and block until it succeeds, fails, or the
         robot gets stuck.
 
+        If preemptable=True (geographic goal), polls the tracker for pending
+        detection candidates every ~5 sim-seconds. If a new candidate appears,
+        cancels Nav2 and returns (PREEMPTED, ...). Detection detours use
+        preemptable=False — once started, we commit.
+
         Returns (result, accept_latency_s, time_to_first_move_s, nav_time_s):
-        - result: True=success, False=fail/stuck, None=rejected/timed-out
+        - result: True=success, False=fail/stuck, None=rejected/timed-out,
+                  PREEMPTED=cancelled because a detection candidate appeared
         - accept_latency_s: sim-seconds from send to accepted (NaN if not accepted)
         - time_to_first_move_s: sim-seconds from accepted to first 0.15 m displacement
                                 (NaN if the robot never moved)
@@ -1373,12 +1403,53 @@ class FrontierExplorer:
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self._goal_result_callback)
 
-        _first_move_t = _nan  # sim-seconds from accept to first 0.15 m displacement
+        _first_move_t = _nan  # sim-seconds from accepted to first 0.15 m displacement
         _sub = "waiting"  # nav sub-phase for timeline profiling
         _wall_accept = time.time()  # wall-clock escape: catch dead sim (clock frozen)
+        _last_preempt_check = _t_accept  # last sim-time we checked for detection candidates
 
         while not self._goal_result_event.is_set():
             time.sleep(0.2)
+
+            # Detection preemption: for geographic goals (preemptable=True),
+            # poll tracker for pending candidates every ~5 sim-seconds. If a
+            # new candidate appears, cancel Nav2 and return PREEMPTED so the
+            # explore loop can detour toward it. Detection detours are NOT
+            # preemptable — we commit once started to avoid oscillation.
+            if preemptable and self._tracker is not None:
+                _now = self._sim_time()
+                if _now - _last_preempt_check >= 5.0:
+                    _last_preempt_check = _now
+                    with self._odom_lock:
+                        _rx, _ry = self._robot_x, self._robot_y
+                    candidates = self._tracker.get_pending_candidates(_now)
+                    for cand in candidates:
+                        if cand["track_id"] in self._candidate_visited:
+                            continue
+                        _wx, _wy = cand["world_x"], cand["world_y"]
+                        if self._is_blacklisted(_wx, _wy):
+                            continue
+                        if math.hypot(_wx - _rx, _wy - _ry) < 1.0:
+                            continue
+                        # New candidate found — cancel current geographic goal
+                        self._logger.info(
+                            f"FrontierExplorer: PREEMPT goal#{goal_num} by detection candidate "
+                            f"{cand['class_name']} ({_wx:.1f},{_wy:.1f}) "
+                            f"[track {cand['track_id']}]"
+                        )
+                        self._tl("goal_preempted", goal_num, f"by {cand['class_name']} track {cand['track_id']}")
+                        cancel_future = goal_handle.cancel_goal_async()
+                        cancel_deadline = time.time() + 5.0
+                        while not cancel_future.done() and time.time() < cancel_deadline:
+                            time.sleep(0.1)
+                        # Wait for result event so we don't leave a dangling callback
+                        self._goal_result_event.wait(timeout=10.0)
+                        return (
+                            self.PREEMPTED,
+                            accept_latency,
+                            _first_move_t,
+                            self._sim_time() - _t_accept,
+                        )
 
             # Stuck detection — use sim clock so RTF oscillations don't cause
             # false positives (wall-clock 30 s at RTF=0.1 = only 3 sim seconds).
