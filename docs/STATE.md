@@ -106,10 +106,16 @@ Anything in committed config/code is omitted. Only things a fresh agent would re
 
 ### Detection-aware exploration (#8)
 - **Interrupt-and-detour:** geographic goals are preemptable — if a detection candidate appears mid-navigation, the current Nav2 goal is cancelled and the explorer detours toward the candidate. Detection detours are NOT preemptable (commit to avoid oscillation).
+- **Confirmed detections are skipped.** Before committing to a detour and during navigation, the tracker is re-queried — if the candidate has been confirmed, the detour is cancelled (object already found, no need to visit).
 - **Pending candidates expire after 180 sim-seconds.** `CANDIDATE_TIMEOUT_S=180` in tracker.py — generous enough to survive typical navigation durations (20–100 sim-s).
 - **Candidates retried on failure.** `_candidate_visited` is only set on successful detour; failed detours leave the candidate eligible for retry. Blacklist radius (0.5m) prevents infinite loops for unreachable areas.
 - **Preemption polls every ~5 sim-seconds** during geographic goals via `_send_goal_and_wait(preemptable=True)`.
 - **Candidate detours always beat geographic frontiers.** Score override = `max(best_frontier_score, 0) + 1.0`. Use `--no-detect-explore` flag for A/B baseline (detector runs but explorer ignores candidates).
+
+### Bumper-based stuck detection
+- **Bumper contact on `/derpbot_0/bumper_contact`** detects physical collisions including low obstacles invisible to LiDAR (e.g. chair wheels). Ground-plane contacts are filtered out by entity name and contact normal direction (`|z| ≥ 0.9`).
+- **Bumper stuck timeout is 3 sim-seconds** (vs 30s for regular stuck detection). If the bumper fires and the robot hasn't moved, it's likely wedged on a low obstacle.
+- **Spin recovery speed increased:** `max_rotational_vel=2.0`, `min_rotational_vel=1.0` (was 1.0/0.4). Matches the RotationShim and velocity smoother max.
 
 ---
 

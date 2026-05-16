@@ -34,6 +34,7 @@ from nav_msgs.msg import OccupancyGrid, Odometry
 from geometry_msgs.msg import Point, Twist
 from nav2_msgs.action import BackUp, NavigateToPose
 from nav2_msgs.srv import ClearEntireCostmap
+from ros_gz_interfaces.msg import Contacts
 from rclpy.action import ActionClient
 from rclpy.node import Node
 
@@ -65,6 +66,8 @@ STUCK_DIST_THRESHOLD = 0.10  # metres — robot must move this far
 STUCK_TIME_THRESHOLD = (
     30.0  # seconds (Nav2 rotates first; give it time to start translating)
 )
+BUMPER_STUCK_TIME_THRESHOLD = 3.0  # seconds — fast stuck trigger on bumper contact
+GROUND_PLANE_NORMAL_Z = 0.9  # contacts with |normal.z| >= this are ground plane
 
 # Blacklist radius: frontiers within this distance of a failed goal are blacklisted
 BLACKLIST_RADIUS = 0.5  # metres
@@ -313,6 +316,12 @@ class FrontierExplorer:
         self._last_moved_y: float = 0.0
         self._last_move_time: float = 0.0  # set to sim time when each goal starts
 
+        # Bumper contact: set when a non-ground-plane collision is detected.
+        # Used to trigger faster stuck detection when the robot physically
+        # contacts an obstacle the LiDAR can't see (e.g. low chair wheels).
+        self._bumper_contact: bool = False
+        self._bumper_lock = threading.Lock()
+
         self._blacklist: list[tuple[float, float]] = []  # failed goal centroids (permanent)
         self._success_exclusion: list[tuple[float, float, float]] = []  # (x, y, expire_t)
         self._visited_goals: list[
@@ -393,6 +402,16 @@ class FrontierExplorer:
 
         # Cmd_vel publisher for spinning during startup (accelerates slam_toolbox mapping)
         self._cmd_vel_pub = node.create_publisher(Twist, "/derpbot_0/cmd_vel", 10)
+
+        # Bumper contact sensor: detects physical collisions with obstacles
+        # (including low obstacles the LiDAR misses, e.g. chair wheels).
+        node.create_subscription(
+            Contacts,
+            "/derpbot_0/bumper_contact",
+            self._bumper_cb,
+            rclpy.qos.QoSProfile(depth=10),
+            callback_group=reentrant,
+        )
 
     # ------------------------------------------------------------------
     # Callbacks
@@ -506,6 +525,33 @@ class FrontierExplorer:
             self._robot_vx = vx
             self._robot_wz = wz
             self._odom_initialized = True
+
+    def _bumper_cb(self, msg: Contacts) -> None:
+        """Process bumper contact events. Set flag when a non-ground-plane
+        collision is detected, enabling faster stuck detection for obstacles
+        the LiDAR can't see (e.g. low chair wheels)."""
+        for contact in msg.contacts:
+            collision1_name = contact.collision1.name.lower()
+            collision2_name = contact.collision2.name.lower()
+            # Filter ground-plane contacts: entity names containing "ground" or "plane"
+            # are the floor. The robot's own links contain "derpbot" or "caster".
+            is_ground = (
+                "ground" in collision1_name or "plane" in collision1_name
+                or "ground" in collision2_name or "plane" in collision2_name
+            )
+            # Also filter by contact normal: ground contacts have nearly vertical normals
+            is_vertical_normal = False
+            if contact.normals:
+                for normal in contact.normals:
+                    if abs(normal.z) >= GROUND_PLANE_NORMAL_Z:
+                        is_vertical_normal = True
+                        break
+            if is_ground or is_vertical_normal:
+                continue
+            # Non-ground contact detected — robot is touching something
+            with self._bumper_lock:
+                self._bumper_contact = True
+            return  # one valid contact is enough to set the flag
 
     def _tl(self, phase: str, goal_num: int = 0, notes: str = "") -> None:
         """Append a timeline entry and switch the current phase bucket."""
@@ -1426,6 +1472,10 @@ class FrontierExplorer:
         self._goal_handle = goal_handle
         self._active_goal_handle = goal_handle  # Keep for compatibility
         self._last_move_time = _t_accept
+        # Reset bumper flag for new goal — stale contact from previous goal
+        # shouldn't trigger stuck detection in the next one.
+        with self._bumper_lock:
+            self._bumper_contact = False
 
         with self._odom_lock:
             self._last_moved_x = self._robot_x
@@ -1533,21 +1583,33 @@ class FrontierExplorer:
                 self._last_moved_x = rx
                 self._last_moved_y = ry
                 self._last_move_time = self._sim_time()
-            elif self._sim_time() - self._last_move_time > STUCK_TIME_THRESHOLD:
-                self._logger.warning(
-                    "FrontierExplorer: stuck detected — cancelling goal."
+                # Moving — clear bumper contact flag (obstacle was cleared or transient)
+                with self._bumper_lock:
+                    self._bumper_contact = False
+            else:
+                # Not moving — check stuck threshold based on bumper state
+                with self._bumper_lock:
+                    bumper_hit = self._bumper_contact
+                stuck_threshold = (
+                    BUMPER_STUCK_TIME_THRESHOLD if bumper_hit
+                    else STUCK_TIME_THRESHOLD
                 )
-                self._tl("goal_stuck", goal_num)
-                cancel_future = goal_handle.cancel_goal_async()
-                cancel_deadline = time.time() + 5.0
-                while not cancel_future.done() and time.time() < cancel_deadline:
-                    time.sleep(0.1)
-                return (
-                    False,
-                    accept_latency,
-                    _first_move_t,
-                    self._sim_time() - _t_accept,
-                )
+                if self._sim_time() - self._last_move_time > stuck_threshold:
+                    reason = "bumper contact" if bumper_hit else "no movement"
+                    self._logger.warning(
+                        f"FrontierExplorer: stuck detected ({reason}) — cancelling goal."
+                    )
+                    self._tl("goal_stuck", goal_num, reason)
+                    cancel_future = goal_handle.cancel_goal_async()
+                    cancel_deadline = time.time() + 5.0
+                    while not cancel_future.done() and time.time() < cancel_deadline:
+                        time.sleep(0.1)
+                    return (
+                        False,
+                        accept_latency,
+                        _first_move_t,
+                        self._sim_time() - _t_accept,
+                    )
 
             if not self._exploring:
                 cancel_future = goal_handle.cancel_goal_async()
