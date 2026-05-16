@@ -666,6 +666,16 @@ class FrontierExplorer:
             is_detection = isinstance(best, DetectionFrontier)
             is_patrol = False
             if is_detection:
+                # Re-validate: candidate may have been confirmed since
+                # _build_detection_frontiers ran (tracker worker runs async).
+                # Skip detour if already confirmed — object is already found.
+                if self._tracker and not self._tracker.is_still_pending(best.track_id):
+                    self._logger.info(
+                        f"FrontierExplorer: detection candidate {best.track_id} "
+                        f"already confirmed — skipping detour."
+                    )
+                    self._candidate_visited.add(best.track_id)
+                    continue
                 cx, cy = best.world_x, best.world_y
                 goal_x, goal_y = best.world_x, best.world_y
             elif best is not None:
@@ -734,10 +744,12 @@ class FrontierExplorer:
             self._tl("nav2_send", _goal_num)
             # Geographic goals are preemptable: if a detection candidate
             # appears mid-navigation, cancel and detour toward it.
-            # Detection detours are NOT preemptable — we commit to avoid oscillation.
+            # Detection detours are NOT preemptable — we commit to avoid oscillation,
+            # but cancel if the object gets confirmed en route.
             result, _t_accept_lat, _t_first_move, _t_nav = self._send_goal_and_wait(
                 goal_x, goal_y, current_map.header.frame_id, _goal_num,
                 preemptable=(not is_detection and not is_patrol),
+                detection_track_id=(best.track_id if is_detection else None),
             )
 
             # Handle preemption: geographic goal cancelled because a detection
@@ -749,6 +761,19 @@ class FrontierExplorer:
                 )
                 # Don't increment goal_num or add to stats — preemption is not a goal outcome.
                 _goal_num -= 1  # undo the increment above
+                _t_last_goal_end = self._sim_time()
+                self._sim_sleep(0.5)  # brief pause for Nav2 cleanup after cancel
+                continue
+
+            # Handle confirmed en route: detection detour cancelled because
+            # the object was already confirmed by the tracker — no need to visit.
+            if result is self.CONFIRMED_EN_ROUTE:
+                self._logger.info(
+                    f"FrontierExplorer: goal#{_goal_num} CANCELLED — detection "
+                    f"candidate {best.track_id} confirmed en route."
+                )
+                self._candidate_visited.add(best.track_id)
+                _goal_num -= 1  # not a real goal outcome
                 _t_last_goal_end = self._sim_time()
                 self._sim_sleep(0.5)  # brief pause for Nav2 cleanup after cancel
                 continue
@@ -1318,13 +1343,14 @@ class FrontierExplorer:
         ):
             time.sleep(0.1)
 
-    # Sentinel returned by _send_goal_and_wait when a geographic goal is
-    # preempted by a detection candidate during navigation.
-    PREEMPTED = "preempted"
+    # Sentinels returned by _send_goal_and_wait
+    PREEMPTED = "preempted"          # geographic goal cancelled for detection candidate
+    CONFIRMED_EN_ROUTE = "confirmed" # detection detour cancelled: object already confirmed
 
     def _send_goal_and_wait(
         self, goal_x: float, goal_y: float, frame_id: str, goal_num: int = 0,
         preemptable: bool = False,
+        detection_track_id: Optional[str] = None,
     ) -> tuple[Optional[bool] | str, float, float, float]:
         """
         Send a NavigateToPose goal and block until it succeeds, fails, or the
@@ -1333,11 +1359,18 @@ class FrontierExplorer:
         If preemptable=True (geographic goal), polls the tracker for pending
         detection candidates every ~5 sim-seconds. If a new candidate appears,
         cancels Nav2 and returns (PREEMPTED, ...). Detection detours use
-        preemptable=False — once started, we commit.
+        preemptable=False — once started, we commit unless the object gets
+        confirmed mid-navigation, in which case we cancel and return
+        CONFIRMED_EN_ROUTE.
+
+        If detection_track_id is set, polls the tracker to check whether the
+        object has been confirmed during navigation. Stops early if so — no
+        need to visit an already-confirmed object.
 
         Returns (result, accept_latency_s, time_to_first_move_s, nav_time_s):
         - result: True=success, False=fail/stuck, None=rejected/timed-out,
-                  PREEMPTED=cancelled because a detection candidate appeared
+                  PREEMPTED=cancelled because a detection candidate appeared,
+                  CONFIRMED_EN_ROUTE=detection detour cancelled: object confirmed en route
         - accept_latency_s: sim-seconds from send to accepted (NaN if not accepted)
         - time_to_first_move_s: sim-seconds from accepted to first 0.15 m displacement
                                 (NaN if the robot never moved)
@@ -1450,6 +1483,28 @@ class FrontierExplorer:
                             _first_move_t,
                             self._sim_time() - _t_accept,
                         )
+
+            # Detection detour: check if the object has been confirmed while
+            # navigating toward it. If so, cancel — no need to visit an
+            # already-confirmed object.
+            if detection_track_id and self._tracker is not None:
+                if not self._tracker.is_still_pending(detection_track_id):
+                    self._logger.info(
+                        f"FrontierExplorer: detection candidate {detection_track_id} "
+                        f"confirmed en route — cancelling detour."
+                    )
+                    self._tl("detection_confirmed_en_route", goal_num)
+                    cancel_future = goal_handle.cancel_goal_async()
+                    cancel_deadline = time.time() + 5.0
+                    while not cancel_future.done() and time.time() < cancel_deadline:
+                        time.sleep(0.1)
+                    self._goal_result_event.wait(timeout=10.0)
+                    return (
+                        self.CONFIRMED_EN_ROUTE,
+                        accept_latency,
+                        _first_move_t,
+                        self._sim_time() - _t_accept,
+                    )
 
             # Stuck detection — use sim clock so RTF oscillations don't cause
             # false positives (wall-clock 30 s at RTF=0.1 = only 3 sim seconds).

@@ -478,6 +478,11 @@ class Tracker:
                 for tid, c in self._pending_candidates.items()
             ]
 
+    def is_still_pending(self, track_id: str) -> bool:
+        """Check whether a track_id is still a pending (unconfirmed) candidate."""
+        with self._pending_candidates_lock:
+            return track_id in self._pending_candidates
+
     def stop(self) -> None:
         self._running = False
         try:
