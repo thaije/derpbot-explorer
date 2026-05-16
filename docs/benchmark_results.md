@@ -16,6 +16,35 @@ Historical performance snapshots. Append new entries on top; keep older ones for
 
 ---
 
+## 2026-05-16 — Bumper sensor + detection skip + spin speedup (seed=1, easy, #8)
+
+First SUCCESS completion. Bumper-based stuck detection (3s threshold on physical contact), confirmed-detection skip (pre-commit + en-route), Spin recovery speed doubled (max 1.0→2.0 rad/s, min 0.4→1.0 rad/s).
+
+| Metric | Value |
+|---|---|
+| **Status** | **SUCCESS** |
+| **Overall score / grade** | **74.9 B** |
+| **Seed** | 1 |
+| **Elapsed time** | 390.1 s (of 900 s) |
+| **Found ratio** | **1.0 (6/6)** — FE#2 @ 32.9s, FA#1 @ 39.6s, FE#3 @ 130.8s, FA#2 @ 132.7s, Person @ 136.0s, FE#1 @ 200.7s |
+| **Coverage** | 55.5% |
+| **Collisions** | 0 |
+| **Near-misses** | 0 |
+| **False positives** | 5 |
+| **Precision** | 0.5455 |
+| **Mean loc error** | 0.45 m |
+| **Avg speed** | 0.291 km/h |
+| **Meters traveled** | 31.5 m |
+| **Speed / Accuracy / Safety / Efficiency / Effectiveness** | 30.0 F / 81.8 B / 100.0 S / 66.7 C / 84.4 B |
+
+v2 baseline for comparison (5 seeds × 3 runs): mean 54.7 D, 64.1% cov, 2.5/6 found, 0.8 coll. Task 5 initial (3 seeds): mean 52.1 D, 66.5% cov, 2.3/6 found, 0.3 coll.
+
+**Assessment:** Single run, high variance — cannot conclude yet. But 6/6 detections is a clear signal that detection-aware exploration is working. 5 false positives remain a concern (precision 0.55). Coverage lower than baseline (55.5% vs 64.1%) — detection detours may substitute breadth for targeted visits. Need multi-seed A/B comparison.
+
+Results: `robot-sandbox/results/office_easy_001_20260516T140452.json`
+
+---
+
 ## 2026-05-12 — Task 5 initial test: detection-aware exploration (seeds 1–3, easy, full perception #8)
 
 First test of detection-aware exploration (commit `beeebf0`). Pending candidates (1-sighting objects) are injected as high-priority pseudo-frontiers, causing the robot to detour toward partially-detected objects for re-detection. Compared against recalibrated v2 baseline (5 seeds × 3 runs, 15 runs total).
