@@ -16,30 +16,12 @@ Current state lives in [`STATE.md`](STATE.md). History lives in closed issues + 
 
 ## Next
 
-### Task 5 — Detection-aware exploration · [#8](https://github.com/thaije/derpbot-explorer/issues/8)
-Revisit partially-detected areas so the detection rate exceeds the pure-coverage ceiling. Nav is now good enough (Task 4: 71% coverage, 0 collisions); score is gated by perception.
-**Blocked on:** Tasks 1–4 ✅
-**DoD:** confirmed detections up vs Task 4 baseline, no FP increase, target score ≥ 70 B.
-
----
-
-## Later
-
-Titles only. Expand when a task is promoted to "Next".
-
-- **Medium tier scenario** — once easy ≥ 70 B.
-- **Hard tier scenario** — once medium is stable.
-
 ---
 
 ## Open backlog
 
 Known issues not currently prioritized. Full details in the linked issues; check before starting related work in case one is already tracked.
 
-- [#30](https://github.com/thaije/derpbot-explorer/issues/30) — Reduce global inflation radius — patrol bot blocks corridor
-- [#15](https://github.com/thaije/derpbot-explorer/issues/15) — Use ClearCostmapAroundPose (Jazzy) for targeted clearing
-- [#14](https://github.com/thaije/derpbot-explorer/issues/14) — Client-side goal pre-validation via PyCostmap2D
-- [#13](https://github.com/thaije/derpbot-explorer/issues/13) — Harden: enable collision_monitor use_realtime_priority
 - [#36](https://github.com/thaije/derpbot-explorer/issues/36) — Annotated camera stream with detection bboxes
 
 Run `gh issue list --state open --label backlog` for the live list.
