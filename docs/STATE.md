@@ -114,8 +114,11 @@ Anything in committed config/code is omitted. Only things a fresh agent would re
 
 ### Bumper-based stuck detection
 - **Bumper contact on `/derpbot_0/bumper_contact`** detects physical collisions including low obstacles invisible to LiDAR (e.g. chair wheels). Ground-plane contacts are filtered out by entity name and contact normal direction (`|z| ≥ 0.9`).
-- **Bumper stuck timeout is 3 sim-seconds** (vs 30s for regular stuck detection). If the bumper fires and the robot hasn't moved, it's likely wedged on a low obstacle.
-- **Spin recovery speed increased:** `max_rotational_vel=2.0`, `min_rotational_vel=1.0` (was 1.0/0.4). Matches the RotationShim and velocity smoother max.
+- **Bumper flag is time-based, not boolean.** `_bumper_contact_time` records sim-time of last non-ground contact. Flag expires after `BUMPER_CONTACT_EXPIRY=3.0s` without new contact. If robot is actively rotating (`|wz| ≥ 0.1`), bumper fast-stuck is suppressed — robot may clear the contact by turning.
+- **Bumper stuck timeout is 5 sim-seconds** (vs 30s for regular). Only triggers if: bumper contact within last 3s AND robot not translating AND robot not rotating.
+- **Stuck logs include robot position** for post-run diagnosis.
+- **Startup timeout:** if no `/map` within `STARTUP_MAP_TIMEOUT=120s` sim-s, explorer aborts (slam_toolbox dead). Prevents burning the entire mission budget in startup.
+- **Spin recovery speed increased:** `max_rotational_vel=2.0`, `min_rotational_vel=1.0` (was 1.0/0.4).
 
 ---
 

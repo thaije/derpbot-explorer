@@ -66,8 +66,10 @@ STUCK_DIST_THRESHOLD = 0.10  # metres — robot must move this far
 STUCK_TIME_THRESHOLD = (
     30.0  # seconds (Nav2 rotates first; give it time to start translating)
 )
-BUMPER_STUCK_TIME_THRESHOLD = 3.0  # seconds — fast stuck trigger on bumper contact
+BUMPER_STUCK_TIME_THRESHOLD = 5.0  # seconds — fast stuck trigger on bumper contact
+BUMPER_CONTACT_EXPIRY = 3.0  # seconds — ignore bumper flag if no recent contact
 GROUND_PLANE_NORMAL_Z = 0.9  # contacts with |normal.z| >= this are ground plane
+STARTUP_MAP_TIMEOUT = 120.0  # sim-seconds — abort if no /map received by then
 
 # Blacklist radius: frontiers within this distance of a failed goal are blacklisted
 BLACKLIST_RADIUS = 0.5  # metres
@@ -316,10 +318,11 @@ class FrontierExplorer:
         self._last_moved_y: float = 0.0
         self._last_move_time: float = 0.0  # set to sim time when each goal starts
 
-        # Bumper contact: set when a non-ground-plane collision is detected.
+        # Bumper contact: sim-time of the most recent non-ground-plane collision.
         # Used to trigger faster stuck detection when the robot physically
         # contacts an obstacle the LiDAR can't see (e.g. low chair wheels).
-        self._bumper_contact: bool = False
+        # Expires if no new contact within BUMPER_CONTACT_EXPIRY sim-seconds.
+        self._bumper_contact_time: float = 0.0
         self._bumper_lock = threading.Lock()
 
         self._blacklist: list[tuple[float, float]] = []  # failed goal centroids (permanent)
@@ -527,9 +530,9 @@ class FrontierExplorer:
             self._odom_initialized = True
 
     def _bumper_cb(self, msg: Contacts) -> None:
-        """Process bumper contact events. Set flag when a non-ground-plane
-        collision is detected, enabling faster stuck detection for obstacles
-        the LiDAR can't see (e.g. low chair wheels)."""
+        """Process bumper contact events. Record sim-time of non-ground-plane
+        collision, enabling faster stuck detection for obstacles the LiDAR
+        can't see (e.g. low chair wheels)."""
         for contact in msg.contacts:
             collision1_name = contact.collision1.name.lower()
             collision2_name = contact.collision2.name.lower()
@@ -548,10 +551,10 @@ class FrontierExplorer:
                         break
             if is_ground or is_vertical_normal:
                 continue
-            # Non-ground contact detected — robot is touching something
+            # Non-ground contact detected — record timestamp
             with self._bumper_lock:
-                self._bumper_contact = True
-            return  # one valid contact is enough to set the flag
+                self._bumper_contact_time = self._sim_time()
+            return
 
     def _tl(self, phase: str, goal_num: int = 0, notes: str = "") -> None:
         """Append a timeline entry and switch the current phase bucket."""
@@ -646,11 +649,25 @@ class FrontierExplorer:
         spin_msg = Twist()
         spin_msg.linear.x = 0.1  # forward velocity
         spin_msg.angular.z = 0.5  # rad/s — gentle arc
+        stop_msg = Twist()
         _publish_count = 0
         while self._map is None and self._exploring and rclpy.ok():
             self._cmd_vel_pub.publish(spin_msg)
             _publish_count += 1
             time.sleep(0.05)  # 20 Hz
+            # Timeout: if /map hasn't arrived within STARTUP_MAP_TIMEOUT sim-s,
+            # slam_toolbox is likely dead or the sim clock is stalled. Bail out
+            # — the benchmark script will catch the missing result file.
+            if self._sim_time() - t0 > STARTUP_MAP_TIMEOUT:
+                self._logger.error(
+                    f"FrontierExplorer: no /map after {STARTUP_MAP_TIMEOUT:.0f}s sim — "
+                    f"slam_toolbox may be dead. Aborting."
+                )
+                self._tl("startup_timeout", 0, f"no /map after {STARTUP_MAP_TIMEOUT:.0f}s")
+                self._cmd_vel_pub.publish(stop_msg)
+                self._exploring = False
+                self._done_callback()
+                return
         t_map_ready = self._sim_time()
         t_map_ready_wall = time.time()
 
@@ -659,7 +676,6 @@ class FrontierExplorer:
         )
 
         # Stop moving
-        stop_msg = Twist()
         self._cmd_vel_pub.publish(stop_msg)
 
         if self._map is not None:
@@ -1472,10 +1488,10 @@ class FrontierExplorer:
         self._goal_handle = goal_handle
         self._active_goal_handle = goal_handle  # Keep for compatibility
         self._last_move_time = _t_accept
-        # Reset bumper flag for new goal — stale contact from previous goal
+        # Reset bumper timer for new goal — stale contact from previous goal
         # shouldn't trigger stuck detection in the next one.
         with self._bumper_lock:
-            self._bumper_contact = False
+            self._bumper_contact_time = 0.0
 
         with self._odom_lock:
             self._last_moved_x = self._robot_x
@@ -1583,23 +1599,34 @@ class FrontierExplorer:
                 self._last_moved_x = rx
                 self._last_moved_y = ry
                 self._last_move_time = self._sim_time()
-                # Moving — clear bumper contact flag (obstacle was cleared or transient)
-                with self._bumper_lock:
-                    self._bumper_contact = False
             else:
-                # Not moving — check stuck threshold based on bumper state
+                # Not translating — check stuck threshold.
+                # Bumper-aware fast detection: if bumper recently fired
+                # (within BUMPER_CONTACT_EXPIRY) AND robot is not rotating
+                # (not actively trying to clear the contact), use the short
+                # timeout. If robot IS rotating, it may clear the contact
+                # soon — keep the normal timeout.
                 with self._bumper_lock:
-                    bumper_hit = self._bumper_contact
-                stuck_threshold = (
-                    BUMPER_STUCK_TIME_THRESHOLD if bumper_hit
-                    else STUCK_TIME_THRESHOLD
+                    _bumper_time = self._bumper_contact_time
+                with self._odom_lock:
+                    _current_wz = self._robot_wz
+                _bumper_recent = (
+                    _bumper_time > 0
+                    and self._sim_time() - _bumper_time < BUMPER_CONTACT_EXPIRY
                 )
+                _is_rotating = abs(_current_wz) >= 0.1
+                if _bumper_recent and not _is_rotating:
+                    stuck_threshold = BUMPER_STUCK_TIME_THRESHOLD
+                    reason = "bumper contact"
+                else:
+                    stuck_threshold = STUCK_TIME_THRESHOLD
+                    reason = "no movement"
                 if self._sim_time() - self._last_move_time > stuck_threshold:
-                    reason = "bumper contact" if bumper_hit else "no movement"
                     self._logger.warning(
-                        f"FrontierExplorer: stuck detected ({reason}) — cancelling goal."
+                        f"FrontierExplorer: stuck detected ({reason}) at "
+                        f"({rx:.2f}, {ry:.2f}) — cancelling goal."
                     )
-                    self._tl("goal_stuck", goal_num, reason)
+                    self._tl("goal_stuck", goal_num, f"{reason} @ ({rx:.1f},{ry:.1f})")
                     cancel_future = goal_handle.cancel_goal_async()
                     cancel_deadline = time.time() + 5.0
                     while not cancel_future.done() and time.time() < cancel_deadline:
