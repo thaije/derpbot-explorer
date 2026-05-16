@@ -40,6 +40,7 @@ Known issues not currently prioritized. Full details in the linked issues; check
 - [#15](https://github.com/thaije/derpbot-explorer/issues/15) — Use ClearCostmapAroundPose (Jazzy) for targeted clearing
 - [#14](https://github.com/thaije/derpbot-explorer/issues/14) — Client-side goal pre-validation via PyCostmap2D
 - [#13](https://github.com/thaije/derpbot-explorer/issues/13) — Harden: enable collision_monitor use_realtime_priority
+- [#36](https://github.com/thaije/derpbot-explorer/issues/36) — Annotated camera stream with detection bboxes
 
 Run `gh issue list --state open --label backlog` for the live list.
 
