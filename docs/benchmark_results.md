@@ -51,6 +51,8 @@ v2 baseline (5 seeds × 3 runs): mean 54.7 D, 64.1% cov, 2.5/6 found, 0.8 coll.
 
 Results: `robot-sandbox/results/submissions/derpbot-explorer-v3-test1/`
 
+Note: An earlier manual test run (same code, seed=1, before the benchmark script run) achieved 74.9 B with 6/6 found — see the separate entry below. The benchmark re-ran seed=1 and got 63.5 C (5/6 found), illustrating typical run-to-run variance.
+
 ---
 
 ## 2026-05-16 — Bumper sensor + detection skip + spin speedup (seed=1, easy, #8)
