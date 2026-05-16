@@ -7,8 +7,10 @@ Agent state / invariants: [`docs/STATE.md`](docs/STATE.md) · Next work: [`docs/
 
 ## Prerequisites
 
-- Ubuntu 24.04, ROS 2 Jazzy
-- GPU with atleast 4GB of VRAM
+- **Ubuntu** 24.04 (Noble Numbat)
+- **ROS 2** Jazzy Jalisco (key packages: `ros-jazzy-slam-toolbox` 2.8.x, `ros-jazzy-nav2-bringup` 1.3.x, `ros-jazzy-nav2-mppi-controller` 1.3.x, `ros-jazzy-robot-localization` 3.8.x, `ros-jazzy-cv-bridge` 4.1.x, `ros-jazzy-tf2-ros` 0.36.x)
+- **Python** 3.12
+- **GPU** with >= 4 GB VRAM (tested: NVIDIA RTX 2070 Super, driver 590.x)
 - **uv** — `pip install uv` or [docs.astral.sh/uv](https://docs.astral.sh/uv)
 
 ```bash
@@ -22,7 +24,6 @@ sudo apt install \
 uv venv
 source .venv/bin/activate
 uv pip install -r requirements.txt
-uv pip install "numpy<2"   # cv_bridge requires numpy 1.x
 ```
 
 ## Run

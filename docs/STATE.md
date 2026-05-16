@@ -88,6 +88,9 @@ Anything in committed config/code is omitted. Only things a fresh agent would re
 - **Stuck detection race:** if goal succeeds during `time.sleep(0.2)`, the stuck-check fires before the while-loop re-evaluates and falsely blacklists a good frontier. Fix: `if result_future.done(): break` immediately after sleep.
 
 ### Runtime / environment
+
+- **Ubuntu 24.04 · ROS 2 Jazzy · Python 3.12 · torch 2.10 · transformers 5.3 · ultralytics 8.4 · numpy <2 (cv_bridge constraint).** See README for full pinned list.
+- **GPU:** >= 4 GB VRAM required for OWLv2 inference (tested: RTX 2070 Super 8 GB).
 - **Gazebo must be paused during stack bringup.** `start_stack.sh` pauses the sim right after "Simulation ready" and unpauses once the agent touches `/tmp/derpbot_agent_ready` (set at `_explore_loop` entry, after OWLv2 load + Nav2 action-client construction). Without the pause, ~20 wall-s of slam+nav2+agent cold-launch × RTF consumes ~40 sim-s of the mission budget (easy: 900 s, medium: 600 s, hard: 300 s, brutal: 180 s) and floods Nav2 with TF_OLD_DATA. Never start the stack manually — use `start_stack.sh` or delegate to the `arst-runner` agent. See [#18](https://github.com/thaije/derpbot-explorer/issues/18).
 - **Ghost TF from previous run corrupts new run.** Always `ros2 daemon stop && ros2 daemon start` and kill all `gz`/`ros2` processes between runs.
 - **Always restart slam_toolbox between scenario runs** — it retains its old map; reusing makes FrontierExplorer think the map is already explored and blacklist every goal within ~2 min.
