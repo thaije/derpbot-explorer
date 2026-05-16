@@ -6,17 +6,25 @@ Gazebo Harmonic + ROS 2 Jazzy simulation testbed. Your task: deploy a fully auto
 
 ## 1. Task
 
-You will be placed in an unknown indoor environment. Before each run you receive a **mission description** with the mission goal listing for example the target object types to locate. Your agent must explore the environment, detect all instances of every target type, and report detections — all within a **time limit**.
+You will be placed in an unknown indoor environment. Before each run you receive a **mission description** with the mission goal. There are two scenario types:
 
-Scenarios come in multiple **difficulty tiers**. The environment may challenge your agent in various ways — expect conditions to differ between tiers and runs. Object placement and spawn position are **randomised each run** unless a seed is fixed. Doors are passable or permanently locked; no unlocking or interaction is required.
+1. **explore_detect** — Find and report all target objects within the time limit. Your agent explores the environment, detects instances of every target type, and reports detections.
+
+2. **proximity** — Navigate to within a radius of a single target object and report a valid detection for it. Proximity alone is not enough — you must also confirm the target via a detection message (see §3).
+
+Scenarios come in multiple **difficulty tiers** and **world templates**. The environment may challenge your agent in various ways — expect conditions to differ between tiers and runs. Object placement and spawn position are **randomised each run** unless a seed is fixed. Doors are passable or permanently locked; no unlocking or interaction is required.
 
 > **Design advice:** Build a general-purpose agent. Tiers, object types, and environment conditions may be extended or changed at any time. Agents that adapt to what they observe will hold up far better than those tuned to specific scenarios.
 
-**Success** = all required instances detected before the time limit. Thorough exploration of the full environment earns bonus points regardless of outcome.
+**Explore-detect success** = all required instances detected before the time limit. Thorough exploration of the full environment earns bonus points regardless of outcome.
+
+**Proximity success** = robot enters the proximity radius of the target object AND a true-positive detection of the target is confirmed. Both conditions must be met.
 
 ---
 
 ## 2. Grading
+
+### Explore-detect scenarios
 
 Runs are scored 0–100 across five categories, combined as a weighted sum.
 
@@ -31,6 +39,21 @@ Runs are scored 0–100 across five categories, combined as a weighted sum.
 Par values are derived from a **human perception baseline** (teleop + manual keypress detections, 5 seeds per tier). At par, a category scores ~70 (B grade). Faster, more accurate, or more efficient than par scores above 70; worse scores below.
 
 Grade thresholds: **S** ≥ 95 · **A** ≥ 85 · **B** ≥ 70 · **C** ≥ 55 · **D** ≥ 40 · **F** < 40.
+
+### Proximity-goal scenarios
+
+Proximity scenarios require both **navigation** (reaching the target) and **perception** (detecting the target). Success is not possible through random driving or standing still.
+
+| Category | Weight | What it measures |
+|---|---|---|
+| **Success** | 0.30 | Binary: 100 if robot reaches within `proximity_radius` of target AND reports a valid detection, 0 otherwise |
+| **Time** | 0.25 | Time to reach target vs par (par → B grade) |
+| **Safety** | 0.20 | Collisions and near-misses (same as explore_detect) |
+| **Efficiency** | 0.25 | `straight_line_distance / path_length` (directness of path; lower is better, capped at 100) |
+
+You must publish detections on `/derpbot_0/detections` (see §3) just like in explore-detect scenarios. The detection must be a true positive (correct type, within 1.5 m of a real instance, line-of-sight clear) for the target object type specified in the mission brief.
+
+Raw metrics for proximity scenarios include `proximity_reached` (bool), `found_ratio` (detection recall for mission targets), `min_distance_to_target`, `proximity_path_length`, and `straight_line_distance`.
 
 | Tier | `completion_time_par` (s) | `path_length_par` (m) | `coverage_per_meter_par` |
 |---|---|---|---|
@@ -66,6 +89,7 @@ Ground robot (differential drive — currently the only supported model).
 | RGBD — intrinsics | `/derpbot_0/rgbd/camera_info` | 10 Hz | `sensor_msgs/CameraInfo` — required for 3-D back-projection |
 | RGBD — point cloud | `/derpbot_0/rgbd/points` | 10 Hz | `sensor_msgs/PointCloud2` — **off by default**, enable with `--enable-pointcloud` |
 | Odometry | `/derpbot_0/odom` | — | `nav_msgs/Odometry`, IMU-fused (EKF) — yaw drift corrected |
+| Bumper (contact) | `/derpbot_0/bumper_contact` | 10 Hz | `ros_gz_interfaces/msg/Contacts` — fires for **all** contacts including ground plane; filter ground-plane contacts to detect collisions |
 | Raw wheel odometry | `/derpbot_0/odom_raw` | — | `nav_msgs/Odometry`, raw wheel-encoder dead-reckoning (for custom sensor fusion) |
 
 ### Control & TF
@@ -123,7 +147,9 @@ Publish your detections on `/derpbot_0/detections` as `vision_msgs/Detection2DAr
 ./scripts/run_scenario.sh config/scenarios/office_explore_detect/medium.yaml --headless --enable-pointcloud
 ```
 
-Available difficulty tiers (ascending):
+Available scenarios and difficulty tiers:
+
+**office_explore_detect** (ascending difficulty):
 
 | Tier | Timeout |
 |---|---|
@@ -133,7 +159,14 @@ Available difficulty tiers (ascending):
 | `brutal` | 180 s |
 | `perception_stress` | 600 s |
 
-All YAML files are under `config/scenarios/office_explore_detect/`.
+**basement_find** (proximity-goal):
+
+| Tier | Timeout |
+|---|---|
+| `easy` | 300 s |
+| `medium` | 300 s |
+
+All YAML files are under `config/scenarios/<scenario_name>/`.
 
 Startup takes ~5 s. The scenario ends on `SUCCESS` or `TIME_LIMIT`; scorecard prints to stdout and JSON is written to `results/`.
 
@@ -150,6 +183,7 @@ The response is JSON with both a **human-readable** `description` field and **st
 ```json
 {
   "scenario": "office_medium_001",
+  "goal_type": "explore_detect",
   "goal": "Explore the environment and locate all required target objects. Report detections before the time limit expires. Thorough exploration earns bonus points.",
   "time_limit_seconds": 600,
   "targets": [
@@ -159,6 +193,26 @@ The response is JSON with both a **human-readable** `description` field and **st
   ],
   "status": "running",
   "description": "Explore the environment and locate all target objects within 600s. Targets: exactly 3 fire extinguisher(s), exactly 2 first aid kit(s), at least 1 hazard sign(s) (exact count unknown). Status: running."
+}
+```
+
+For **proximity-goal** scenarios, the response includes:
+
+```json
+{
+  "scenario": "basement_find_easy",
+  "goal_type": "proximity",
+  "goal": "Find the drink can, navigate within 1 metre of it, and report a detection via /derpbot_0/detections before the time limit expires.",
+  "target_object": "drink_can",
+  "target_description": "find the drink can, navigate within 1m, and detect it",
+  "proximity_radius": 1.0,
+  "requires_detection": true,
+  "time_limit_seconds": 300,
+  "targets": [
+    {"type": "drink_can", "count": 1, "count_exact": true}
+  ],
+  "status": "running",
+  "description": "Navigate within 1m of the drink can AND report a valid detection for it within 300s. Status: running."
 }
 ```
 
@@ -176,11 +230,21 @@ A mission brief is also printed to stdout at scenario start and again just befor
 
 ## 5. What your agent must do
 
+**Explore-detect scenarios:**
+
 1. **Receive the mission** — fetch the mission description (see section 4) before or at run start.
 2. **Explore** the environment — no map is provided; build it from LiDAR and odometry.
 3. **Detect objects** — publish `vision_msgs/Detection2DArray` on `/derpbot_0/detections` with class, tracking ID, and map-frame position (see §3).
 4. **Navigate safely** — collisions and near-misses reduce your Safety score.
 5. **Stop or let the runner end the episode** — the runner polls detections and terminates automatically.
+
+**Proximity-goal scenarios:**
+
+1. **Receive the mission** — fetch the mission description to learn the target object type and proximity radius.
+2. **Navigate** to the target — use sensors and odometry to find and approach the target.
+3. **Detect the target** — publish a `vision_msgs/Detection2DArray` on `/derpbot_0/detections` with the target object type and map-frame position (see §3). The detection must be a true positive (correct type, within 1.5 m, clear line of sight).
+4. **Navigate safely** — collisions and near-misses reduce your Safety score.
+5. The episode ends automatically when you enter the proximity radius AND your detection is confirmed, or the time limit expires.
 
 ---
 
