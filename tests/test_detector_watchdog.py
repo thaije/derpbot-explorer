@@ -18,16 +18,24 @@ mock_rclpy_qos.ReliabilityPolicy = Mock()
 mock_rclpy_qos.DurabilityPolicy = Mock()
 mock_rclpy.qos = mock_rclpy_qos
 
+mock_rclpy_callback_groups = Mock()
+mock_rclpy_callback_groups.ReentrantCallbackGroup = Mock
+mock_rclpy.callback_groups = mock_rclpy_callback_groups
+
 sys.modules['rclpy'] = mock_rclpy
 sys.modules['rclpy.node'] = mock_rclpy_node
 sys.modules['rclpy.qos'] = mock_rclpy_qos
+sys.modules['rclpy.callback_groups'] = mock_rclpy_callback_groups
 
-# Mock sensor_msgs
 mock_sensor_msgs = Mock()
 mock_sensor_msgs_msg = Mock()
 mock_sensor_msgs_msg.Image = Mock()
 sys.modules['sensor_msgs'] = mock_sensor_msgs
 sys.modules['sensor_msgs.msg'] = mock_sensor_msgs_msg
+
+mock_cv_bridge = Mock()
+mock_cv_bridge.CvBridge = Mock
+sys.modules['cv_bridge'] = mock_cv_bridge
 
 # Now import Detector
 from agent.detector import Detector, DetectionResult
