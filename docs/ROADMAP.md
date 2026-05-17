@@ -25,6 +25,7 @@ Known issues not currently prioritized. Full details in the linked issues; check
 - [#37](https://github.com/thaije/derpbot-explorer/issues/37) — Intermittent nav startup failure (2/15 easy runs dead on arrival)
 - [#38](https://github.com/thaije/derpbot-explorer/issues/38) — Collision recovery near dynamic obstacles and clutter
 - [#39](https://github.com/thaije/derpbot-explorer/issues/39) — OWLv2 detection failure in dim/flickering lighting (hard/brutal)
+- [#40](https://github.com/thaije/derpbot-explorer/issues/40) — Reduce false positives (1.7 FP/run easy, precision 0.74)
 - [#36](https://github.com/thaije/derpbot-explorer/issues/36) — Annotated camera stream with detection bboxes
 
 Run `gh issue list --state open --label backlog` for the live list.
