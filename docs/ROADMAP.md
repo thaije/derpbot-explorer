@@ -22,6 +22,9 @@ Current state lives in [`STATE.md`](STATE.md). History lives in closed issues + 
 
 Known issues not currently prioritized. Full details in the linked issues; check before starting related work in case one is already tracked.
 
+- [#37](https://github.com/thaije/derpbot-explorer/issues/37) — Intermittent nav startup failure (2/15 easy runs dead on arrival)
+- [#38](https://github.com/thaije/derpbot-explorer/issues/38) — Collision recovery near dynamic obstacles and clutter
+- [#39](https://github.com/thaije/derpbot-explorer/issues/39) — OWLv2 detection failure in dim/flickering lighting (hard/brutal)
 - [#36](https://github.com/thaije/derpbot-explorer/issues/36) — Annotated camera stream with detection bboxes
 
 Run `gh issue list --state open --label backlog` for the live list.
