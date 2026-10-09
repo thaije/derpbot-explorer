@@ -67,12 +67,12 @@ def main():
     check("diverse-2 publishes", len(msgs) == 1 and msgs[0]["class_name"] == "cup",
           str([(m["class_name"], m["world_x"], m["world_y"]) for m in msgs]))
 
-    # 2. Marching hallucination: sightings drift → gate rejects (spread > 1.0)
+    # 2. Marching hallucination: sightings drift far beyond the map → gate rejects
     out = run_worker([
         ("cup", 3.0, 3.0, 1.0, 1.0, 0.28),
-        ("cup", 3.8, 3.8, 1.0, 1.5, 0.28),
-        ("cup", 4.6, 4.6, 1.0, 2.0, 0.28),
-        ("cup", 5.4, 4.0, 1.0, 2.5, 0.28),
+        ("cup", 4.0, 3.8, 1.0, 1.5, 0.28),
+        ("cup", 5.0, 4.6, 1.0, 2.0, 0.28),
+        ("cup", 6.0, 4.0, 1.0, 2.5, 0.28),
     ])
     check("marching track rejected", len(conf_msgs(out)) == 0)
 

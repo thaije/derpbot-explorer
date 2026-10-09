@@ -61,9 +61,10 @@ REPUBLISH_SHIFT_M = 0.5     # republish if centroid moves more than this
 # bboxes re-anchored on different image patches via chained MATCH_RADIUS merges).
 # A real object is re-sighted at (approximately) the same world position.
 CONFIDENCE_MARGIN = 0.05    # track's best confidence must exceed OWL_CONF + this
-STABILITY_RADIUS = 1.0      # max pairwise spread of sighting positions to confirm
-                            # (real-object depth errors reach ~1.9m; MATCH_RADIUS=2.0 —
-                            #  keep well above 0.818m worst TP loc error, below match radius)
+STABILITY_RADIUS = 1.2      # max pairwise spread of sighting positions to confirm
+                            # (real-object depth spread reaches ~1.2m at shallow
+                            # view angles; 5/20 baseline FPs also sit 1.5–2.0m off,
+                            # so this stays a march/re-anchor rejector, not tighter)
 
 CANDIDATE_TIMEOUT_S = 180.0  # sim-seconds — discard pending candidate without 2nd sighting
 CANDIDATE_PUBLISH_HZ = 2.0  # rate to send pending candidates to explorer
