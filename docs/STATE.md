@@ -57,7 +57,7 @@ agent/
   frontier_explorer.py BFS /map frontiers → NavigateToPose, stuck detection, patrol mode, detection preemption
   detector.py          OWLv2 in subprocess (spawn), 5 Hz, conf=0.15, 90 s watchdog
   depth_projector.py   bbox → depth → world (x, y) via TF2
-  tracker.py           multi-sighting fusion (≥2 diverse poses ≥0.2m apart OR ≥3 close-range in-view frames), anti-hallucination gate (conf margin +0.05, positional stability 1.0m), cross-class position veto 0.8m, MATCH_RADIUS=2.0 m, CANDIDATE_TIMEOUT_S=180
+  tracker.py           multi-sighting fusion (≥2 diverse poses ≥0.2m apart OR ≥3 close-range in-view frames), anti-hallucination gate (conf margin +0.05, positional stability 1.2m — STABILITY_RADIUS=1.2), cross-class position veto 0.8m, MATCH_RADIUS=2.0 m, CANDIDATE_TIMEOUT_S=180
   agent_node.py        INIT → EXPLORE → DONE, MultiThreadedExecutor
 
 config/
