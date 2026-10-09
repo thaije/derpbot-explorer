@@ -13,8 +13,17 @@ Strategy:
   - Each tracked object has a persistent string ID ("track_1", "track_2", …)
   - New detection matched by class + world position within MATCH_RADIUS metres
   - Running-mean world position averaged across all sightings
-  - Object published only after ≥ MIN_SIGHTINGS sightings from robot poses
-    that are ≥ MIN_POSE_DISTANCE apart (reduces false positives)
+  - Object confirmation requires (diverse sightings ≥ MIN_SIGHTINGS from robot
+    poses ≥ MIN_POSE_DISTANCE apart) OR (FAST_CONFIRM_FRAMES close-range
+    in-view frames — a parked robot can't produce diverse poses)
+  - Anti-hallucination gate: before publishing, the track must clear
+    OWL_CONF_THRESHOLD + CONFIDENCE_MARGIN on its best confidence and keep all
+    sighting positions within STABILITY_RADIUS (rejects drifting low-margin
+    OWLv2 hallucinations — FP backlog #40)
+  - Cross-class position veto: different-class tracks within VETO_RADIUS are
+    mutually-exclusive physical objects — both held back as ambiguous until
+    centroids separate or one side's confidence wins by AMBIGUITY_MARGIN
+    (prevents wrong-class submissions on real objects)
   - target filter: only publish objects whose class_name is in the mission targets list
 
 Detection2DArray format expected by scorer:
@@ -59,6 +68,20 @@ STABILITY_RADIUS = 1.0      # max pairwise spread of sighting positions to confi
 CANDIDATE_TIMEOUT_S = 180.0  # sim-seconds — discard pending candidate without 2nd sighting
 CANDIDATE_PUBLISH_HZ = 2.0  # rate to send pending candidates to explorer
 
+# Cross-class position veto (wrong-class submission repair): mutually-exclusive
+# physical objects — two different-class tracks confirmed/pending within this
+# radius means at most one is real (detector ran the wrong prompt on it).
+# Both are flagged ambiguous and held back until evidence separates them.
+VETO_RADIUS = 0.8           # metres — different-class tracks within this → ambiguous
+AMBIGUITY_MARGIN = 0.10     # clear a veto by exceeding the other track's best conf by this
+
+# Short-range fast-confirm: a robot parked in front of an object never produces
+# two robot poses ≥ MIN_POSE_DISTANCE apart, so the diverse-sightings rule stalls
+# forever at the detour goal (the "<1.0m candidates are skipped" filter prevents
+# re-detouring). Confirm instead on N consecutive close-range in-view frames.
+FAST_CONFIRM_DIST = 1.5     # metres — robot-object distance for in-view frames
+FAST_CONFIRM_FRAMES = 3     # in-view frames needed (~0.5s at detector cadence)
+
 
 @dataclass
 class TrackedObject:
@@ -70,6 +93,10 @@ class TrackedObject:
     robot_poses: list[tuple[float, float]] = field(default_factory=list)
     # Detector confidence per sighting (parallel to positions)
     confidences: list[float] = field(default_factory=list)
+    # Cross-class veto: track_id of the mutually-exclusive track we're parked on
+    ambiguous_with: Optional[str] = None
+    # Consecutive close-range in-view frames (short-range fast-confirm, #3)
+    in_view_frames: int = 0
 
     @property
     def world_x(self) -> float:
@@ -171,6 +198,44 @@ def tracker_worker(
                 return obj
         return None
 
+    def find_cross_class_neighbor(
+        obj: TrackedObject,
+    ) -> Optional[TrackedObject]:
+        """Different-class track within VETO_RADIUS of obj's centroid, if any.
+
+        Mutually-exclusive physical objects: two different-class tracks in the
+        same spot means the detector fired the wrong prompt on one of them.
+        """
+        for other in objects:
+            if other is obj or other.class_name == obj.class_name:
+                continue
+            if math.hypot(other.world_x - obj.world_x, other.world_y - obj.world_y) < VETO_RADIUS:
+                return other
+        return None
+
+    def resolve_veto_on_append(
+        obj: TrackedObject, neighbor: Optional[TrackedObject]
+    ) -> None:
+        """Update obj's ambiguity state from its current cross-class neighbor."""
+        if neighbor is None:
+            # No neighbor (never had one, or centroids separated) → ambiguous cleared
+            if obj.ambiguous_with is not None:
+                sys.stderr.write(
+                    f"[tracker_worker] veto cleared {obj.track_id} "
+                    f"(separated from {obj.ambiguous_with})\n"
+                )
+                obj.ambiguous_with = None
+            return
+        # Centroids still within veto radius — keep/refresh the flag pair.
+        if obj.ambiguous_with != neighbor.track_id:
+            sys.stderr.write(
+                f"[tracker_worker] veto {obj.track_id}({obj.class_name}) "
+                f"<-> {neighbor.track_id}({neighbor.class_name}) "
+                f"at ({obj.world_x:.2f},{obj.world_y:.2f})\n"
+            )
+        obj.ambiguous_with = neighbor.track_id
+        neighbor.ambiguous_with = obj.track_id
+
     # Track last-published centroid per track_id to avoid duplicate publishes
     last_published: dict[str, tuple[float, float]] = {}
 
@@ -209,12 +274,39 @@ def tracker_worker(
             obj.robot_poses.append((rx, ry))
             obj.confidences.append(confidence)
 
+            # Cross-class position veto (wrong-class submission repair):
+            # flag/renew/clear ambiguity against the nearest different-class track.
+            resolve_veto_on_append(obj, find_cross_class_neighbor(obj))
+
+            # Short-range fast-confirm: while a close-range sighting arrives,
+            # accumulate in-view frames (robot parked in front of the object
+            # never yields two diverse poses at the detour goal).
+            if (
+                math.hypot(obj.world_x - rx, obj.world_y - ry) < FAST_CONFIRM_DIST
+                and confidence >= OWL_CONF_THRESHOLD + CONFIDENCE_MARGIN
+            ):
+                obj.in_view_frames += 1
+
+            # Confirmation: diverse sightings OR short-range in-view frames.
             # Only publish on first confirmation or centroid shift ≥ REPUBLISH_SHIFT_M
             # Anti-hallucination gate: confirmation quality checks must pass both on
             # first confirm and on republish (else a confirmed-then-drifting track
             # silently re-publishes a hallucinated centroid).
-            if not obj.is_confirmed():
+            if not (obj.is_confirmed() or obj.in_view_frames >= FAST_CONFIRM_FRAMES):
                 continue
+            neighbor = find_cross_class_neighbor(obj)
+            if neighbor is not None:
+                # Ambiguous pair: hold both back unless this side is clearly the
+                # better explanation (higher best confidence by AMBIGUITY_MARGIN).
+                reference = neighbor.max_confidence()
+                if not obj.passes_quality_gate(reference + AMBIGUITY_MARGIN):
+                    sys.stderr.write(
+                        f"[tracker_worker] veto-held {obj.class_name} "
+                        f"track={obj.track_id} vs {neighbor.track_id} "
+                        f"max_conf={obj.max_confidence():.2f} "
+                        f"ref={reference:.2f}\n"
+                    )
+                    continue
             if not obj.passes_quality_gate():
                 sys.stderr.write(
                     f"[tracker_worker] gate-rejected {obj.class_name} "

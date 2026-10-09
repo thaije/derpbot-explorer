@@ -57,7 +57,7 @@ agent/
   frontier_explorer.py BFS /map frontiers → NavigateToPose, stuck detection, patrol mode, detection preemption
   detector.py          OWLv2 in subprocess (spawn), 5 Hz, conf=0.15, 90 s watchdog
   depth_projector.py   bbox → depth → world (x, y) via TF2
-  tracker.py           multi-sighting fusion (≥2, >0.2 m apart), MATCH_RADIUS=2.0 m, CANDIDATE_TIMEOUT_S=180
+  tracker.py           multi-sighting fusion (≥2 diverse poses ≥0.2m apart OR ≥3 close-range in-view frames), anti-hallucination gate (conf margin +0.05, positional stability 1.0m), cross-class position veto 0.8m, MATCH_RADIUS=2.0 m, CANDIDATE_TIMEOUT_S=180
   agent_node.py        INIT → EXPLORE → DONE, MultiThreadedExecutor
 
 config/
@@ -89,6 +89,10 @@ Anything in committed config/code is omitted. Only things a fresh agent would re
 
 ### Runtime / environment
 
+- **Socket 0 thermal throttling (watercooling bubble, #41):** pkg0 pins at 90 °C under load → RTF sawtooth 0.06↔2.0. Workaround: launch stack from a tmux server pinned to pkg1: `source /opt/ros/jazzy/setup.bash; export PYTHONPATH=/opt/ros/jazzy/lib/python3.12/site-packages; taskset -c 10-19,30-39 tmux new -s anchor -d 'sleep 99999'` (keep anchor alive — server exit drops the pin; stack sessions inherit server affinity + env). Verified flat RTF 2.0, full detector, 2026-10-04. Permanent fix: bleed loop (hardware).
+- **PYTHONPATH must be ROS-only:** a foreign site-packages (e.g. Python 3.14 venv) in the launching shell's PYTHONPATH kills the detector spawn child (PIL `_imaging` ImportError) → relay reports `0 inferences, subprocess alive=False` from the first check, silent 0/6 found. Symptom of #26-class "detector silent" runs.
+- **`fastdds` must be on PATH before `start_stack.sh`:** it doesn't source ROS itself; without it fds never starts → sim "ready" poll hangs 60 s → ERROR. Source `/opt/ros/jazzy/setup.bash` first.
+
 - **Ubuntu 24.04 · ROS 2 Jazzy · Python 3.12 · torch 2.10 · transformers 5.3 · ultralytics 8.4 · numpy <2 (cv_bridge constraint).** See README for full pinned list.
 - **GPU:** >= 4 GB VRAM required for OWLv2 inference (tested: RTX 2070 Super 8 GB).
 - **Gazebo must be paused during stack bringup.** `start_stack.sh` pauses the sim right after "Simulation ready" and unpauses once the agent touches `/tmp/derpbot_agent_ready` (set at `_explore_loop` entry, after OWLv2 load + Nav2 action-client construction). Without the pause, ~20 wall-s of slam+nav2+agent cold-launch × RTF consumes ~40 sim-s of the mission budget (easy: 900 s, medium: 600 s, hard: 300 s, brutal: 180 s) and floods Nav2 with TF_OLD_DATA. Never start the stack manually — use `start_stack.sh` or delegate to the `arst-runner` agent. See [#18](https://github.com/thaije/derpbot-explorer/issues/18).
@@ -104,7 +108,7 @@ Anything in committed config/code is omitted. Only things a fresh agent would re
 - **Succeeded goals use a soft TTL exclusion (45 sim-s), not permanent blacklist.** Permanent blacklisting exhausted all frontiers in low-density maps (issue #27). The TTL covers SLAM update lag; after expiry the frontier can be re-selected if it genuinely persists. Failures stay permanently blacklisted.
 - **Frontier W_DIST is dynamic (1.5–3.5)** based on max frontier cluster size (#32). High when large frontiers exist (stay local); low when frontiers shrink (look farther). W_DIST_SIZE_NORM=150. Never set W_DIST_MIN below 1.0 without testing.
 - **OWL_CONF_THRESHOLD=0.15** is the tuned value. 0.10=3FP/3real, 0.12=3FP/3real, 0.15=1FP/4real. Don't lower without a new mechanism.
-- **Robot avg_speed is ~0.022 m/s (mostly idle).** Most time is spent waiting on Nav2 goal acceptance and rotating at waypoints. Coverage comes from LiDAR sweeps during rotation, not path length. Reducing inter-goal idle time is the primary speed-score lever.
+- **Robot avg_speed is now 0.09–0.11 m/s, moving fraction 60–73%** (2026-10-09 profile; old "0.022 m/s mostly idle" invariant is stale). Nav2 acceptance waits gone (~0.8% of budget); rotating ~21% is the remaining slack — instrument cmd_vel before optimizing (profiler's sticky sub-phase classifier GIL-starves under Nav2 contention, rotating/waiting durations approximate). Primary score lever: travel speed cap (~0.15 m/s moving) + round duration vs 167 s par; speed sub-score is pinned F (13–18) in every run.
 - **LIDAR coverage ≠ camera coverage.** LIDAR (10–20 m) maps remote areas before the camera visits them. Patrol mode navigates to physically unvisited free cells after frontier exhaustion.
 
 ### Detection-aware exploration (#8)
