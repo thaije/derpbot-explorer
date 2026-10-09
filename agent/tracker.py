@@ -39,13 +39,22 @@ import rclpy
 from rclpy.node import Node
 from vision_msgs.msg import Detection2D, Detection2DArray, ObjectHypothesisWithPose
 
-from detector import DetectionResult
+from detector import DetectionResult, OWL_CONF_THRESHOLD
 
 MATCH_RADIUS = 2.0          # metres — same class within this → same object
 MIN_SIGHTINGS = 2           # require 2 sightings to filter single-frame noise
 MIN_POSE_DISTANCE = 0.2     # robot must move ≥0.2m between diverse sightings
 PUBLISH_RATE_HZ = 5.0       # rate to check for newly confirmed objects
 REPUBLISH_SHIFT_M = 0.5     # republish if centroid moves more than this
+
+# Anti-hallucination gate (FP backlog #40): OWLv2 hallucinations are low-margin
+# detections whose projected position drifts as the robot moves (near-threshold
+# bboxes re-anchored on different image patches via chained MATCH_RADIUS merges).
+# A real object is re-sighted at (approximately) the same world position.
+CONFIDENCE_MARGIN = 0.05    # track's best confidence must exceed OWL_CONF + this
+STABILITY_RADIUS = 1.0      # max pairwise spread of sighting positions to confirm
+                            # (real-object depth errors reach ~1.9m; MATCH_RADIUS=2.0 —
+                            #  keep well above 0.818m worst TP loc error, below match radius)
 
 CANDIDATE_TIMEOUT_S = 180.0  # sim-seconds — discard pending candidate without 2nd sighting
 CANDIDATE_PUBLISH_HZ = 2.0  # rate to send pending candidates to explorer
@@ -59,6 +68,8 @@ class TrackedObject:
     positions: list[tuple[float, float]] = field(default_factory=list)
     # Robot poses at time of each sighting
     robot_poses: list[tuple[float, float]] = field(default_factory=list)
+    # Detector confidence per sighting (parallel to positions)
+    confidences: list[float] = field(default_factory=list)
 
     @property
     def world_x(self) -> float:
@@ -88,6 +99,41 @@ class TrackedObject:
 
     def is_confirmed(self) -> bool:
         return self.diverse_sightings() >= MIN_SIGHTINGS
+
+    def max_confidence(self) -> float:
+        """Best detector confidence seen on this track (0.0 if none recorded)."""
+        return max(self.confidences) if self.confidences else 0.0
+
+    def position_spread(self) -> float:
+        """Max pairwise distance between sighting positions (0.0 for <2)."""
+        if len(self.positions) < 2:
+            return 0.0
+        xs = [p[0] for p in self.positions]
+        ys = [p[1] for p in self.positions]
+        return math.hypot(max(xs) - min(xs), max(ys) - min(ys))
+
+    def passes_quality_gate(self, reference_conf: float = 0.0) -> bool:
+        """
+        Anti-hallucination gate applied at confirmation/publish time.
+
+        Two generic checks against OWLv2 hallucination FPs (barely-above-threshold
+        detections whose projected position drifts between sightings):
+        1. margin — the track's best confidence must clear the detector threshold
+           by CONFIDENCE_MARGIN (single-frame noise stays near threshold; real
+           objects are seen well above it as the robot closes in);
+        2. positional stability — sightings must cluster within STABILITY_RADIUS;
+           a track that "marches" across the map via chained MATCH_RADIUS merges
+           has a much larger spread.
+        reference_conf is the other side's best confidence in a cross-class veto
+        tie (0.0 = no comparison).
+        """
+        if self.max_confidence() < OWL_CONF_THRESHOLD + CONFIDENCE_MARGIN:
+            return False
+        if reference_conf > 0.0 and self.max_confidence() < reference_conf:
+            return False
+        if self.position_spread() > STABILITY_RADIUS:
+            return False
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +188,7 @@ def tracker_worker(
 
         _count += 1
         class_name, world_pos, robot_pose = item[0], item[1], item[2]
+        confidence = item[3] if len(item) > 3 else 1.0
 
         if class_name not in targets:
             continue
@@ -160,9 +207,21 @@ def tracker_worker(
                 objects.append(obj)
             obj.positions.append((wx, wy))
             obj.robot_poses.append((rx, ry))
+            obj.confidences.append(confidence)
 
             # Only publish on first confirmation or centroid shift ≥ REPUBLISH_SHIFT_M
+            # Anti-hallucination gate: confirmation quality checks must pass both on
+            # first confirm and on republish (else a confirmed-then-drifting track
+            # silently re-publishes a hallucinated centroid).
             if not obj.is_confirmed():
+                continue
+            if not obj.passes_quality_gate():
+                sys.stderr.write(
+                    f"[tracker_worker] gate-rejected {obj.class_name} "
+                    f"track={obj.track_id} diversity={obj.diverse_sightings()} "
+                    f"max_conf={obj.max_confidence():.2f} "
+                    f"spread={obj.position_spread():.2f}m\n"
+                )
                 continue
             cx, cy = obj.world_x, obj.world_y
             prev = last_published.get(obj.track_id)
@@ -320,10 +379,10 @@ class Tracker:
                 self._logger.debug(f"Tracker relay: TF lookup failed for detection #{_count}: {exc}")
                 continue
 
-            # Forward to worker process
+            # Forward to worker process (confidence rides along for margin gating)
             try:
                 self._input_queue.put_nowait(
-                    (det.class_name, world_pos, robot_pose)
+                    (det.class_name, world_pos, robot_pose, det.confidence)
                 )
                 self._logger.debug(
                     f"Tracker relay: forwarded detection #{_count} "
@@ -333,7 +392,7 @@ class Tracker:
                 try:
                     self._input_queue.get_nowait()
                     self._input_queue.put_nowait(
-                        (det.class_name, world_pos, robot_pose)
+                        (det.class_name, world_pos, robot_pose, det.confidence)
                     )
                     self._logger.debug(
                         f"Tracker relay: forwarded detection #{_count} (after dropping oldest)"
