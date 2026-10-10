@@ -37,10 +37,12 @@ Detection2DArray format expected by scorer:
 from __future__ import annotations
 
 import math
+from pathlib import Path
 import multiprocessing as mp
 import queue
 import threading
 import time
+import json
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -55,6 +57,12 @@ MIN_SIGHTINGS = 2           # require 2 sightings to filter single-frame noise
 MIN_POSE_DISTANCE = 0.2     # robot must move ≥0.2m between diverse sightings
 PUBLISH_RATE_HZ = 5.0       # rate to check for newly confirmed objects
 REPUBLISH_SHIFT_M = 0.5     # republish if centroid moves more than this
+
+# Sighting-stream recorder (t_451895af): default output when the agent is
+# launched with --record-stream (no explicit path or auto mode). Relative to
+# CWD — run_scenario-style invocations run from the explorer root, so this is
+# run-adjacent; override with --record-stream <path>.
+DEFAULT_STREAM_PATH = "results/streams/latest.jsonl"
 
 # Anti-hallucination gate (FP backlog #40): OWLv2 hallucinations are low-margin
 # detections whose projected position drifts as the robot moves (near-threshold
@@ -361,6 +369,124 @@ def tracker_worker(
 
 
 # ---------------------------------------------------------------------------
+# Stream recorder (t_451895af) — write-only observer of the sighting stream
+# ---------------------------------------------------------------------------
+
+class StreamRecorder:
+    """
+    Records the tracker's raw sighting stream as JSONL (one line per sighting),
+    for  offline replay  via  scripts/replay_tracker.py.
+
+    Output format:
+      line 1: {"type": "header", "spawn_pose": {...}, "map_pgm": ..., ...}
+      n>1:    {"type": "sighting", "class_name", "confidence", "bbox":
+               [cx, cy, w, h] (px), "x", "y" (map frame), "rx", "ry", "ryaw",
+               "t": sim-seconds}
+
+    Recording is pure JSONL — no image dumps. write failures are swallowed
+    so recording can never take the live pipeline down.
+    """
+
+    _WORLD_STATE = Path("/tmp/arst_worlds/world_state.json")
+
+    def __init__(self, record_path: Optional[str], node: "Node"):
+        self._logger = node.get_logger() if node is not None else None
+        # Clock handle for sim-time stamps (weak-ish ref; node outlives recorder)
+        self._clock_node = node
+        self._fh = None
+        self._n = 0
+        if not record_path:
+            return
+        try:
+            p = Path(record_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            self._fh = open(p, "a", buffering=1)  # line-buffered
+            header = {
+                "type": "header",
+                "spawn_pose": self._read_spawn_pose(),
+                "map_pgm": self._read_map_pgm(),
+                "map_resolution": self._read_map_res(),
+                "started_wall": time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()),
+            }
+            self._fh.write(json.dumps(header) + "\n")
+            if self._logger is not None:
+                self._logger.info(f"Tracker: recording sighting stream → {p}")
+        except Exception as exc:
+            self._fh = None
+            if self._logger is not None:
+                self._logger.warning(f"Tracker: stream recorder disabled ({exc})")
+
+    @classmethod
+    def _read_state(cls):
+        try:
+            return json.loads(cls._WORLD_STATE.read_text())
+        except Exception:
+            return {}
+
+    @classmethod
+    def _read_spawn_pose(cls) -> dict:
+        return cls._read_state().get("spawn_pose", {"x": 0.0, "y": 0.0, "yaw": 0.0})
+
+    @classmethod
+    def _read_map_pgm(cls) -> str:
+        return str(cls._read_state().get("map_pgm", ""))
+
+    @classmethod
+    def _read_map_res(cls) -> float:
+        return float(cls._read_state().get("map_resolution", 0.5))
+
+    @staticmethod
+    def default_path() -> str:
+        return DEFAULT_STREAM_PATH
+
+    def stop(self) -> None:
+        try:
+            if self._fh is not None:
+                self._fh.flush()
+                self._fh.close()
+                self._fh = None
+        except Exception:
+            pass
+
+    def record(
+        self,
+        class_name: str,
+        confidence: float,
+        bbox: tuple[float, float, float, float],
+        world_pos: tuple[float, float],
+        robot_pose: tuple[float, float, float],
+    ) -> None:
+        if self._fh is None:
+            return
+        try:
+            node = getattr(self, "_clock_node", None)
+            sim_t = 0.0
+            if node is not None:
+                try:
+                    sim_t = node.get_clock().now().nanoseconds / 1e9
+                except Exception:
+                    sim_t = time.time()
+            cx, cy, w, h = bbox
+            self._fh.write(json.dumps({
+                "type": "sighting",
+                "class_name": class_name,
+                "confidence": round(float(confidence), 4),
+                "bbox": [round(cx, 1), round(cy, 1), round(w, 1), round(h, 1)],
+                "x": round(float(world_pos[0]), 3),
+                "y": round(float(world_pos[1]), 3),
+                "rx": round(float(robot_pose[0]), 3),
+                "ry": round(float(robot_pose[1]), 3),
+                "ryaw": round(float(robot_pose[2]), 4),
+                "t": round(sim_t, 3),
+            }) + "\n")
+            self._n += 1
+            if self._n % 200 == 0 and self._logger is not None:
+                self._logger.info(f"Tracker: stream recorded {self._n} sightings")
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Main-process Tracker class
 # ---------------------------------------------------------------------------
 
@@ -379,6 +505,7 @@ class Tracker:
         detector: "Detector",       # forward-ref; resolved at runtime
         depth_projector: "DepthProjector",
         targets: list[str],
+        record_stream: "Optional[bool | str]" = None,  # None=auto, False=off, str=path
     ):
         self._node = node
         self._detector = detector
@@ -425,6 +552,18 @@ class Tracker:
         # Periodic status log (every 30s)
         node.create_timer(30.0, self._log_status)
 
+        # Stream recorder (write-only observer, t_451895af): JSONL of every
+        # sighting the relay forwards to the tracker worker, plus a header line
+        # with the environment data offline replay needs (spawn pose for the
+        # scorer's map→world transform, PGM path for LOS checks). No behavior
+        # change — the tracker consumes the same tuples as before.
+        self._recorder = StreamRecorder(
+            record_path=None if record_stream is False else (
+                DEFAULT_STREAM_PATH if record_stream in (None, True) else str(record_stream)
+            ),
+            node=node,
+        )
+
         # Tracked objects snapshot for status logging (updated by publisher thread)
         self._published_objects: list[dict] = []
         self._published_lock = threading.Lock()
@@ -468,9 +607,23 @@ class Tracker:
                     "map", "base_footprint", rclpy.time.Time()
                 )
                 robot_pose = (t.transform.translation.x, t.transform.translation.y)
+                robot_yaw = 2.0 * math.atan2(
+                    t.transform.rotation.z, t.transform.rotation.w
+                )
             except Exception as exc:
                 self._logger.debug(f"Tracker relay: TF lookup failed for detection #{_count}: {exc}")
                 continue
+
+            # Stream recorder tap (write-only observer): log THIS sighting
+            # exactly as the worker is about to receive it. Failures here must
+            # never affect the live pipeline.
+            self._recorder.record(
+                class_name=det.class_name,
+                confidence=det.confidence,
+                bbox=(det.cx_px, det.cy_px, det.w_px, det.h_px),
+                world_pos=world_pos,
+                robot_pose=(robot_pose[0], robot_pose[1], robot_yaw),
+            )
 
             # Forward to worker process (confidence rides along for margin gating)
             try:
@@ -643,5 +796,7 @@ class Tracker:
             pass
         if self._worker.is_alive():
             self._worker.join(timeout=5.0)
+        # Flush + close the sighting-stream recorder (t_451895af)
+        self._recorder.stop()
         # Clear diagnostics from frontier_explorer (no longer needed)
         # (diagnostics were added earlier in this session)

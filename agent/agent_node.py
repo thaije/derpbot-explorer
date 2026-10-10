@@ -39,7 +39,8 @@ logger = logging.getLogger("agent_node")
 
 
 class AgentNode(Node):
-    def __init__(self, no_perception: bool = False, no_subscribers: bool = False, no_detect_explore: bool = False):
+    def __init__(self, no_perception: bool = False, no_subscribers: bool = False, no_detect_explore: bool = False,
+                 record_stream=None):
         super().__init__(
             "derpbot_agent",
             parameter_overrides=[
@@ -106,6 +107,7 @@ class AgentNode(Node):
                 detector=self._detector,
                 depth_projector=self._depth_projector,
                 targets=mission.targets,
+                record_stream=record_stream,
             )
             t3 = self.get_clock().now().nanoseconds / 1e9
             self._logger.info(
@@ -200,10 +202,33 @@ def main():
         default=False,
         help="Run detector/tracker but disable detection-aware exploration (A/B baseline).",
     )
+    parser.add_argument(
+        "--record-stream",
+        nargs="?",
+        const="auto",
+        default=None,
+        help="Record the tracker sighting stream (JSONL) for offline replay. "
+        "Optional path arg; bare flag → results/streams/latest.jsonl. "
+        "Default ON for benchmark agent launches (DERPBOT_RECORD_STREAM=1).",
+    )
     args, _ = parser.parse_known_args()
 
+    # Recorder default: ON when running under the benchmark stack (env marker
+    # set by start_stack.sh), OFF for manual dev runs. Bare --record-stream
+    # always records (default path); --record-stream PATH records to PATH.
+    import os
+    record_stream = args.record_stream
+    if record_stream is None:
+        if os.environ.get("DERPBOT_RECORD_STREAM") == "1":
+            record_stream = "auto"
+        else:
+            record_stream = False
+    elif record_stream == "auto":
+        record_stream = None  # Tracker: None → default path (auto)
+
     rclpy.init()
-    node = AgentNode(no_perception=args.no_perception, no_subscribers=args.no_subscribers, no_detect_explore=args.no_detect_explore)
+    node = AgentNode(no_perception=args.no_perception, no_subscribers=args.no_subscribers, no_detect_explore=args.no_detect_explore,
+                     record_stream=record_stream)
 
     executor = rclpy.executors.MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)

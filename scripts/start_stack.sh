@@ -170,7 +170,10 @@ if [[ $START_AGENT -eq 1 ]]; then
     # Pass through DERPBOT_FRONTIER_DEBUG (issue #10 diagnostic dumps) if set.
     FRONTIER_DEBUG_FWD=""
     [[ -n "${DERPBOT_FRONTIER_DEBUG:-}" ]] && FRONTIER_DEBUG_FWD="DERPBOT_FRONTIER_DEBUG='${DERPBOT_FRONTIER_DEBUG}'"
-    tmux new -s agent -d "${ROS_ENV} cd $EXPLORER_ROOT && DERPBOT_READY_FLAG='$READY_FLAG' $FRONTIER_DEBUG_FWD $EXPLORER_ROOT/.venv/bin/python agent/agent_node.py ${AGENT_FLAGS}"
+    # Sighting-stream recorder env (t_451895af): forward 0/1 so the agent knows
+    # whether the launch came from the benchmark stack (default ON) or manual dev.
+    STREAM_FLAG_FWD="DERPBOT_RECORD_STREAM='${DERPBOT_RECORD_STREAM:-1}'"
+    tmux new -s agent -d "${ROS_ENV} cd $EXPLORER_ROOT && DERPBOT_READY_FLAG='$READY_FLAG' $FRONTIER_DEBUG_FWD $STREAM_FLAG_FWD $EXPLORER_ROOT/.venv/bin/python agent/agent_node.py ${AGENT_FLAGS}"
 
     if [[ "${PAUSED:-0}" == "1" ]]; then
         # Poll for the agent's ready flag. The flag is created at the top of
