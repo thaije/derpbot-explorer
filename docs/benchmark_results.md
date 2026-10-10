@@ -2,6 +2,27 @@
 
 Historical performance snapshots. Append new entries on top; keep older ones for regression comparison.
 
+## 2026-10-10 — MASTER-PARITY: clean master, easy, 5 seeds × 3 runs (formal leaderboard entry `derpbot-explorer-v5-master`)
+
+Agent: derpbot-explorer @ `24f7658` (= a45b124~1, pre-gate master; agent code commit-identical to the v4-bumper-fix era). Testbed: robot-sandbox @ `a53295a` (tagged `v1.0.3` locally; office scenario byte-identical to v1.0.2). Speed 2, pinned pkg1, 15/15 completed, 0 DOA. Full report: task t_96aad7bd attachment.
+
+| Seed | Run1 | Run2 | Run3 | Mean found |
+|------|------|------|------|------------|
+| 1 | 6/6 (67.4) | 6/6 (77.6) | 5/6 (57.9) | 5.67 |
+| 2 | 5/6 (59.0) | 4/6 (48.0) | 5/6 (62.8) | 4.67 |
+| 3 | 4/6 (58.6) | 5/6 (67.0) | 6/6 (76.2) | 5.0 |
+| 4 | 3/6 (53.4) | 3/6 (53.8) | 5/6 (61.8) | 3.67 |
+| 5 | 6/6 (69.9) | 5/6 (63.4) | 5/6 (64.3) | 5.33 |
+| **Mean** | | | | **4.87/6 — 63.7, 4/15 completions (26.7%)** |
+
+FP mean 4.5/run (precision mean ~0.51); collisions mean 0.8.
+
+**vs v4-bumper-fix (same protocol, May): 2.67/6, 0/15 completions, 56.6** — improvement REPRODUCES at protocol parity: Δ +2.20/6, bootstrap 95% CI [+1.33, +3.07]. Origin audit: **environment, not code** — zero agent code/config commits between eras; office testbed diff empty; May cohort shows thermal-handicap signatures (2 freeze-runs 0/6, 28% less travel, worse loc error 0.48 vs 0.38). Levers outside the repos: pkg1 CPU pin (2026-10-04) + gz-sim 8.10→8.11.
+
+Submission `derpbot-explorer-v5-master` validated PASS; leaderboard.json/html regenerated (34 entries); sandbox stamping fixed in `962948b` (resolved release tag instead of `main-<sha>`).
+
+---
+
 ## 2026-10-10 — BISECT: conf-margin gate disabled (margin=0.0), easy, collapsed seeds 4,3,1 × 1 run
 
 Agent: `derpbot-explorer-v4-bisect-nomargin` (commit 787736c — CONFIDENCE_MARGIN 0.05→0.0; STABILITY_RADIUS 1.2, VETO_RADIUS 0.8, AMBIGUITY_MARGIN 0.10, FAST_CONFIRM_* unchanged). Bisect of the v4-gated recall regression (t_e5736e7b: gated stack mean 3.1/6 vs pre-fix master 5.4/6; suspect: margin required conf ≥0.20, killing near-threshold real objects). Operator sequencing note: bisect verdict only — full verify batch (v5-nomargin 5×2) NOT run here; master-parity benchmark takes priority and the verify dispatches separately.
