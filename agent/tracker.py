@@ -800,3 +800,28 @@ class Tracker:
         self._recorder.stop()
         # Clear diagnostics from frontier_explorer (no longer needed)
         # (diagnostics were added earlier in this session)
+
+
+# ---------------------------------------------------------------------------
+# Policy-override bootstrap for OFFLINE REPLAY ONLY (scripts/replay_tracker.py,
+# t_451895af). The worker runs in a spawn-context subprocess that re-imports
+# this module with default constants; replay passes overrides through
+# DERPBOT_POLICY_OVERRIDES ("NAME=VALUE,NAME=VALUE") so the spawned worker runs
+# the requested policy. Env unset (live runs, tests) → nothing changes. Must
+# sit AFTER every constant definition it patches — that's why it's at file end.
+# ---------------------------------------------------------------------------
+import os as _os
+_overrides = _os.environ.get("DERPBOT_POLICY_OVERRIDES", "")
+if _overrides:
+    for _pair in _overrides.split(","):
+        _pair = _pair.strip()
+        if "=" in _pair and _pair.split("=", 1)[0] in globals():
+            _name, _val = _pair.split("=", 1)
+            _old = globals()[_name]
+            if isinstance(_old, (int, float)) and not isinstance(_old, bool):
+                _num = float(_val)
+                globals()[_name] = (
+                    int(_num)
+                    if isinstance(_old, int) and _num == int(_num)
+                    else _num
+                )
