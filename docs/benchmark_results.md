@@ -2,7 +2,50 @@
 
 Historical performance snapshots. Append new entries on top; keep older ones for regression comparison.
 
+## 2026-10-10 — Full re-benchmark: v4 anti-hallucination gate, easy, 5 seeds × 2 runs
 
+Agent: `derpbot-explorer-v4-antihallucination` (commits a45b124→fbdc078: anti-hallucination gate + cross-class veto + fast-confirm + STABILITY_RADIUS 1.2m). Verification run for the ≥75%-completion gate (task t_e5736e7b); resumable re-run completed a batch reclaimed at 7/10 (seeds 1–3 identical data). Speed 2×, 900 s easy budget, all runs completed (0 failed, 0 DOA).
+
+| Seed | Run | Score | Grade | Found/6 | Cov% | FP | Col |
+|------|-----|-------|-------|---------|------|----|----|
+| 1 | 1 | 53.0 | D | 4/6 | 70.9 | 2 | 3 |
+| 1 | 2 | 58.6 | C | 4/6 | 96.8 | 2 | 2 |
+| 2 | 1 | 56.5 | C | 3/6 | 98.7 | 2 | 0 |
+| 2 | 2 | 55.3 | C | 4/6 | 98.9 | 2 | 4 |
+| 3 | 1 | 51.5 | D | 4/6 | 100.0 | 2 | 6 |
+| 3 | 2 | 35.5 | F | 1/6 | 99.3 | 4 | 4 |
+| 4 | 1 | 39.6 | F | 1/6 | 94.5 | 4 | 0 |
+| 4 | 2 | 55.2 | C | 3/6 | 98.7 | 0 | 1 |
+| 5 | 1 | 66.5 | C | 5/6 | 98.7 | 2 | 0 |
+| 5 | 2 | 49.6 | D | 2/6 | 98.3 | 3 | 0 |
+| **Mean** | | **52.1** | **D** | **3.1/6** | **95.8%** | **2.3** | **2.0** |
+
+**Verdict: FAIL — 0/10 runs reached found=6/6 (target ≥75%); mean found_ratio 0.517, per-seed any-run-completes 0/5 seeds.** 95% CI (bootstrap, run-level found_ratio, 10k resamples): [0.383, 0.650] — the ceiling is far below the target regardless of seed variance.
+
+### Per-seed means (found / score)
+
+| Seed | 1 | 2 | 3 | 4 | 5 |
+|------|---|---|---|---|---|
+| mean found | 0.67 | 0.58 | 0.42 | 0.33 | 0.58 |
+| mean score | 55.8 | 55.9 | 43.5 | 47.4 | 58.0 |
+
+### Failure-mode attribution (29 missing-target events across 10 runs)
+
+| Class | Count | Share | Note |
+|-------|-------|-------|------|
+| unconfirmed-nearby (>90% coverage, target never confirmed/submitted) | 22 | 76% | dominant; tracker gate refuses to confirm despite detection |
+| wrong-class (submission of another class within 2.0 m of GT) | 5 | 17% | cross-class confusion at close range |
+| coverage_gap (target area never explored) | 2 | 7% | seed1 run1 only; run2 reached 96.8% on that seed |
+
+FP-crowding: the two catastrophic runs (seed3 r2, seed4 r1 — found 1/6) each burned 4 FP submissions; in seed4 r1 FPs consumed the detection budget while true targets stayed unconfirmed. DOA runs: 0/10 (84–108 m traveled in every run).
+
+### Reading
+
+Coverage is essentially solved (95.8% mean; 8/10 runs ≥94.5%). The bottleneck is entirely detection-side confirmation: the anti-hallucination gate (conf margin +0.05, 1.2 m stability) still passes SE-corner hallucinations (known residual from t_3f2be52a validation), while simultaneously suppressing enough marginal true detections to produce 22 unconfirmed-nearby misses. Next levers to rank against this data: (1) conf margin 0.07–0.10, (2) bbox-depth plausibility check (generic), (3) wrong-class submissions (5 events) suggest the cross-class veto radius/margin needs tuning, not just the stability gate.
+
+Results: `robot-sandbox/results/submissions/derpbot-explorer-v4-antihallucination/` (easy_seed{1..5}_run{1,2}.json)
+
+---
 
 ## 2026-05-16 — Easy-seed sweep: bumper sensor + detection skip + spin speedup (#8)
 
