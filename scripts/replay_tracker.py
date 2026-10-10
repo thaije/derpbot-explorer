@@ -243,6 +243,88 @@ def score(confirmed: list[dict], gt: dict, spawn: dict,
             fp_count, dp_count, tp_events, log)
 
 
+# ── Miss diagnosis (operator steer #2) ───────────────────────────────────────
+
+def diagnose_misses(sightings: list[dict], gt: dict, spawn: dict, tp_keys: set,
+                    match_threshold: float = MATCH_THRESHOLD) -> list[str]:
+    """One line per MISSING (non-TP) mission-target GT object.
+
+    Q1: does ≥1 sighting of the class exist near the object (map frame)? If
+    yes: why did confirmation fail — 2nd sighting never came / gate /
+    centroid-drift (report nearest raw-sighting distance AND the submitted
+    centroid distance of any in-window-ish publication).
+    Q2 (absence case): the stream only contains frames the detector actually
+    fired on — a class missing from the stream entirely means it was never
+    detected ≥ threshold while in FOV; state that plainly (no synthetic
+    FOV reconstruction from bbox stats: bboxes exist only on fired frames).
+    """
+    lines = []
+    for key, entry in sorted(gt.items(), key=lambda kv: int(kv[0]) if kv[0].isdigit() else 0):
+        if key in tp_keys:
+            continue
+        ctype = entry["type"]
+        cls_sight = [s for s in sightings if s["class_name"] == ctype]
+        if not cls_sight:
+            lines.append(
+                f" MISS {key} {ctype}#{entry['instance']}: NO sighting of this class "
+                "in stream (never detected ≥threshold in FOV → detector-side gap, Q2)"
+            )
+            continue
+        # nearest raw sighting to this object (sightings are map frame)
+        best_d, best_s = math.inf, None
+        for s in cls_sight:
+            wx, wy = map_to_world(s["x"], s["y"], spawn)
+            d = math.hypot(wx - float(entry["x"]), wy - float(entry["y"]))
+            if d < best_d:
+                best_d, best_s = d, s
+        # cluster count within 2 m of the object (would-be track size)
+        near = []
+        for s in cls_sight:
+            wx, wy = map_to_world(s["x"], s["y"], spawn)
+            if math.hypot(wx - float(entry["x"]), wy - float(entry["y"])) <= 2.0:
+                near.append(s)
+        confs = [s["confidence"] for s in near]
+        pose_span = 0.0
+        if len(near) >= 2:
+            for i, a in enumerate(near):
+                for b in near[i + 1:]:
+                    pose_span = max(pose_span, math.hypot(
+                        a["rx"] - b["rx"], a["ry"] - b["ry"]))
+        best_d_str = f"{best_d:.2f}m" if best_s is not None else "n/a"
+        verdict = "no sighting within 2.0m" if not near else (
+            f"nearest {best_d_str}, {len(near)} sighting(s) within 2m, "
+            f"conf {min(confs):.2f}–{max(confs):.2f}, robot-pose span {pose_span:.2f}m"
+        )
+        cause = ""
+        if near:
+            if len(near) < 2:
+                cause = "→ 2nd sighting never arrived (only 1 within window)"
+            elif pose_span < 0.2:
+                cause = "→ poses not diverse enough (<0.2m) and fast-confirm didn't fire (distance/conf gate)"
+            else:
+                cause = "→ sightings existed and were potentially confirmable; if unfound, gate or centroid drift (check config)"
+        lines.append(
+            f" MISS {key} {ctype}#{entry['instance']}: {verdict} {cause}"
+        )
+    return lines
+
+
+def centroid_error_stats(log: list[dict]) -> str:
+    """Published-centroid→matched-GT distance stats on TP submissions."""
+    errs = sorted(row["distance_to_nearest"] for row in log
+                  if row["outcome"] == "TP" and row["distance_to_nearest"] is not None)
+    if not errs:
+        return "centroid-err: n/a (no TPs)"
+    def pct(p):
+        i = min(len(errs) - 1, max(0, int(round(p * (len(errs) - 1)))))
+        return errs[i]
+    mean = sum(errs) / len(errs)
+    med = pct(0.5)
+    p95 = pct(0.95)
+    n_over = sum(1 for e in errs if e > 1.0)
+    return f"centroid-err TP: mean={mean:.3f} med={med:.3f} p95={p95:.3f} n={len(errs)} (>1.0m: {n_over}, >1.5m window: {sum(1 for e in errs if e > 1.5)})"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Offline tracker replay")
     ap.add_argument("--stream", required=True, help="Recorded JSONL sighting stream")
@@ -253,6 +335,8 @@ def main() -> int:
     ap.add_argument("--spawn", default="",
                     help="Spawn pose JSON override; default = stream header spawn_pose")
     ap.add_argument("--verbose", action="store_true", help="Print submission log")
+    ap.add_argument("--diagnose-misses", action="store_true",
+                    help="Per-missing-GT-object sighting/failure diagnosis (steer #2)")
     args = ap.parse_args()
 
     header, sightings = load_stream(args.stream)
@@ -289,6 +373,11 @@ def main() -> int:
     for ev in tp_events:
         by_type.setdefault(ev["class_type"], [0, 0])[0] += 1
     print("   " + "  ".join(f"{t}:{d[0]}/{d[1]}" for t, d in sorted(by_type.items())))
+    print("   " + centroid_error_stats(log))
+    if args.diagnose_misses:
+        tp_keys = {ev["label_key"] for ev in tp_events}
+        for line in diagnose_misses(sightings, gt, spawn, tp_keys):
+            print(line)
     if args.verbose:
         for row in log:
             print("   ", row)
