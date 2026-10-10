@@ -134,7 +134,14 @@ mkdir -p "$SUBMISSIONS_DIR"
 # Generate benchmark_submission.yaml on first run (or if missing)
 YAML_PATH="$SUBMISSIONS_DIR/benchmark_submission.yaml"
 if [[ ! -f "$YAML_PATH" ]]; then
-    SANDBOX_SHA=$(git -C "$SANDBOX_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    # Stamp the testbed release tag: exact-match tag on HEAD if any, otherwise
+    # the nearest tag (describe falls back to <tag>-N-g<sha>, strip the suffix).
+    SANDBOX_TAG=$(git -C "$SANDBOX_ROOT" describe --tags --exact-match HEAD 2>/dev/null \
+        || git -C "$SANDBOX_ROOT" describe --tags 2>/dev/null \
+        || echo "unknown")
+    SANDBOX_TAG="${SANDBOX_TAG%%-*g*}"
+    [[ "$SANDBOX_TAG" == unknown || "$SANDBOX_TAG" == "" ]] && \
+        SANDBOX_TAG="main-$(git -C "$SANDBOX_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
     # Build YAML difficulty list
     DIFF_YAML=""
     for D in $DIFFICULTIES; do
@@ -146,7 +153,7 @@ if [[ ! -f "$YAML_PATH" ]]; then
     cat > "$YAML_PATH" <<EOF
 stack_name: "DerpBot Explorer — ${AGENT_NAME}"
 repo_url: "https://github.com/thaije/derpbot-explorer"
-sandbox_version: "main-${SANDBOX_SHA}"
+sandbox_version: "${SANDBOX_TAG}"
 scenario: "office_explore_detect"
 difficulties:
 ${DIFF_YAML}
