@@ -76,13 +76,16 @@ def main():
     ])
     check("marching track rejected", len(conf_msgs(out)) == 0)
 
-    # 3. Low margin: all confidences at threshold+0.01 → never publishes
+    # 3. Margin disabled (bisect, margin=0.0): 0.16 ≥ 0.15+0.0 passes the margin
+    # check → real track near threshold now publishes (recall restored).
     out = run_worker([
         ("cup", 3.0, 3.0, 1.0, 1.0, 0.16),
         ("cup", 3.05, 2.95, 1.0, 1.45, 0.16),
         ("cup", 2.95, 3.05, 1.0, 1.9, 0.16),
     ])
-    check("low-margin rejected", len(conf_msgs(out)) == 0)
+    msgs = conf_msgs(out)
+    check("margin=0.0: near-threshold track publishes", len(msgs) == 1
+          and msgs[0]["class_name"] == "cup", str(len(msgs)))
 
     # 4. Cross-class veto, interleaved so BOTH tracks exist before either
     # confirms: cup + bottle within 0.1m, near-equal conf → both held forever
@@ -119,13 +122,16 @@ def main():
     check("fast-confirm publishes", len(msgs) == 1 and msgs[0]["class_name"] == "cup",
           str([(m["class_name"]) for m in msgs]))
 
-    # 7. Fast-confirm needs margin-passing confidence: 3 frames at 0.16 → rejected
+    # 7. Fast-confirm with margin=0.0: 0.16 ≥ 0.15+0.0 → 3 close frames publish
+    # (margin gate disabled by bisect; stability/veto coverage unchanged below).
     out = run_worker([
         ("cup", 3.0, 3.0, 2.0, 2.0, 0.16),
         ("cup", 3.0, 3.0, 2.0, 2.0, 0.16),
         ("cup", 3.0, 3.0, 2.0, 2.0, 0.16),
     ])
-    check("fast-confirm respects margin", len(conf_msgs(out)) == 0)
+    msgs = conf_msgs(out)
+    check("fast-confirm at threshold (margin=0.0)", len(msgs) == 1
+          and msgs[0]["class_name"] == "cup", str(len(msgs)))
 
     # 8. Veto cleared on separation: the pair is held while within VETO_RADIUS;
     # once the bottle track's centroid drifts beyond it, the next cup sighting

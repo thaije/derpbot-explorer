@@ -60,7 +60,7 @@ REPUBLISH_SHIFT_M = 0.5     # republish if centroid moves more than this
 # detections whose projected position drifts as the robot moves (near-threshold
 # bboxes re-anchored on different image patches via chained MATCH_RADIUS merges).
 # A real object is re-sighted at (approximately) the same world position.
-CONFIDENCE_MARGIN = 0.05    # track's best confidence must exceed OWL_CONF + this
+CONFIDENCE_MARGIN = 0.0     # (bisect t_9d9a4751) disabled: margin gate suppressed near-threshold real objects
 STABILITY_RADIUS = 1.2      # max pairwise spread of sighting positions to confirm
                             # (real-object depth spread reaches ~1.2m at shallow
                             # view angles; 5/20 baseline FPs also sit 1.5–2.0m off,
