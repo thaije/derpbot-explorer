@@ -2,6 +2,25 @@
 
 Historical performance snapshots. Append new entries on top; keep older ones for regression comparison.
 
+## 2026-10-10 — BISECT: conf-margin gate disabled (margin=0.0), easy, collapsed seeds 4,3,1 × 1 run
+
+Agent: `derpbot-explorer-v4-bisect-nomargin` (commit 787736c — CONFIDENCE_MARGIN 0.05→0.0; STABILITY_RADIUS 1.2, VETO_RADIUS 0.8, AMBIGUITY_MARGIN 0.10, FAST_CONFIRM_* unchanged). Bisect of the v4-gated recall regression (t_e5736e7b: gated stack mean 3.1/6 vs pre-fix master 5.4/6; suspect: margin required conf ≥0.20, killing near-threshold real objects). Operator sequencing note: bisect verdict only — full verify batch (v5-nomargin 5×2) NOT run here; master-parity benchmark takes priority and the verify dispatches separately.
+
+| Seed | Found/6 | TP-class recall (FE/FAK/person) | FP | Precision | Score | Grade | Cov% | Col |
+|------|---------|-------------------------------|-----|-----------|-------|-------|------|-----|
+| 4 | 4/6 | 1/3 + 2/2 + 1/1 | 1 | 0.80 | 64.5 | C | 98.7 | 0 |
+| 3 | 2/6 | 0/3 + 1/2 + 1/1 | 3 | 0.40 | 42.1 | D | 82.2 | 3 |
+| 1 | 4/6 | 1/3 + 2/2 + 1/1 | 1 | 0.80 | 58.7 | C | 62.2 | 1 |
+| **Mean** | **3.33/6** | FE tp-recall 0.33 | **1.7** | **0.67** | **55.1** | **C** | **81.0%** | **1.3** |
+
+Same-seed comparison vs the v4-antihallucination gated batch: seed4 r1 1/6→4/6, seed3 r2 1/6→(run r1 here) 2/6, seed1 4/6,4/6→4/6. Detected 10/18 total; fire_extinguisher remains the weakest class overall (detected 2/9 across the 3 runs, all misses; first_aid_kit 5/6, person 3/3).
+
+**Verdict: FAIL the bisect threshold — mean found 3.33/6 < 4.5/6.** Margin gate removal recovers some recall vs the gated batch's collapsed seeds (gate-attributed r1s: seed4 1/6→4/6, seed3 1/6→2/6) but does NOT approach pre-fix master parity (5.4/6 mean): **stability/veto/fast-confirm gates also suppress recall** (fire_extinguisher tp-recall 0.33 across runs, seed3 0/3 — plausibly veto + stability holding near-threshold FE sightings). Per operator decision rule: STOP and report; next step is revert-gates-entirely vs geometry-based rework (operator decides; full nomargin verify not run).
+
+Results: `robot-sandbox/results/office_easy_001_20261010T172006.json` (s4), `...T172831.json` (s3), `...T173653.json` (s1); copies under `results/submissions/derpbot-explorer-v4-bisect-nomargin/`.
+
+---
+
 ## 2026-10-10 — Full re-benchmark: v4 anti-hallucination gate, easy, 5 seeds × 2 runs
 
 Agent: `derpbot-explorer-v4-antihallucination` (commits a45b124→fbdc078: anti-hallucination gate + cross-class veto + fast-confirm + STABILITY_RADIUS 1.2m). Verification run for the ≥75%-completion gate (task t_e5736e7b); resumable re-run completed a batch reclaimed at 7/10 (seeds 1–3 identical data). Speed 2×, 900 s easy budget, all runs completed (0 failed, 0 DOA).
