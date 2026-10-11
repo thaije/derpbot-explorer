@@ -208,7 +208,8 @@ def main():
         const="auto",
         default=None,
         help="Record the tracker sighting stream (JSONL) for offline replay. "
-        "Optional path arg; bare flag → results/streams/latest.jsonl. "
+        "Optional path arg; bare flag → per-run rotated default (see "
+        "tracker.default_stream_path). "
         "Default ON for benchmark agent launches (DERPBOT_RECORD_STREAM=1).",
     )
     args, _ = parser.parse_known_args()

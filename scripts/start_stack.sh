@@ -172,8 +172,17 @@ if [[ $START_AGENT -eq 1 ]]; then
     [[ -n "${DERPBOT_FRONTIER_DEBUG:-}" ]] && FRONTIER_DEBUG_FWD="DERPBOT_FRONTIER_DEBUG='${DERPBOT_FRONTIER_DEBUG}'"
     # Sighting-stream recorder env (t_451895af): forward 0/1 so the agent knows
     # whether the launch came from the benchmark stack (default ON) or manual dev.
+    # t_96cab082: DERPBOT_STREAM_SCOPE gives the recorder per-run stream naming
+    # (<scenario>_<seed><run>_<stamp>.jsonl); DERPBOT_STREAM_RUN is set by
+    # run_benchmark.sh when it drives a specific run number.
     STREAM_FLAG_FWD="DERPBOT_RECORD_STREAM='${DERPBOT_RECORD_STREAM:-1}'"
-    tmux new -s agent -d "${ROS_ENV} cd $EXPLORER_ROOT && DERPBOT_READY_FLAG='$READY_FLAG' $FRONTIER_DEBUG_FWD $STREAM_FLAG_FWD $EXPLORER_ROOT/.venv/bin/python agent/agent_node.py ${AGENT_FLAGS}"
+    STREAM_SCOPE_FWD=""
+    if [[ -n "${DERPBOT_STREAM_SCOPE:-}" || -n "${DERPBOT_STREAM_RUN:-}" ]]; then
+        SCOPE="${DERPBOT_STREAM_SCOPE:-${SCENARIO}_seed${SEED}}"
+        [[ -n "${DERPBOT_STREAM_RUN:-}" ]] && SCOPE="${SCOPE}_${DERPBOT_STREAM_RUN}"
+        STREAM_SCOPE_FWD="DERPBOT_STREAM_SCOPE='${SCOPE}'"
+    fi
+    tmux new -s agent -d "${ROS_ENV} cd $EXPLORER_ROOT && DERPBOT_READY_FLAG='$READY_FLAG' $FRONTIER_DEBUG_FWD $STREAM_FLAG_FWD $STREAM_SCOPE_FWD $EXPLORER_ROOT/.venv/bin/python agent/agent_node.py ${AGENT_FLAGS}"
 
     if [[ "${PAUSED:-0}" == "1" ]]; then
         # Poll for the agent's ready flag. The flag is created at the top of

@@ -37,6 +37,7 @@ Detection2DArray format expected by scorer:
 from __future__ import annotations
 
 import math
+import os
 from pathlib import Path
 import multiprocessing as mp
 import queue
@@ -62,7 +63,47 @@ REPUBLISH_SHIFT_M = 0.5     # republish if centroid moves more than this
 # launched with --record-stream (no explicit path or auto mode). Relative to
 # CWD — run_scenario-style invocations run from the explorer root, so this is
 # run-adjacent; override with --record-stream <path>.
+#
+# Per-run rotation (t_96cab082): when DERPBOT_STREAM_SCOPE is set (by
+# start_stack.sh from the scenario/seed/run context), the default filename
+# gains that scope + a wall-clock stamp — e.g.
+#   stream_office_easy_001_seed1run2_20261011T120000Z.jsonl
+# — so successive benchmark runs never append into one shared file. Plain
+# manual runs (no scope, no explicit path) keep the legacy latest.jsonl name,
+# and an existing file is .1-rotated rather than appended to.
 DEFAULT_STREAM_PATH = "results/streams/latest.jsonl"
+
+
+def _rotate_existing(p: Path) -> None:
+    """Move p out of append range: latest.jsonl → latest.jsonl.1 (…2, …3)."""
+    try:
+        if not p.exists():
+            return
+        n = 1
+        while Path(f"{p}.{n}").exists():
+            n += 1
+        p.rename(Path(f"{p}.{n}"))
+    except Exception:
+        pass  # write-only observer: rotation failure must never block the run
+
+
+def default_stream_path() -> str:
+    """Default stream path with per-run naming (t_96cab082).
+
+    DERPBOT_STREAM_SCOPE (set by start_stack.sh) is a run identifier like
+    "easy_seed1run2" — appended to the stem plus a wall-clock stamp so each
+    benchmark run gets a unique file. Without the scope the legacy
+    latest.jsonl name is used, rotated out of the way if it already exists.
+    """
+    scope = os.environ.get("DERPBOT_STREAM_SCOPE", "").strip()
+    if scope and scope != "auto":
+        import re as _re
+        safe = _re.sub(r"[^A-Za-z0-9._-]+", "_", scope)
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        return f"results/streams/stream_{safe}_{stamp}.jsonl"
+    p = Path(DEFAULT_STREAM_PATH)
+    _rotate_existing(p)
+    return DEFAULT_STREAM_PATH
 
 # Anti-hallucination gate (FP backlog #40): OWLv2 hallucinations are low-margin
 # detections whose projected position drifts as the robot moves (near-threshold
@@ -438,7 +479,7 @@ class StreamRecorder:
 
     @staticmethod
     def default_path() -> str:
-        return DEFAULT_STREAM_PATH
+        return default_stream_path()
 
     def stop(self) -> None:
         try:
@@ -560,9 +601,11 @@ class Tracker:
         # with the environment data offline replay needs (spawn pose for the
         # scorer's map→world transform, PGM path for LOS checks). No behavior
         # change — the tracker consumes the same tuples as before.
+        # t_96cab082: the default path is per-run rotated (scoped filename
+        # under the benchmark stack, .N-rotated legacy name for manual runs).
         self._recorder = StreamRecorder(
             record_path=None if record_stream is False else (
-                DEFAULT_STREAM_PATH if record_stream in (None, True) else str(record_stream)
+                default_stream_path() if record_stream in (None, True) else str(record_stream)
             ),
             node=node,
         )

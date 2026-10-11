@@ -206,7 +206,9 @@ for DIFF in $DIFFICULTIES; do
             # Launch the full stack. start_stack.sh handles: cleanup, FastDDS,
             # sim, SLAM, Nav2, agent, and the Gazebo pause/unpause timing fix.
             # It returns once the agent signals ready (~30-60 wall-s).
-            if ! "$SCRIPT_DIR/start_stack.sh" \
+            # t_96cab082: export the run identifier so the sighting-stream
+            # recorder gets per-run naming (stream_…_seedNrunM_<stamp>.jsonl).
+            if ! DERPBOT_STREAM_RUN="run${RUN}" "$SCRIPT_DIR/start_stack.sh" \
                     --scenario "$SCENARIO" \
                     --seed "$SEED" \
                     --speed "$SPEED" \

@@ -3,6 +3,9 @@
 # FDS_PORT defaults to 11811 if not set (from start_stack.sh)
 FDS_PORT="${FDS_PORT:-11811}"
 
+# Explorer root (for the stream-rotation dir below)
+EXPLORER_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 # Gracefully stop agent_node first so it can flush its profile.
 # SIGKILL (from tmux kill-session) skips Python finally blocks; SIGINT raises
 # KeyboardInterrupt in the main thread → except/finally → shutdown() → _write_timeline().
@@ -41,5 +44,16 @@ done
 echo "Freeing ports..."
 fuser -k 7400/tcp 2>/dev/null || true
 fuser -k 11811/udp 2>/dev/null || true
+
+# Sighting-stream rotation (t_96cab082): move any legacy latest.jsonl out of
+# append range so the next run can't silently append into a previous run's
+# stream. Explicit-path and per-run-scoped streams are never touched.
+STREAMS_DIR="$EXPLORER_ROOT/results/streams"
+if [[ -f "$STREAMS_DIR/latest.jsonl" ]]; then
+    N=1
+    while [[ -f "$STREAMS_DIR/latest.jsonl.$N" ]]; do N=$((N + 1)); done
+    mv "$STREAMS_DIR/latest.jsonl" "$STREAMS_DIR/latest.jsonl.$N"
+    echo "Rotated stream: latest.jsonl → latest.jsonl.$N"
+fi
 
 echo "cleanup done"
