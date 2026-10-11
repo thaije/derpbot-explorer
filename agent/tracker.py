@@ -380,8 +380,9 @@ class StreamRecorder:
     Output format:
       line 1: {"type": "header", "spawn_pose": {...}, "map_pgm": ..., ...}
       n>1:    {"type": "sighting", "class_name", "confidence", "bbox":
-               [cx, cy, w, h] (px), "x", "y" (map frame), "rx", "ry", "ryaw",
-               "t": sim-seconds}
+               [cx, cy, w, h] (px), "x", "y" (map frame), "depth" (m, the
+               median depth sample used for the projection, may be null),
+               "rx", "ry", "ryaw", "t": sim-seconds}
 
     Recording is pure JSONL — no image dumps. write failures are swallowed
     so recording can never take the live pipeline down.
@@ -455,6 +456,7 @@ class StreamRecorder:
         bbox: tuple[float, float, float, float],
         world_pos: tuple[float, float],
         robot_pose: tuple[float, float, float],
+        depth: Optional[float] = None,
     ) -> None:
         if self._fh is None:
             return
@@ -474,6 +476,7 @@ class StreamRecorder:
                 "bbox": [round(cx, 1), round(cy, 1), round(w, 1), round(h, 1)],
                 "x": round(float(world_pos[0]), 3),
                 "y": round(float(world_pos[1]), 3),
+                "depth": None if depth is None else round(float(depth), 3),
                 "rx": round(float(robot_pose[0]), 3),
                 "ry": round(float(robot_pose[1]), 3),
                 "ryaw": round(float(robot_pose[2]), 4),
@@ -592,10 +595,14 @@ class Tracker:
 
             # Project to world (uses TF2 — runs in main process, releases GIL
             # during the C++ TF2 lookup; GIL hold is just the Python math).
-            world_pos = self._projector.project(det)
-            if world_pos is None:
+            # project_with_depth() additionally returns the depth sample used —
+            # needed by the recorder tap only; the worker receives the same
+            # (class, world_pos, robot_pose) tuples as before (no behavior change).
+            proj = self._projector.project_with_depth(det)
+            if proj is None:
                 self._logger.debug(f"Tracker relay: detection #{_count} projection failed")
                 continue
+            world_pos, depth_m = (proj[0], proj[1]), proj[2]
 
             # Get robot pose (TF2 lookup in main process)
             try:
@@ -616,13 +623,15 @@ class Tracker:
 
             # Stream recorder tap (write-only observer): log THIS sighting
             # exactly as the worker is about to receive it. Failures here must
-            # never affect the live pipeline.
+            # never affect the live pipeline. project_with_depth() returns the
+            # same world position plus the depth sample used (t_451895af).
             self._recorder.record(
                 class_name=det.class_name,
                 confidence=det.confidence,
                 bbox=(det.cx_px, det.cy_px, det.w_px, det.h_px),
                 world_pos=world_pos,
                 robot_pose=(robot_pose[0], robot_pose[1], robot_yaw),
+                depth=depth_m,
             )
 
             # Forward to worker process (confidence rides along for margin gating)

@@ -132,6 +132,20 @@ class DepthProjector:
 
         Returns (world_x, world_y) or None if depth is invalid or TF lookup fails.
         """
+        res = self.project_with_depth(det)
+        if res is None:
+            return None
+        return (res[0], res[1])
+
+    def project_with_depth(self, det: DetectionResult) -> Optional[tuple[float, float, float]]:
+        """
+        Project the centre of `det`'s bounding box to world (x, y) and also
+        return the depth sample (metres) used: (world_x, world_y, depth).
+
+        Returns None if depth is invalid or TF lookup fails.
+        Used by the tracker's stream-recorder tap (t_451895af — Deliverable 1
+        asks for the depth estimate per recorded sighting).
+        """
         with self._depth_lock:
             depth_img = self._depth_image
             depth_stamp = self._depth_stamp
@@ -187,4 +201,4 @@ class DepthProjector:
             self._logger.debug(f"DepthProjector: TF lookup failed — {exc}")
             return None
 
-        return (pt_world.point.x, pt_world.point.y)
+        return (pt_world.point.x, pt_world.point.y, depth)
