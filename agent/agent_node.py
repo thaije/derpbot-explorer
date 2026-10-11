@@ -223,7 +223,7 @@ def main():
             record_stream = "auto"
         else:
             record_stream = False
-    elif record_stream == "auto":
+    if record_stream == "auto":
         record_stream = None  # Tracker: None → default path (auto)
 
     rclpy.init()
