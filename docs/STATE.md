@@ -57,7 +57,7 @@ agent/
   frontier_explorer.py BFS /map frontiers → NavigateToPose, stuck detection, patrol mode, detection preemption
   detector.py          OWLv2 in subprocess (spawn), 5 Hz, conf=0.15, 90 s watchdog
   depth_projector.py   bbox → depth → world (x, y) via TF2
-  tracker.py           multi-sighting fusion (≥2 diverse poses ≥0.2m apart OR ≥3 close-range in-view frames), anti-hallucination gate (conf margin +0.05, positional stability 1.2m — STABILITY_RADIUS=1.2), cross-class position veto 0.8m, MATCH_RADIUS=2.0 m, CANDIDATE_TIMEOUT_S=180
+  tracker.py           multi-sighting fusion (≥2 diverse poses ≥0.2m apart OR ≥3 close-range in-view frames), bcfc confirmation policy (sweep t_451895af: conf floor = bare threshold CONFIDENCE_MARGIN=0.0, stability gate STABILITY_RADIUS=100.0, veto VETO_RADIUS=0.0 — both inert, re-enableable via DERPBOT_POLICY_OVERRIDES), MATCH_RADIUS=2.0 m, CANDIDATE_TIMEOUT_S=180
   agent_node.py        INIT → EXPLORE → DONE, MultiThreadedExecutor; --record-stream [PATH] records the tracker sighting stream (default ON under benchmark stack; per-run naming stream_<scenario>_<seed><run>_<stamp>.jsonl via DERPBOT_STREAM_SCOPE, latest.jsonl fallback rotated by cleanup, t_451895af/t_96cab082)
 
 config/
