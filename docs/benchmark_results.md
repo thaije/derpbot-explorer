@@ -2,6 +2,40 @@
 
 Historical performance snapshots. Append new entries on top; keep older ones for regression comparison.
 
+## 2026-10-11 — v6-fastconfirm: bcfc policy adopted, decisive easy 5×3 batch — REGRESSION, HALTED
+
+Agent: derpbot-explorer @ `eb59b96` (bcfc adopted: STABILITY_RADIUS 1.2→100.0, VETO_RADIUS 0.8→0.0, margin 0.0, fast-confirm untouched). Testbed unchanged (v1.0.3 tag, office scenario). Speed 2, pinned pkg1, 15/15 completed, 0 failed, 0 DOA.
+
+**COMPLETIONS (found=6/6): 2/15 (13.3%). BAR WAS 11–12; PRE-REGISTERED RULE <8/15 → HALT, no submission, do not iterate.** Mean found 4.27/6 vs v5-master 4.87/6; completions halved (2 vs 4). The sweep's offline prediction (bcfc = strictly more recall: 13/18 replay corpus vs master-as-is 7/18) DID NOT TRANSFER to live runs.
+
+| Seed | Run1 | Run2 | Run3 | Mean found |
+|------|------|------|------|------------|
+| 1 | 6/6 (68.6 C) | 5/6 (50.6 D) | 5/6 (60.8 C) | 5.33 |
+| 2 | 3/6 (44.8 D) | 5/6 (60.5 C) | 6/6 (66.5 C) | 4.67 |
+| 3 | 5/6 (65.4 C) | 0/6 (40.9 D) | 5/6 (62.5 C) | 3.33 |
+| 4 | 4/6 (58.4 C) | 4/6 (56.4 C) | 5/6 (64.6 C) | 4.33 |
+| 5 | 3/6 (52.0 D) | 5/6 (64.3 C) | 3/6 (55.5 C) | 3.67 |
+| **Mean** | | | | **4.27/6 — 58.1, 2/15 completions (13.3%)** |
+
+Per-class recall: fire_extinguisher 31/45 (0.69), first_aid_kit 20/30 (0.67), person 13/15 (0.87). Centroid-err TP: mean 0.442 m, med 0.266, p95 1.263, n=64; 8 above 1.0 m, 0 outside the 1.5 m window. FP mean 6.6/run (+0.3 FP_LOS, 0.3 DP); collisions mean 1.0; coverage mean 85.2%.
+
+vs v5-master per-seed (same protocol): s1 −0.33, s2 0.00, s3 −0.56, s4 +0.22, s5 −0.61.
+
+**Per-run attribution (26 missed mission-target objects over 13 non-6/6 runs, via per-run sighting streams + miss diagnosis):**
+- 12 × detector-absence (GT object's class never sighted near it within 2 m; 2 of those zero sightings of the whole class in-stream) — s1r2 GT5, s1r3 GT5, s2r1 GT3+GT4+GT5, s2r2 GT4, s4r2 GT3, s5r1 GT1+GT5, s5r3 GT1+GT3+GT5, plus s3r2's five never-detected objects.
+- 6 × confirmed-in-stream-but-unfound (nearest raw sighting 0.01–0.05 m, dozens of sightings, poses diverse — the tracker had the object and never published a submission that scored): s3r1 GT2, s3r3 GT2, s4r1 GT2+GT13, s4r2 GT2, s5r1 GT3. Not gate/veto (both inert), not the 1.5 m window (raw sightings land on the object) — points at centroid/MERGE contamination in live fusion (huge pose spans 5.5–12.6 m pull the running-mean centroid off the object; replay streams showed the same objects found, so live-only context — candidates/detours/exploration interplay — is implicated).
+- 2 × diversity/fast-confirm gaps at single viewpoint (pose span 0.0 m, 3 or fewer sightings): s3r2 GT13 (also the DOA-adjacent 0/6 run), s4r3 GT3.
+- s3r2 = the one catastrophic run: 0/6, only 131 sightings ALL class `person` (detector never fired on the other classes all run), coverage 24.2% — exploration/detector collapse, not tracker.
+- DOA: 0 anywhere; no run died inside the 1.5 m near-miss margin on centroid error (p95 1.263 m).
+
+**Interpretation for next iteration (evidence-backed candidates, NOT dispatched here):**
+1. The 12 detector-absence misses are now the largest bucket — publish-side min-error-per-sighting candidates (sweep row `baseline-all-gates-off` predicted 15/18 but FP 8/run) and FA detector-side fixes were already queued from t_451895af; the live FP mean (6.6) is worse than sweep-predicted 2.7, so chain-merge into dense-view clusters is the FP mechanism to kill first.
+2. The 6 "confirmable-unfound" misses say live centroid fusion (running mean across chained matches) diverges from what replay predicted — a publish-side min-error-per-sighting rule (publish the best-supported sighting position, not the running-mean centroid) addresses both buckets at once and was already queued as the next candidate.
+
+Result JSONs: `robot-sandbox/results/submissions/derpbot-explorer-v6-fastconfirm/easy_seed{1..5}_run{1..3}.json`; per-run sighting streams: `results/streams/stream_easy_seed*_run*_<stamp>.jsonl`; batch table: `results/v6_fastconfirm_batch_rows.json`. NOT validated as a submission (decision rule). Tracker commit eb59b96 stands (offline regression exact); its LIVE effect is this regression — revert question is now open for the operator.
+
+---
+
 ## 2026-10-10 — MASTER-PARITY: clean master, easy, 5 seeds × 3 runs (formal leaderboard entry `derpbot-explorer-v5-master`)
 
 Agent: derpbot-explorer @ `24f7658` (= a45b124~1, pre-gate master; agent code commit-identical to the v4-bumper-fix era). Testbed: robot-sandbox @ `a53295a` (tagged `v1.0.3` locally; office scenario byte-identical to v1.0.2). Speed 2, pinned pkg1, 15/15 completed, 0 DOA. Full report: task t_96aad7bd attachment.
