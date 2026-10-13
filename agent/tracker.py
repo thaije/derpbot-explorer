@@ -59,13 +59,6 @@ MIN_POSE_DISTANCE = 0.2     # robot must move ≥0.2m between diverse sightings
 PUBLISH_RATE_HZ = 5.0       # rate to check for newly confirmed objects
 REPUBLISH_SHIFT_M = 0.5     # republish if centroid moves more than this
 
-# Publish-side min-error-per-sighting selection (t_6b03f03c): a sighting is
-# "corroborated" when ≥ MIN_CORROBORATION_SIGHTINGS sightings of the track sit
-# within CORROBORATION_RADIUS of it (the sighting itself included). Corroborated
-# sightings outrank the closest-to-mean fallback.
-CORROBORATION_RADIUS = 0.3  # metres — re-sightings of a real object cluster this tight
-MIN_CORROBORATION_SIGHTINGS = 3  # corroborated = self + ≥2 others
-
 # Sighting-stream recorder (t_451895af): default output when the agent is
 # launched with --record-stream (no explicit path or auto mode). Relative to
 # CWD — run_scenario-style invocations run from the explorer root, so this is
@@ -162,57 +155,6 @@ class TrackedObject:
     @property
     def world_y(self) -> float:
         return sum(p[1] for p in self.positions) / len(self.positions)
-
-    def best_sighting_position(self) -> tuple[float, float]:
-        """
-        Publish-side min-error-per-sighting selection (t_6b03f03c).
-
-        Publishes the position of the single best sighting on this track instead
-        of the running-mean centroid. Every projection of a bbox into world
-        coordinates carries a depth-consistency error: the farther the robot
-        is from the object (or the shallower the view angle), the less reliable
-        the projected position is. Averaging positions blurs in exactly the
-        sightings whose projection noise dominates the mean — the mean can sit
-        well away from the physical object even though some individual sighting
-        nailed it. Selecting one sighting is the generic fix: no class logic,
-        no thresholds on size or distance, purely geometric over recorded data.
-
-        Selection metric, most-preferred first:
-        1. Corroboration — the sighting whose projected world position is
-           corroborated by ≥ 2 other sightings of this class within
-           CORROBORATION_RADIUS. A real object is re-sighted at (approximately)
-           the same position from many robot poses, while a projection with a
-           distorted depth lands in a slightly different spot. If several
-           sightings qualify, the one with the largest corroborating pool wins
-           (ties broken by distance to the pool's centroid).
-        2. Fallback — the sighting closest to the running-mean centroid (the
-           pre-mechanism estimate). This keeps tracks with few or spread-out
-           sightings at least as good as the old behaviour.
-
-        Returns (x, y); a track with no sightings never reaches publish, but
-        the fallback still returns the centroid for safe arithmetic.
-        """
-        if not self.positions:
-            return (0.0, 0.0)
-        mean_x = self.world_x
-        mean_y = self.world_y
-        # corroboration pool per sighting = others within CORROBORATION_RADIUS
-        best = None  # (pool_size, dist_to_pool_centroid, dist_to_mean, (x, y))
-        for i, (xi, yi) in enumerate(self.positions):
-            pool = [
-                self.positions[j]
-                for j, (xj, yj) in enumerate(self.positions)
-                if j != i and math.hypot(xj - xi, yj - yi) < CORROBORATION_RADIUS
-            ]
-            if len(pool) >= MIN_CORROBORATION_SIGHTINGS - 1:
-                px = sum(p[0] for p in pool) / len(pool)
-                py = sum(p[1] for p in pool) / len(pool)
-                key = (-len(pool), math.hypot(xi - px, yi - py), 0.0)
-            else:
-                key = (0.0, float("inf"), math.hypot(xi - mean_x, yi - mean_y))
-            if best is None or key < best[0]:
-                best = (key, (xi, yi))
-        return best[1]
 
     @property
     def sighting_count(self) -> int:
@@ -423,10 +365,7 @@ def tracker_worker(
                     f"spread={obj.position_spread():.2f}m\n"
                 )
                 continue
-            # Publish the min-error-per-sighting position (t_6b03f03c): the
-            # single best-corroborated sighting rather than the running-mean
-            # centroid — see TrackedObject.best_sighting_position().
-            cx, cy = obj.best_sighting_position()
+            cx, cy = obj.world_x, obj.world_y
             prev = last_published.get(obj.track_id)
             if prev is not None and math.hypot(cx - prev[0], cy - prev[1]) < REPUBLISH_SHIFT_M:
                 continue
