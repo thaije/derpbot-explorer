@@ -12,29 +12,10 @@ inference subprocess pulls frames, runs inference, and pushes results back.
 
 Pipeline (single-stage):
   OWL-v2 (ViT-B/16) — text-to-bbox in one pass:
-  Takes mission target names as text queries (underscores→spaces).
-  Returns bboxes + confidence scores directly; no separate re-classification needed.
-  Accepted if: confidence >= 0.20 (OWL_CONF_THRESHOLD).
-  Output class_name is always one of the mission targets.
-
-  Second-pass ROI recall (event-triggered, t_c6b546ac):
-  Trigger (chosen from code reality): the relay consumes results at the
-  inference cadence (~5 Hz). A class is ROI-eligible when ALL hold:
-  1. the tracker reports that class as a PENDING candidate (unconfirmed,
-     >=1 sighting) — read-only subscription, Tracker.pending_class_positions();
-  2. the full-frame pass has produced NO sighting of that class for
-     K=10 relay cycles (~2 s — matches the task's 2 s dwell budget);
-  3. >= ROI_COOLDOWN_S wall-s since this class's last ROI pass.
-  ONE second-pass inference then runs on a 320 px center crop around that
-  class's last-known IMAGE position, upscaled 2x (>=2x per spec), at
-  ROI_CONF_THRESHOLD (lower than full-frame: the 2x upscale restores pixels
-  for far/small objects — the forensics (c) bucket sits at 0.7-4.9 m —
-  while the tracker still applies its normal confirmation gates
-  (MIN_SIGHTINGS/STABILITY/VETO), so added recall cannot publish on its own).
-  Detections from the ROI pass carry source="roi_second_pass" for later
-  attribution. Compute budget: event-triggered + cooldown => at most
-  1 ROI pass per class per 4 s (<=6% extra inference at 5 Hz full-frame);
-  the pass runs in the same subprocess worker, so the GIL invariant holds.
+    Takes mission target names as text queries (underscores→spaces).
+    Returns bboxes + confidence scores directly; no separate re-classification needed.
+    Accepted if: confidence >= 0.20 (OWL_CONF_THRESHOLD).
+    Output class_name is always one of the mission targets.
 
 Tuning notes:
   - OWL_CONF_THRESHOLD=0.20 validated on low-poly Gazebo sim: no false positives,
@@ -86,15 +67,6 @@ GPU_DEVICE = 0
 OWL_MODEL_ID = "google/owlv2-base-patch16-ensemble"
 OWL_CONF_THRESHOLD = 0.15  # tuned: 0.10 gave 3 FPs; 0.12 gave 3 FPs with no net benefit; 0.15 gives 1 FP best precision (fire_ext#2 marginal but found at good nav coverage)
 
-# ── ROI second-pass (event-triggered recall, t_c6b546ac) ─────────────────────
-# Trigger: pending-candidate class silent for K relay cycles (~2 s at 5 Hz).
-ROI_SILENT_CYCLES_K = 10        # full-frame passes without a sighting of that class
-ROI_COOLDOWN_S = 4.0            # wall-s between ROI passes for the same class
-ROI_CONF_THRESHOLD = 0.12       # ROI pass threshold (upscaled crop; tracker still gates)
-ROI_CROP_PX = 320               # square crop centred on candidate's last image position
-ROI_UPSCALE = 2.0               # crop is upscaled by this factor before inference
-ROI_SOURCE_TAG = "roi_second_pass"
-
 
 @dataclass
 class DetectionResult:
@@ -107,9 +79,6 @@ class DetectionResult:
     h_px: float
     # ROS timestamp as (sec, nanosec) tuple
     stamp: object
-    # Origin of this detection: "full_frame" (primary pass) or
-    # "roi_second_pass" (ROI recall pass) — attribution only, tracker ignores.
-    source: str = "full_frame"
 
 
 # ---------------------------------------------------------------------------
@@ -122,18 +91,11 @@ def _inference_worker(
     frame_queue: mp.Queue,
     result_queue: mp.Queue,
     ready_event: mp.Event,
-    roi_queue: Optional[mp.Queue] = None,
 ) -> None:
     """
     Runs in a child process. Single-stage OWL-v2 pipeline:
       OWL-v2 takes text prompts (one per target) and returns bboxes + scores directly.
       No separate re-classification stage needed.
-
-    ROI second-pass (t_c6b546ac): if roi_queue is set and carries a
-    {"class_name": str, "cx_px", "cy_px", "upscale"} request, ONE extra
-    inference runs on a crop around the given image position at
-    ROI_CONF_THRESHOLD; results come back on result_queue as a
-    {"roi_detections": [...]} message with source=ROI_SOURCE_TAG.
     """
     # Only 1 GPU available — PyTorch and Gazebo share GPU 0.
     # (Previously CUDA_VISIBLE_DEVICES=1 kept PyTorch off Gazebo's rendering GPU;
@@ -188,123 +150,15 @@ def _inference_worker(
     result_queue.put({"ready": "owlv2"})
     ready_event.set()
 
-    # --------------------------------------------------------------
-    # ROI second-pass inference (t_c6b546ac): crop → upscale → infer
-    # --------------------------------------------------------------
-    def _run_roi_pass(roi_req: dict) -> None:
-        """One inference on an upscaled crop around the pending candidate's
-        last-known image position. Emits {"roi_detections": [...]} with
-        source=ROI_SOURCE_TAG; boxes are mapped back to full-frame px."""
-        cls = roi_req.get("roi_class")
-        cx_req = roi_req.get("cx_px") or 320.0
-        cy_req = roi_req.get("cy_px") or 240.0
-        upscale = float(roi_req.get("upscale", ROI_UPSCALE))
-        stamp_sec = roi_req.get("stamp_sec", 0)
-        stamp_nanosec = roi_req.get("stamp_nanosec", 0)
-        frame_bytes, shape = roi_req.get("frame_bytes"), roi_req.get("shape")
-        if cls is None or frame_bytes is None or shape is None:
-            return
-        outputs = inputs = target_sizes = results = None
-        try:
-            frame = np.frombuffer(frame_bytes, dtype=np.uint8).reshape(shape)
-            rgb = _cv2.cvtColor(frame, _cv2.COLOR_BGR2RGB)
-            H, W = shape[0], shape[1]
-            half = ROI_CROP_PX // 2
-            x1c = int(max(0, min(W - 1, cx_req - half)))
-            y1c = int(max(0, min(H - 1, cy_req - half)))
-            x2c = int(min(W, x1c + half * 2))
-            y2c = int(min(H, y1c + half * 2))
-            crop = rgb[y1c:y2c, x1c:x2c]
-            if crop.size == 0:
-                return
-            upscaled = _cv2.resize(
-                crop, None, fx=upscale, fy=upscale,
-                interpolation=_cv2.INTER_CUBIC,
-            )
-            pil_crop = PILImage.fromarray(upscaled)
-            inputs = processor(text=queries, images=pil_crop, return_tensors="pt")
-            inputs = {
-                k: (v.half() if v.dtype == torch.float32 else v).to(
-                    f"cuda:{GPU_DEVICE}"
-                )
-                for k, v in inputs.items()
-            }
-            target_sizes = torch.tensor(
-                [(upscaled.shape[0], upscaled.shape[1])],
-                dtype=torch.int32,
-                device=f"cuda:{GPU_DEVICE}",
-            )
-            with torch.inference_mode():
-                outputs = model(**inputs)
-            results = processor.post_process_grounded_object_detection(
-                outputs,
-                target_sizes=target_sizes,
-                threshold=ROI_CONF_THRESHOLD,
-            )[0]
-            det_scores = results["scores"].cpu().tolist()
-            det_labels = results["labels"].cpu().tolist()
-            det_boxes = results["boxes"].cpu().tolist()
-        except Exception as exc:
-            result_queue.put({"warning": f"roi inference error: {exc}"})
-            return
-        finally:
-            del outputs, inputs, target_sizes, results
-            torch.cuda.empty_cache()
-
-        # Map crop coords back to full-frame pixel coords; ROI pass answers
-        # only for the pending class.
-        roi_dets = []
-        for score, label_idx, box in zip(det_scores, det_labels, det_boxes):
-            bx1, by1, bx2, by2 = box
-            # box coords are in upscaled-crop px → downscale, then offset.
-            fx1 = x1c + bx1 / upscale
-            fy1 = y1c + by1 / upscale
-            fx2 = x1c + bx2 / upscale
-            fy2 = y1c + by2 / upscale
-            idx = int(label_idx)
-            if idx >= len(targets) or targets[idx] != cls:
-                continue
-            roi_dets.append(
-                {
-                    "class_name": cls,
-                    "confidence": float(score),
-                    "cx_px": (fx1 + fx2) / 2,
-                    "cy_px": (fy1 + fy2) / 2,
-                    "w_px": fx2 - fx1,
-                    "h_px": fy2 - fy1,
-                    "stamp_sec": stamp_sec,
-                    "stamp_nanosec": stamp_nanosec,
-                    "source": ROI_SOURCE_TAG,
-                }
-            )
-        try:
-            result_queue.put({"roi_detections": roi_dets}, timeout=5.0)
-        except Exception:
-            pass  # queue full — drop ROI result, never block the worker
-
     _inf_n = 0
     while True:
         try:
             item = frame_queue.get(timeout=1.0)
         except Exception:
-            # Idle between frames: service any pending ROI request so a
-            # triggered pass runs even when the camera stream lapses.
-            if roi_queue is not None:
-                try:
-                    roi_req = roi_queue.get_nowait()
-                except Exception:
-                    roi_req = None
-                if roi_req is not None:
-                    _run_roi_pass(roi_req)
             continue
 
         if item is None:  # poison pill — shutdown
             break
-
-        # ROI trigger request from the relay (dict payload, tuple = frame).
-        if isinstance(item, dict) and item.get("_is_roi"):
-            _run_roi_pass(item)
-            continue
 
         frame_bytes, shape, stamp_sec, stamp_nanosec = item
         frame = np.frombuffer(frame_bytes, dtype=np.uint8).reshape(shape)
@@ -412,7 +266,6 @@ class Detector:
         ctx = mp.get_context("spawn")  # spawn avoids fork+CUDA issues
         self._mp_frames: mp.Queue = ctx.Queue(maxsize=2)
         self._mp_results: mp.Queue = ctx.Queue(maxsize=50)
-        self._mp_roi: mp.Queue = ctx.Queue(maxsize=4)
         self._ready_event = ctx.Event()
 
         self._logger.info(
@@ -420,35 +273,11 @@ class Detector:
         )
         self._worker = ctx.Process(
             target=_inference_worker,
-            args=(
-                targets,
-                self._mp_frames,
-                self._mp_results,
-                self._ready_event,
-                self._mp_roi,
-            ),
+            args=(targets, self._mp_frames, self._mp_results, self._ready_event),
             daemon=True,
             name="detector_worker",
         )
         self._worker.start()
-
-        # ── ROI second-pass trigger state (t_c6b546ac) ────────────────────────
-        # Pending-candidate signal (read-only subscription on the tracker):
-        # agent_node polls tracker.get_pending_candidates() and forwards the
-        # class names via update_pending_classes(). No tracker behavior change.
-        self._pending_classes: set[str] = set()
-        # Last-known IMAGE position per class (from the detector's own
-        # full-frame sightings) — the ROI crop anchor.
-        self._last_class_img: dict[str, tuple[float, float]] = {}
-        # Wall-clock of the last full-frame sighting per class.
-        self._last_class_sighting: dict[str, float] = {}
-        # Wall-clock of the last ROI pass per class (cooldown).
-        self._last_roi_pass: dict[str, float] = {}
-        # Most recent full frame (bytes, shape) — the ROI crop source.
-        self._last_roi_frame: tuple[bytes, tuple] = (b"", (0, 0, 3))
-        # Stats for gate attribution logging.
-        self._roi_pass_count = 0
-        self._roi_hit_count = 0
 
         # Background thread: relay results from subprocess → self.detections queue
         self._running = True
@@ -538,9 +367,6 @@ class Detector:
 
         stamp = msg.header.stamp
         item = (frame.tobytes(), frame.shape, stamp.sec, stamp.nanosec)
-        # Keep the latest full frame as the ROI crop source (t_c6b546ac).
-        with self._lock:
-            self._last_roi_frame = (item[0], frame.shape)
         try:
             self._mp_frames.put_nowait(item)
         except Exception:
@@ -568,7 +394,7 @@ class Detector:
             self._logger.warning(f"Detector: error terminating worker — {exc}")
 
         # Drain old queues so they don't confuse the new worker
-        for q in (self._mp_frames, self._mp_results, self._mp_roi):
+        for q in (self._mp_frames, self._mp_results):
             try:
                 while True:
                     q.get_nowait()
@@ -579,13 +405,7 @@ class Detector:
         self._ready_event = ctx.Event()
         self._worker = ctx.Process(
             target=_inference_worker,
-            args=(
-                self._targets,
-                self._mp_frames,
-                self._mp_results,
-                self._ready_event,
-                self._mp_roi,
-            ),
+            args=(self._targets, self._mp_frames, self._mp_results, self._ready_event),
             daemon=True,
             name="detector_worker",
         )
@@ -661,45 +481,6 @@ class Detector:
                     self._logger.info(f"Detector: {result['vram']}")
                     continue
 
-                # ── ROI second-pass result (t_c6b546ac) ──────────────────────
-                if "roi_detections" in result:
-                    roi_dets = result["roi_detections"] or []
-                    now_roi = _time.monotonic()
-                    for d in roi_dets:
-                        self._roi_hit_count += 1
-                        det = DetectionResult(
-                            class_name=d["class_name"],
-                            confidence=d["confidence"],
-                            cx_px=d["cx_px"],
-                            cy_px=d["cy_px"],
-                            w_px=d["w_px"],
-                            h_px=d["h_px"],
-                            stamp=(d["stamp_sec"], d["stamp_nanosec"]),
-                            source=ROI_SOURCE_TAG,
-                        )
-                        # A ROI sighting IS a sighting: refresh the class's
-                        # full-frame-clock so the trigger doesn't re-fire
-                        # immediately (cooldown also bounds the cadence).
-                        self._last_class_sighting[d["class_name"]] = now_roi
-                        self._last_class_img[d["class_name"]] = (
-                            d["cx_px"], d["cy_px"]
-                        )
-                        try:
-                            self.detections.put_nowait(det)
-                        except queue.Full:
-                            try:
-                                self.detections.get_nowait()
-                                self.detections.put_nowait(det)
-                            except queue.Empty:
-                                pass
-                    if roi_dets:
-                        self._logger.info(
-                            f"Detector: ROI pass hit — {len(roi_dets)} box(es) "
-                            f"[{', '.join(d_['class_name'] + '(' + format(d_['confidence'], '.2f') + ')' for d_ in roi_dets)}] "
-                            f"(passes={self._roi_pass_count}, hits={self._roi_hit_count})"
-                        )
-                    continue
-
                 dets = result.get("detections", [])
                 inference_count += 1
                 if inference_count % 5 == 0:
@@ -711,12 +492,7 @@ class Detector:
                     self._logger.info(
                         f"Detector: inference #{inference_count}, {len(dets)} boxes{box_summary}"
                     )
-                now_ff = _time.monotonic()
                 for d in dets:
-                    self._last_class_sighting[d["class_name"]] = now_ff
-                    self._last_class_img[d["class_name"]] = (
-                        d["cx_px"], d["cy_px"]
-                    )
                     det = DetectionResult(
                         class_name=d["class_name"],
                         confidence=d["confidence"],
@@ -734,73 +510,11 @@ class Detector:
                             self.detections.put_nowait(det)
                         except queue.Empty:
                             pass
-
-                # ── ROI trigger evaluation (once per full-frame result) ──────
-                self._maybe_roi_pass(now_ff)
-
             except Exception as exc:
                 self._logger.error(
                     f"Detector: relay_loop result processing error — {type(exc).__name__}: {exc}"
                 )
                 continue
-
-    def update_pending_classes(self, class_names) -> None:
-        """Read-only subscription to the tracker's pending-candidate set
-        (t_c6b546ac). The agent_node polls tracker.get_pending_candidates()
-        each cycle and forwards the class names here; the tracker is never
-        called back and its behavior is unchanged."""
-        with self._lock:
-            self._pending_classes = set(class_names)
-
-    def _maybe_roi_pass(self, now: float) -> None:
-        """If a pending class has been silent for K full-frame cycles (~2 s)
-        and its cooldown expired, queue ONE upscaled-crop inference around
-        its last-known image position. Rate-limited by ROI_COOLDOWN_S so ROI
-        passes stay rare (≤1/class/4 s ⇒ ≤6% extra inference at 5 Hz)."""
-        with self._lock:
-            pend = set(self._pending_classes)
-            last_frame = self._last_roi_frame
-        if not pend:
-            return
-        fbytes, fshape = last_frame
-        if not fbytes:
-            return
-        for cls in pend:
-            img = self._last_class_img.get(cls)
-            if img is None:
-                continue  # no image anchor from this detector yet
-            last_seen = self._last_class_sighting.get(cls)
-            if last_seen is not None and (now - last_seen) * 5.0 < ROI_SILENT_CYCLES_K:
-                # 5 Hz relay cadence: silence < K cycles → skip
-                continue
-            last_pass = self._last_roi_pass.get(cls)
-            if last_pass is not None and (now - last_pass) < ROI_COOLDOWN_S:
-                continue  # cooldown honored — ROI passes stay rare
-            self._last_roi_pass[cls] = now
-            self._roi_pass_count += 1
-            req = {
-                "_is_roi": True,
-                "roi_class": cls,
-                "cx_px": img[0],
-                "cy_px": img[1],
-                "upscale": ROI_UPSCALE,
-                "frame_bytes": fbytes,
-                "shape": fshape,
-                "stamp_sec": 0,
-                "stamp_nanosec": 0,
-            }
-            try:
-                self._mp_roi.put_nowait(req)
-            except Exception:
-                # ROI queue full — skip this trigger; cooldown will retry later.
-                self._last_roi_pass.pop(cls, None)
-                self._roi_pass_count -= 1
-                continue
-            self._logger.info(
-                f"Detector: ROI second-pass triggered for pending class "
-                f"'{cls}' at ({img[0]:.0f},{img[1]:.0f}) "
-                f"(passes={self._roi_pass_count})"
-            )
 
     def stop(self) -> None:
         self._running = False

@@ -74,7 +74,5 @@ debug/
 # agent-scripts (local Claude workflow tooling, not part of this project)
 agent-scripts/
 
-# profiling results
+# profiling results 
 results/*
-!results/detector_absence_forensics.md
-!results/s3r2_collapse_diagnosis.md
