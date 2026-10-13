@@ -104,6 +104,22 @@ MIN_FRONTIER_SIZE = 5  # cells
 CANDIDATE_SCORE_MULTIPLIER = 10.0  # override = max_frontier_score * this
 CANDIDATE_BLACKLIST_RADIUS = 0.5    # metres — ignore candidates near blacklisted points
 
+# --- Close-in verification detour (forensics buckets b + c, t_5e2d3407) ---
+# Detector needs the object at close range: FAST_CONFIRM_DIST=1.5 m is where
+# in-view frames accumulate, and the ROI gate (t_c6b546ac) showed far/small
+# objects can't be resolved by upscaled crops. So when a pending candidate is
+# detoured to, the detour becomes an approach + stop-and-stare hold: stand at
+# the goal for CLOSE_RANGE_HOLD_S sim-s (or until the tracker confirms) so the
+# detector sees ≥3 frames of the object up close.
+#
+# Guard rails bound the mission-clock cost (candidate positions carry
+# depth-projection error — measured 2.5–8.6 m vs GT in the 12 target (b)/(c)
+# events — so a candidate may never confirm; don't let it eat the run):
+CLOSE_IN_HOLD_S = 2.0        # sim-s stop-and-stare on detour arrival (~10 detector frames @5 Hz)
+CLOSE_IN_MAX_DETOURS = 6     # total close-in detours per run (all candidates)
+CLOSE_IN_RETRY_RATE_S = 60.0 # min sim-s between detour attempts on the same track_id
+CLOSE_IN_MAX_ATTEMPTS = 2    # detour attempts per track_id (first + one retry)
+
 # Frontier cells with global_costmap >= this value are rejected: they sit inside
 # the inflation layer's inscribed-radius zone, so Nav2 cannot position the robot
 # there even though SLAM marks them free. Without this filter, the BFS picks
@@ -340,6 +356,16 @@ class FrontierExplorer:
         # Each candidate is visited once; after the detour, SLAM may have updated
         # and the object may be confirmed or the candidate expired.
         self._candidate_visited: set[str] = set()
+
+        # Close-in verification detour bookkeeping (t_5e2d3407):
+        # track_id -> sim-time of last detour attempt (rate limit)
+        self._closein_last_attempt: dict[str, float] = {}
+        # track_id -> number of detour attempts made (per-candidate cap)
+        self._closein_attempts: dict[str, int] = defaultdict(int)
+        # total close-in detours started this run (global budget)
+        self._closein_budget_used: int = 0
+        # one-shot flag: budget-exhaustion logged/timeline-tagged once
+        self._closein_budget_logged: bool = False
 
         # Subscriptions
         # /map is published TRANSIENT_LOCAL — subscriber must also use TRANSIENT_LOCAL
@@ -765,6 +791,19 @@ class FrontierExplorer:
                     _goal_num,
                     f"candidate {best.class_name} ({cx:.1f},{cy:.1f}) dist={math.hypot(cx - rx, cy - ry):.1f}",
                 )
+                # Close-in budget + rate-limit bookkeeping: a detour attempt
+                # starts here (success or failure both consume the attempt —
+                # the cap bounds ping-pong, not just successful approaches).
+                self._closein_last_attempt[best.track_id] = self._sim_time()
+                self._closein_attempts[best.track_id] += 1
+                self._closein_budget_used += 1
+                self._tl(
+                    "close_in_detour",
+                    _goal_num,
+                    f"source=close_in_verify track={best.track_id} "
+                    f"n={self._closein_attempts[best.track_id]}/{CLOSE_IN_MAX_ATTEMPTS} "
+                    f"budget={self._closein_budget_used}/{CLOSE_IN_MAX_DETOURS}",
+                )
                 self._logger.info(
                     f"FrontierExplorer: DETECTION#{_goal_num} {best.class_name} ({goal_x:.2f}, {goal_y:.2f})"
                     f" [track {best.track_id}]"
@@ -870,6 +909,10 @@ class FrontierExplorer:
                     self._logger.info(
                         f"FrontierExplorer: detection candidate {best.track_id} visited, will not retry."
                     )
+                    # Close-in stop-and-stare (t_5e2d3407): stand at the goal
+                    # for CLOSE_IN_HOLD_S so the detector gets close-range
+                    # frames; exits early the moment the track confirms.
+                    self._close_in_hold(best.track_id, best.class_name, _goal_num)
             elif result is False:
                 self._tl("goal_failed", _goal_num, f"nav={_t_nav:.1f}s")
                 self._logger.info(
@@ -1001,8 +1044,10 @@ class FrontierExplorer:
         """
         Query tracker for pending candidates (1-sighting objects) and convert
         them into DetectionFrontier pseudo-frontiers. Filters out candidates
-        that are already visited, blacklisted, or too close to the robot
-        (already being seen — no detour needed).
+        that are already visited, blacklisted, too close to the robot
+        (already being seen — no detour needed), or blocked by the close-in
+        guard rails (budget / per-track rate limit / per-track attempt cap /
+        unknown-or-lethal costmap cell).
         """
         if self._tracker is None:
             return []
@@ -1010,6 +1055,19 @@ class FrontierExplorer:
         sim_time = self._sim_time()
         candidates = self._tracker.get_pending_candidates(sim_time)
         if not candidates:
+            return []
+
+        # Global budget exhausted — no more close-in detours this run.
+        if self._closein_budget_used >= CLOSE_IN_MAX_DETOURS:
+            if candidates and not self._closein_budget_logged:
+                self._closein_budget_logged = True
+                self._logger.info(
+                    f"FrontierExplorer: close-in budget exhausted "
+                    f"({self._closein_budget_used}/{CLOSE_IN_MAX_DETOURS}) — "
+                    f"ignoring {len(candidates)} pending candidate(s) from here on."
+                )
+                self._tl("close_in_budget", 0,
+                         f"used={self._closein_budget_used} n_cands={len(candidates)}")
             return []
 
         frontiers = []
@@ -1024,6 +1082,33 @@ class FrontierExplorer:
                 continue
             # Skip candidates too close to robot (already seeing it — let tracker confirm)
             if math.hypot(wx - robot_x, wy - robot_y) < 1.0:
+                continue
+
+            # Close-in guard rails (t_5e2d3407) — log + timeline-tag every
+            # suppression so stream attribution shows why a candidate was skipped.
+            attempts = self._closein_attempts.get(tid, 0)
+            if attempts >= CLOSE_IN_MAX_ATTEMPTS:
+                self._tl("close_in_skip_attempts", 0, f"track={tid} n={attempts}")
+                self._logger.info(
+                    f"FrontierExplorer: candidate {tid} hit per-track attempt cap "
+                    f"({attempts}/{CLOSE_IN_MAX_ATTEMPTS}) — skipping."
+                )
+                continue
+            last_t = self._closein_last_attempt.get(tid)
+            if last_t is not None and sim_time - last_t < CLOSE_IN_RETRY_RATE_S:
+                self._tl("close_in_skip_rate", 0,
+                         f"track={tid} since={sim_time - last_t:.0f}s")
+                continue
+
+            # Skip candidates whose goal cell is unknown or lethal per the
+            # global costmap (Nav2 can't position there). Not marked visited —
+            # the SLAM map may open the cell later; rate-limit keeps this honest.
+            if not self._closein_goal_cell_ok(wx, wy):
+                self._tl("close_in_skip_cell", 0, f"track={tid} ({wx:.1f},{wy:.1f})")
+                self._logger.info(
+                    f"FrontierExplorer: candidate {tid} goal cell unknown/lethal "
+                    f"per costmap — skipping this cycle."
+                )
                 continue
 
             frontiers.append(DetectionFrontier(
@@ -1044,6 +1129,27 @@ class FrontierExplorer:
                 f"({len(candidates)} total, {len(self._candidate_visited)} visited): [{det_info}]"
             )
         return frontiers
+
+    def _closein_goal_cell_ok(self, wx: float, wy: float) -> bool:
+        """
+        True when the candidate's world position maps to a global-costmap cell
+        that is neither unknown nor lethal (i.e. Nav2 can plausibly drive the
+        robot onto/next to it). Unknown-costmap (no snapshot) → allow: early
+        in the run the costmap may lag SLAM, and the budget cap bounds abuse.
+        """
+        with self._costmap_lock:
+            cm = self._global_costmap
+        if cm is None:
+            return True
+        cm_res = cm.info.resolution
+        cm_ox = cm.info.origin.position.x
+        cm_oy = cm.info.origin.position.y
+        cm_c = int(math.floor((wx - cm_ox) / cm_res))
+        cm_r = int(math.floor((wy - cm_oy) / cm_res))
+        if not (0 <= cm_r < cm.info.height and 0 <= cm_c < cm.info.width):
+            return True  # outside costmap extent — let Nav2 judge
+        value = int(cm.data[cm_r * cm.info.width + cm_c])
+        return value < COSTMAP_LETHAL_THRESHOLD and value != -1
 
     # ------------------------------------------------------------------
     # Frontier selection — scoring
@@ -1404,6 +1510,44 @@ class FrontierExplorer:
             self._sim_time() - t0_sim < sim_seconds and time.time() - t0_wall < max_wall
         ):
             time.sleep(0.1)
+
+    def _close_in_hold(
+        self, track_id: str, class_name: str, goal_num: int
+    ) -> None:
+        """
+        Stop-and-stare after a close-in verification detour arrives
+        (forensics buckets b + c, t_5e2d3407).
+
+        Parks the robot for CLOSE_IN_HOLD_S sim-seconds so the detector gets
+        ≥3 close-range frames of the pending object (5 Hz ⇒ ~10 frames at
+        FAST_CONFIRM_DIST=1.5m). Publishes zero Twist every cycle so the
+        watchdog/profiler see a stationary phase. Exits early the moment the
+        tracker confirms the track — a confirmed object needs no more dwell.
+        """
+        stop = Twist()  # all-zero twist
+        t0_sim = self._sim_time()
+        t0_wall = time.time()
+        confirmed = False
+        while (
+            self._sim_time() - t0_sim < CLOSE_IN_HOLD_S
+            and time.time() - t0_wall < 15.0  # wall-clock safety ceiling
+        ):
+            self._cmd_vel_pub.publish(stop)
+            if self._tracker is not None and not self._tracker.is_still_pending(track_id):
+                confirmed = True
+                break
+            time.sleep(0.1)
+        held = self._sim_time() - t0_sim
+        self._tl(
+            "close_in_hold",
+            goal_num,
+            f"source=close_in_verify track={track_id} class={class_name} "
+            f"held={held:.1f}s confirmed={confirmed}",
+        )
+        self._logger.info(
+            f"FrontierExplorer: close-in hold {class_name} [track {track_id}] "
+            f"held={held:.1f}s/{CLOSE_IN_HOLD_S:.1f}s confirmed={confirmed}"
+        )
 
     # Sentinels returned by _send_goal_and_wait
     PREEMPTED = "preempted"          # geographic goal cancelled for detection candidate

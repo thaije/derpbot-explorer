@@ -55,13 +55,23 @@ mock_cv_bridge = Mock()
 mock_cv_bridge.CvBridge = Mock
 sys.modules['cv_bridge'] = mock_cv_bridge
 
-from agent.detector import (  # noqa: E402
-    Detector,
-    DetectionResult,
-    ROI_SILENT_CYCLES_K,
-    ROI_COOLDOWN_S,
-    ROI_SOURCE_TAG,
-)
+try:
+    from agent.detector import (  # noqa: E402
+        Detector,
+        DetectionResult,
+        ROI_SILENT_CYCLES_K,
+        ROI_COOLDOWN_S,
+        ROI_SOURCE_TAG,
+    )
+except ImportError:
+    # Mechanism reverted (t_c6b546ac gate REJECT) — these tests only run when
+    # the ROI second-pass constants exist in agent/detector.py again.
+    import pytest
+    pytest.skip(
+        "ROI second-pass mechanism not present in agent/detector.py — "
+        "import-gated until the mechanism returns",
+        allow_module_level=True,
+    )
 
 
 class _RoiHarness:
