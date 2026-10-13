@@ -16,12 +16,14 @@ Strategy:
   - Object confirmation requires (diverse sightings ≥ MIN_SIGHTINGS from robot
     poses ≥ MIN_POSE_DISTANCE apart) OR (FAST_CONFIRM_FRAMES close-range
     in-view frames — a parked robot can't produce diverse poses)
-  - Confirmation policy (bcfc, sweep t_451895af): the conf floor is the bare
-    detector threshold (CONFIDENCE_MARGIN 0.0) with MIN_SIGHTINGS=2 diverse +
-    fast-confirm intact; the anti-hallucination stability gate and the
-    cross-class veto are INERT (STABILITY_RADIUS=100.0, VETO_RADIUS=0.0 —
-    the sweep showed they cost more corpus recall than they save; the
-    mechanisms remain re-enableable via DERPBOT_POLICY_OVERRIDES / replay --set)
+  - Anti-hallucination gate: before publishing, the track must clear
+    OWL_CONF_THRESHOLD + CONFIDENCE_MARGIN on its best confidence and keep all
+    sighting positions within STABILITY_RADIUS (rejects drifting low-margin
+    OWLv2 hallucinations — FP backlog #40)
+  - Cross-class position veto: different-class tracks within VETO_RADIUS are
+    mutually-exclusive physical objects — both held back as ambiguous until
+    centroids separate or one side's confidence wins by AMBIGUITY_MARGIN
+    (prevents wrong-class submissions on real objects)
   - target filter: only publish objects whose class_name is in the mission targets list
 
 Detection2DArray format expected by scorer:
@@ -108,13 +110,10 @@ def default_stream_path() -> str:
 # bboxes re-anchored on different image patches via chained MATCH_RADIUS merges).
 # A real object is re-sighted at (approximately) the same world position.
 CONFIDENCE_MARGIN = 0.0     # (bisect t_9d9a4751) disabled: margin gate suppressed near-threshold real objects
-# Positional-stability gate (FP backlog #40): INERT under the adopted bcfc
-# policy — sweep t_451895af showed spreading real-object sightings (shallow
-# view angles → depth spread ~1.2m) cost recall that outweighed the FP savings.
-# Never fires at 100.0m max pairwise spread. Mechanism (position_spread,
-# passes_quality_gate) kept intact; re-enable via DERPBOT_POLICY_OVERRIDES /
-# replay --set STABILITY_RADIUS=<m> (sweep rows bc+stability0.8/1.2).
-STABILITY_RADIUS = 100.0    # max pairwise spread of sighting positions to confirm
+STABILITY_RADIUS = 1.2      # max pairwise spread of sighting positions to confirm
+                            # (real-object depth spread reaches ~1.2m at shallow
+                            # view angles; 5/20 baseline FPs also sit 1.5–2.0m off,
+                            # so this stays a march/re-anchor rejector, not tighter)
 
 CANDIDATE_TIMEOUT_S = 180.0  # sim-seconds — discard pending candidate without 2nd sighting
 CANDIDATE_PUBLISH_HZ = 2.0  # rate to send pending candidates to explorer
@@ -123,13 +122,7 @@ CANDIDATE_PUBLISH_HZ = 2.0  # rate to send pending candidates to explorer
 # physical objects — two different-class tracks confirmed/pending within this
 # radius means at most one is real (detector ran the wrong prompt on it).
 # Both are flagged ambiguous and held back until evidence separates them.
-# DISABLED under the adopted bcfc policy (sweep t_451895af): at 0.0m the
-# never-different-class-within-0m condition makes find_cross_class_neighbor
-# return None for every track — the veto pathway is dormant (flagging, the
-# resolve_veto_on_append state machine, and the AMBIGUITY_MARGIN tiebreak all
-# stay intact; re-enable via DERPBOT_POLICY_OVERRIDES / replay --set
-# VETO_RADIUS=<m>).
-VETO_RADIUS = 0.0           # metres — different-class tracks within this → ambiguous (0.0 = off)
+VETO_RADIUS = 0.8           # metres — different-class tracks within this → ambiguous
 AMBIGUITY_MARGIN = 0.10     # clear a veto by exceeding the other track's best conf by this
 
 # Short-range fast-confirm: a robot parked in front of an object never produces
