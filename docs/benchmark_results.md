@@ -2,6 +2,34 @@
 
 Historical performance snapshots. Append new entries on top; keep older ones for regression comparison.
 
+## 2026-10-13 — t_fd80a2f9: projection root-cause + ground-anchored depth clip — GATE REJECT (easy 5×1; projection defect FIXED, found-mass ceiling moved to the tracker confirm gate)
+
+Agent: `derpbot-explorer-v9-projfix` @ `8378792` — tracker.py/detector.py untouched; the fix is entirely in `agent/depth_projector.py`: the 5×5 bbox-centre depth sample is clipped by the range implied by the bbox BOTTOM-edge ray hitting the floor (`min(depth, 1.35 × 0.25 m/tan(pitch_bottom))`, generic camera-geometry-derived, no class names).
+
+**Phase 1 — root cause (zero-sim forensics, `results/projection_forensics.md`):** all 6 prior mechanism rejects traced to ONE defect: the bbox-centre depth patch reads the WALL BEHIND near objects (1215/3633 attributable sightings have depth > true range + 0.5 m; near-object err>3 m rows: depth median 3.92 m at GT range median 1.21 m). Bearing is clean (clean-row implied Δu median −0.2 px; implied object height constant 0.36–0.41 m across range = camera model exactly right). Operator addendum SLAM/odom-drift hypothesis REJECTED with numbers: corr(proj_err, elapsed sim-t) = +0.018 overall, per-run correlations mixed-sign and small (max +0.65 / −0.41 on different runs), early-vs-late-half error 1.28→1.35 m — a static geometry defect, not drift; no map re-anchoring warranted. FP corpus reclassified: 181/286 FPs across v4→v8 sit 1.5–3.5 m from a real same-class GT (the mis-projection band; ZERO FPs inside the window); 105/286 are genuine wrong-class hallucinations (detector-side, out of projection scope).
+
+**Phase 3 — zero-sim A/B:** attribution-free per-sighting mean error 0.819→0.514 m (−61% ≥ 40% bar ✓), in-window ≤1.5 m share 0.79→0.93; 28-stream tracker replay v5-master semantics: FP/run 2.54→1.54, found 3.07→3.00 (merge-lottery flips both ways; corpus subset identical 3/3/1).
+
+**Phase 4 — sim gate (easy seeds 1–5 × 1 run, speed 2, 5/5 runs no failures):**
+
+| seed | found | FP/run | score |
+|------|-------|--------|-------|
+| 1 | 4/6 | 1.0 | 60.6 |
+| 2 | 5/6 | 2.0 | 62.6 |
+| 3 | 4/6 | 1.0 | 50.8 |
+| 4 | 2/6 | 0.0 | 55.3 |
+| 5 | 4/6 | 2.0 | 63.1 |
+| **mean** | **3.80/6 (0.63)** | **1.20** | |
+
+**Pre-registered escalate bar: found mean ≥4.9 AND FP/run ≤5.0 AND ≥2 completions. Result: found 3.80 (<4.9), FP 1.20 (best of any agent, was 4.8 on v5-master), 0 completions (<2) → REJECT. No escalation; mechanism KEPT in HEAD (projection defect fix is correctness, not score-tuning; FP/run 1.20 vs anchor 1.0-4.8 across the ledger).**
+
+**Gate attribution (fresh per-run streams + replay, causality-checked):** projection accuracy on the gate runs is no longer the binding constraint — during in-FOV passes, attributable sightings (nearest same-class GT, any class) have median projection error 0.10–0.34 m and in-window 0.93–1.00 on ALL five gate streams. The found-mass now dies at the TRACKER:
+- seed4 (2/6): two desk fire-extinguishers 0.96 m apart → Match-radius chaining merges them into one track (89 shared sighting timestamps); hi-conf (≥0.5) position spread 2.17–4.28 m > STABILITY_RADIUS 1.2 → gate-rejected (150 sightings at 0.03–0.07 m from GT wasted per desk FE). Same shape for both first_aid_kits (40 sightings at 0.04–0.07 m, spread 3.51 m, max conf 0.36).
+- seed3/seed5 misses: 18–50 sightings each at 0.02–0.13 m from GT, "sightings existed and were potentially confirmable" per replay diagnose — confirm-gate lottery on merged/sprawling tracks, not projection.
+- seed1/seed2/seed5 remaining miss: first_aid_kit#1 — NO sighting within 2 m on any gate run (detector recall bucket (c), already rejected at ROI gate; orthogonal).
+
+**Next-lever candidates (for the orchestrator):** (1) tracker confirm gate on merged near-duplicate objects (per-sighting min-range candidate publish instead of running-mean centroid over a spread track — note t_6b03f03c already built and gate-rejected min-error publish under DIFFERENT pre-fix projection errors; worth re-eval now that positions are accurate); (2) STABILITY_RADIUS semantics when a track legitimately covers a close pair; (3) FA-kit low confidence (max 0.36 vs margin 0.0 — detector-side, NOT touched here). Tracker/detector remain OFF LIMITS on this task per scope.
+
 ## 2026-10-13 — t_8673a87f: slam first-map sentinel + one-restart recovery (score-neutral reliability fix, sim regression DEFERRED)
 
 Reliability fix for the s3r2-class startup abort (`results/s3r2_collapse_diagnosis.md`): slam_toolbox silently activates without processing any scan → no `/map` within the legacy 120-s `STARTUP_MAP_TIMEOUT` window → explorer aborts while the robot sits still for the rest of the mission (s3r2: full 901.5-s budget burned, 0/6, robot never moved).
