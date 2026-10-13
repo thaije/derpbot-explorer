@@ -130,6 +130,16 @@ class AgentNode(Node):
             f"[STARTUP TIMING] frontier explorer init: +{t4_end - t4_start:.2f}s (total {t4_end - self._t_start:.2f}s)"
         )
 
+        # ROI second-pass signal (t_c6b546ac): poll the tracker's pending
+        # candidates (read-only) and forward the class names to the detector's
+        # trigger. The tracker is never called back and its behavior is
+        # unchanged — this is the only cross-boundary plumbing.
+        if self._detector is not None and self._tracker is not None:
+            self._roi_signal_thread = threading.Thread(
+                target=self._roi_signal_loop, daemon=True, name="roi_signal"
+            )
+            self._roi_signal_thread.start()
+
         self._state = "EXPLORE"
         self._logger.info("AgentNode: EXPLORE — starting frontier exploration.")
 
@@ -152,6 +162,32 @@ class AgentNode(Node):
         self._logger.info(
             f"[STARTUP TIMING] time limit timer started ({self._time_limit}s)"
         )
+
+    # ------------------------------------------------------------------
+    # ROI second-pass signal loop (t_c6b546ac): tracker pending candidates
+    # → detector trigger, read-only on the tracker (no behavior change).
+    # ------------------------------------------------------------------
+
+    def _roi_signal_loop(self) -> None:
+        import queue as _q
+        tracker = self._tracker
+        detector = self._detector
+        if tracker is None or detector is None:
+            return  # no-perception runs have nothing to signal
+        while rclpy.ok():
+            try:
+                sim_t = self.get_clock().now().nanoseconds / 1e9
+                candidates = tracker.get_pending_candidates(sim_t)
+                detector.update_pending_classes(
+                    [c["class_name"] for c in candidates]
+                )
+            except _q.Empty:
+                pass
+            except Exception as exc:
+                self.get_logger().warning(
+                    f"AgentNode: roi_signal_loop error — {exc}"
+                )
+            time.sleep(0.5)  # 2 Hz poll; detector-side silence counting is 5 Hz
 
     # ------------------------------------------------------------------
     # Done callback (called from FrontierExplorer when no frontiers remain)
