@@ -2,6 +2,23 @@
 
 Historical performance snapshots. Append new entries on top; keep older ones for regression comparison.
 
+## 2026-10-13 — t_6b03f03c: v6 batch 2 reverted to v5-master semantics; min-error publish REJECTED by zero-sim A/B (no sim spent)
+
+Confirmation-policy experiment (bcfc, `eb59b96`) reverted at `dc3515d` — gates suite 8/8, replay fixture 10/10, v5-master semantics restored (STABILITY_RADIUS 1.2, VETO_RADIUS 0.8, margin 0.0, fast-confirm present). One new mechanism, publish-side min-error-per-sighting position (`78b6fb5`: corroborated sighting ≥2 same-track sightings within 0.3 m, else closest-to-mean; REPUBLISH_SHIFT_M kept; generic), evaluated by offline replay A/B on the 3-seed corpus streams (publish events unchanged; sanity anchor held — TP keys == live v5-master run sets {1,2,4}/{1,3,13}/{3}):
+
+| seed | publish | found/16 | TP keys | FP | centroid-err mean/med/p95 |
+|------|---------|----------|---------|----|---------------------------|
+| 1 | running-mean | 3 | {1,2,4} | 3 | 0.158 / 0.213 / 0.230 |
+| 1 | min-error    | 3 | {1,2,4} | 4 | 0.158 / 0.206 / 0.228 |
+| 4 | running-mean | 3 | {1,3,13} | 0 | 0.285 / 0.241 / 0.476 |
+| 4 | min-error    | 3 | {1,3,13} | 0 | 0.267 / 0.281 / 0.382 |
+| 5 | running-mean | 1 | {3} | 0 | 0.271 / 0.271 / 0.271 |
+| 5 | min-error    | 1 | {3} | 0 | 0.260 / 0.260 / 0.260 |
+
+Pre-registered accept bar: found/18 ≥ running-mean AND FP/run not worse AND p95 drops ≥ 0.2 m. Result: found 7 vs 7 (equal), FP/run worse (seed1 3→4; 1.0→1.33 aggregate), p95 drops 0.002/0.094/0.000 m. **REJECT** → mechanism reverted (`af3790a`), tree = v5-master semantics + running-mean publish. No sim time spent: the zero-sim A/B caught a non-improving mechanism before the gate batch. Revert itself still restores the live-verifying 4/15 baseline for the next mechanism candidate.
+
+---
+
 ## 2026-10-11 — v6-fastconfirm: bcfc policy adopted, decisive easy 5×3 batch — REGRESSION, HALTED
 
 Agent: derpbot-explorer @ `eb59b96` (bcfc adopted: STABILITY_RADIUS 1.2→100.0, VETO_RADIUS 0.8→0.0, margin 0.0, fast-confirm untouched). Testbed unchanged (v1.0.3 tag, office scenario). Speed 2, pinned pkg1, 15/15 completed, 0 failed, 0 DOA.
