@@ -392,8 +392,10 @@ class Detector:
 
         # Keyframe-capture stash (t_85fe2e5c — write-only observer): remember
         # the latest processed camera frame for the Tracker's KeyframeRecorder.
-        # A single tuple assignment; the recorder reads it from its own thread.
-        self._latest_frame = (frame, stamp.sec + stamp.nanosec / 1e9)
+        # frame.copy() guarantees the recorder's background thread never sees a
+        # buffer that the callback thread is about to reallocate (~1 ms cost,
+        # off the inference path since the stash is post-processing).
+        self._latest_frame = (frame.copy(), stamp.sec + stamp.nanosec / 1e9)
 
         item = (frame.tobytes(), frame.shape, stamp.sec, stamp.nanosec)
         try:
