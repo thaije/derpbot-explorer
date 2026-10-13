@@ -2,6 +2,36 @@
 
 Historical performance snapshots. Append new entries on top; keep older ones for regression comparison.
 
+## 2026-10-13 — t_5e2d3407: close-in verification detour + stop-and-stare hold — GATE REJECT (easy 5×1, mechanism reverted)
+
+Agent: `derpbot-explorer-v8-closein` @ `6ec2c61` — v5-master semantics otherwise unchanged, tracker.py/detector.py untouched. Mechanism (operator-steered scope, forensics buckets b=4 glimpse + c=8 dwelled): detection detours become approach-to-close-range — on successful detour arrival with the track still pending, hold `CLOSE_IN_HOLD_S=2.0` sim-s (zero Twist, sim-clock deadline, early-exit on tracker confirm); guard rails `CLOSE_IN_MAX_DETOURS=6`/run, per-track rate limit 60 sim-s, per-track attempt cap 2, unknown/lethal costmap-cell skip; all events tagged `close_in_*` timeline phases + `source=close_in_verify`. Spec: task workspace `close_in_verify_spec.md` (spec-first). Zero-sim stream measurement in the spec: all 12 (b)/(c) target events have ZERO class sightings ≤2 m of GT (nearest sighting-to-GT 2.48–8.55 m; forensics-module GT transform) — candidate positions carry 2.5–8.6 m depth-projection error, pre-registered as the reachability risk.
+
+Unit tests `tests/test_frontier_closein.py`: 25/25 (budget cap + once-only tag, attempt cap, rate limit + window expiry, costmap guard incl. -1/unknown/extent/no-snapshot, hold duration/early-exit/tagging). Regression at `6ec2c61`: watchdog 3/3, tracker gates 8/8, replay fixture 10/10. Incidental fix kept after revert: test_detector_roi.py module-level pytest skip (parent metadata said import-gated; gate was missing, broke full-suite collection).
+
+Gate (easy seeds 1–5 × 1 run, speed 2, pinned pkg1 tmux anchor, 5/5 completed, 0 failed):
+
+| seed | found | FP/run | col | cov% | score |
+|------|-------|--------|-----|------|-------|
+| 1 | 5/6 | 3.0 | 9.0 | 96.0 | 56.8 |
+| 2 | 4/6 | 3.0 | 0.0 | 98.7 | 62.3 |
+| 3 | 3/6 | 1.0 | 2.0 | 98.7 | 56.0 |
+| 4 | 3/6 | 2.0 | 2.0 | 98.8 | 53.2 |
+| 5 | 5/6 | 2.0 | 0.0 | 98.7 | 68.5 |
+| **mean** | **4.00/6** | **2.2** | | | |
+
+**Pre-registered escalate bar: found mean ≥4.9 AND FP/run ≤5.0 AND ≥2 completions. Result: found 4.00 (<4.9), FP 2.2 (≤5.0 ✓), 0 completions (<2) → REJECT.** Mechanism reverted at `5514194` (tests import-gated + spec + attribution kept).
+
+Attribution (timeline `close_in_*` events × submission_log, causality-checked by sim-time):
+- Mechanism fired sparingly: 11 close-in detours across 5 runs (budget never exhausted; max 3/6), 9 stop-and-stare holds (2.0–7.2 s each; total ≤20 s across all runs — mission-clock cost negligible). All holds exited `confirmed=False` — no candidate was EVER confirmed by the hold itself.
+- Causality-checked conversions: seed2 track_1 (FE) TP at t=57 during its detour window 51.9→82.3 (1 attributable conversion, approach phase); seed5 track_5 (FE) TP t=142 after detour@38+hold@70.6 (probable, post-hold). All other detoured candidates never confirmed; seed4's apparent track-id matches were time-disqualified (incl. one tracker-worker-restart id collision — track_8 person TP@t=118 vs FE detour@t=654.7).
+- The FP bar improvement (2.2 vs v5-master 4.5) is NOT attributable to this mechanism (found unchanged); treat as cohort variance.
+- Root cause the mechanism cannot touch: candidate positions are 2.5–8.6 m off-object (depth-projection), so the robot approaches a false position — the object is rarely in the camera's close-range cone when the hold fires. Consistent with the pre-registered reachability risk. Combined with the (c)-bucket ROI finding, the evidence now says: the recall surface that matters is BETTER PROJECTED CANDIDATE POSITIONS (depth/bbox geometry), not more dwell time near wrong positions.
+- (b)-bucket absences across this gate: only 1 mission-target absence (no class sighting ≤2 m of GT) in 30 GT-targets — s4 GT3 FE. Mechanism-attributable absences did not measurably drop vs the forensics corpus on this cohort (single runs, high variance — no conclusion drawn).
+
+Result JSONs: `robot-sandbox/results/submissions/derpbot-explorer-v8-closein/easy_seed{1..5}_run1.json`; streams: `results/streams/stream_easy_seed*_run1_20261013T1*.jsonl`; timelines: `results/profile_20261013T12*.md`, `profile_20261013T130508.md`. Tree = v5-master semantics 4/15 (no change).
+
+---
+
 ## 2026-10-13 — t_c6b546ac: event-triggered ROI second-pass detector recall — GATE REJECT (easy 5×1, mechanism reverted)
 
 Agent: `derpbot-explorer-v7-roigate` @ `ef8cb50` (ROI mechanism) — v5-master semantics otherwise unchanged, tracker untouched. Mechanism (forensics category-c fix, 8/19 absence events): when the tracker reports a class pending (unconfirmed, ≥1 sighting) AND the full-frame pass yields no sighting of that class for K=10 relay cycles (~2 s at 5 Hz), ONE extra inference runs on a 320 px center crop around the class's last-known image position, upscaled 2×, conf 0.12; results tagged `source="roi_second_pass"`. Tracker boundary crossed read-only (`agent_node` polls `tracker.get_pending_candidates()`); cooldown 4 s/class keeps ROI ≤1 pass/class/4 s (≤6% extra inference), same subprocess worker (GIL invariant holds).
