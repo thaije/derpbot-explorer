@@ -12,6 +12,13 @@ Architecture (process-based to avoid GIL contention with Nav2/explorer):
 Strategy:
   - Each tracked object has a persistent string ID ("track_1", "track_2", …)
   - New detection matched by class + world position within MATCH_RADIUS metres
+    (split-child tracks are quarantined to TIGHT_MATCH_RADIUS instead, so a
+    real sibling object cannot re-merge the halves the split separated)
+  - Spread-triggered split (t_ca2ea380): when a same-class track's pairwise
+    spread exceeds STABILITY_RADIUS and both 2-means halves carry a
+    corroborated core (≥2 re-sighted positions within 0.5 m), the chained
+    chimera is divided into two fresh quarantined tracks — the stability /
+    confidence gates stop receiving chimera inputs instead of being loosened
   - Running-mean world position averaged across all sightings
   - Object confirmation requires (diverse sightings ≥ MIN_SIGHTINGS from robot
     poses ≥ MIN_POSE_DISTANCE apart) OR (FAST_CONFIRM_FRAMES close-range
@@ -63,6 +70,13 @@ from detector import (
 )
 
 MATCH_RADIUS = 2.0          # metres — same class within this → same object
+TIGHT_MATCH_RADIUS = 0.75   # metres — SPLIT-CHILD association quarantine.
+                            # Real distinct objects can sit 0.96–1.17 m apart
+                            # (seed4 desk FEs, seed3 desk FEs) while same-object
+                            # sighting scatter is ≤0.3 m post-projection-fix
+                            # (projection forensics, t_fd80a2f9) — so a 0.75 m
+                            # quarantine separates sibling objects without ever
+                            # breaking a real object's own re-sightings.
 MIN_SIGHTINGS = 2           # require 2 sightings to filter single-frame noise
 MIN_POSE_DISTANCE = 0.2     # robot must move ≥0.2m between diverse sightings
 PUBLISH_RATE_HZ = 5.0       # rate to check for newly confirmed objects
@@ -151,6 +165,15 @@ AMBIGUITY_MARGIN = 0.10     # clear a veto by exceeding the other track's best c
 FAST_CONFIRM_DIST = 1.5     # metres — robot-object distance for in-view frames
 FAST_CONFIRM_FRAMES = 3     # in-view frames needed (~0.5s at detector cadence)
 
+# Spread-triggered split (t_ca2ea380): the stability / confirmation gates stay;
+# instead the association layer stops feeding them chimera inputs. When a
+# same-class track's pairwise spread exceeds STABILITY_RADIUS, try to divide it
+# into the two real objects it chained together:
+SPLIT_MIN_SIGHTINGS = 4     # split needs at least this many sightings
+SPLIT_SEPARATION_M = 0.5    # 2-means centroids must be at least this far apart
+SPLIT_CORE_MIN = 2          # each half needs at least this many sightings...
+SPLIT_CORE_RADIUS = 0.5     # ...clustered within this (a re-sighted object core)
+
 
 @dataclass
 class TrackedObject:
@@ -166,6 +189,101 @@ class TrackedObject:
     ambiguous_with: Optional[str] = None
     # Consecutive close-range in-view frames (short-range fast-confirm, #3)
     in_view_frames: int = 0
+    # Split-child quarantine (t_ca2ea380): this track was carved out of a
+    # chimera by the spread-triggered split; it only accepts new sightings
+    # within TIGHT_MATCH_RADIUS of its own centroid, so a sibling object that
+    # sits < MATCH_RADIUS away cannot re-merge the halves.
+    quarantined: bool = False
+
+    def _has_core(self, idxs: list[int]) -> bool:
+        """True if some sighting in idxs has ≥ SPLIT_CORE_MIN-1 fellow
+        half-sightings within SPLIT_CORE_RADIUS (a re-sighted object core)."""
+        pos = self.positions
+        for i in idxs:
+            xi, yi = pos[i]
+            n = sum(
+                1 for j in idxs
+                if j != i and math.hypot(pos[j][0] - xi,
+                                         pos[j][1] - yi) < SPLIT_CORE_RADIUS
+            )
+            if n >= SPLIT_CORE_MIN - 1:
+                return True
+        return False
+
+    def try_split(
+        self,
+    ) -> Optional[tuple["TrackedObject", "TrackedObject"]]:
+        """
+        Spread-triggered 2-means split of a chimera track (t_ca2ea380).
+
+        DATA ASSOCIATION, not confirmation policy: a real near-duplicate pair
+        (distinct objects 0.96–1.17 m apart, same class) chains into ONE track
+        via MATCH_RADIUS 2.0 matching + running-mean centroid drift. The
+        stability gate then (correctly) rejects the spread — and BOTH real
+        objects are lost. Fix at the source: divide the chained sightings.
+
+        Pre-conditions on this track: ≥ SPLIT_MIN_SIGHTINGS sightings,
+        pairwise spread > STABILITY_RADIUS. 2-means clustering on sighting
+        positions (extremes-seeded, mirroring the replay forensics variant
+        that won the A/B). Split happens only when BOTH halves carry a
+        corroborated core (≥ SPLIT_CORE_MIN sightings within SPLIT_CORE_RADIUS
+        of each other = two re-sighted real objects), so diffuse hallucination
+        scatter is never promoted into a fresh track.
+
+        Returns (this-half, other-half) as two fresh TrackedObjects on success
+        (children are `quarantined`; the caller replaces self in `objects`),
+        else None (track unchanged).
+        """
+        if len(self.positions) < SPLIT_MIN_SIGHTINGS:
+            return None
+        if self.position_spread() <= STABILITY_RADIUS:
+            return None
+        pts = self.positions
+        n = len(pts)
+        # seed centers at the two farthest sightings
+        best_pair, bd = (0, 1), -1.0
+        for a in range(n):
+            for b in range(a + 1, n):
+                d = math.hypot(pts[a][0] - pts[b][0], pts[a][1] - pts[b][1])
+                if d > bd:
+                    bd, best_pair = d, (a, b)
+        cA, cB = pts[best_pair[0]], pts[best_pair[1]]
+        assign = [0] * n
+        for _ in range(10):  # Lloyd iterations (forensics-identical)
+            for i, p in enumerate(pts):
+                assign[i] = (
+                    0 if math.hypot(p[0] - cA[0], p[1] - cA[1])
+                    <= math.hypot(p[0] - cB[0], p[1] - cB[1]) else 1
+                )
+            nA, nB = assign.count(0), assign.count(1)
+            if not nA or not nB:
+                return None
+            cA = (sum(pts[i][0] for i in range(n) if assign[i] == 0) / nA,
+                  sum(pts[i][1] for i in range(n) if assign[i] == 0) / nA)
+            cB = (sum(pts[i][0] for i in range(n) if assign[i] == 1) / nB,
+                  sum(pts[i][1] for i in range(n) if assign[i] == 1) / nB)
+        idxA = [i for i, a in enumerate(assign) if a == 0]
+        idxB = [i for i, a in enumerate(assign) if a == 1]
+        if not idxA or not idxB:
+            return None
+        if math.hypot(cA[0] - cB[0], cA[1] - cB[1]) < SPLIT_SEPARATION_M:
+            return None
+        # both halves must be re-sighted real objects, not diffuse scatter
+        if not (self._has_core(idxA) and self._has_core(idxB)):
+            return None
+
+        def child(idxs: list[int], suffix: str) -> "TrackedObject":
+            c = TrackedObject(track_id=f"{self.track_id}{suffix}",
+                              class_name=self.class_name)
+            c.positions = [self.positions[i] for i in idxs]
+            c.robot_poses = [self.robot_poses[i] for i in idxs]
+            c.confidences = [self.confidences[i] for i in idxs]
+            c.quarantined = True
+            # re-earn confirmation state: fast-confirm counts restart at 0
+            c.in_view_frames = 0
+            return c
+
+        return child(idxA, "A"), child(idxB, "B")
 
     @property
     def world_x(self) -> float:
@@ -263,7 +381,13 @@ def tracker_worker(
         for obj in objects:
             if obj.class_name != class_name:
                 continue
-            if math.hypot(obj.world_x - wx, obj.world_y - wy) < MATCH_RADIUS:
+            # Split-child quarantine (t_ca2ea380): a quarantined track only
+            # accepts sightings within TIGHT_MATCH_RADIUS of its own centroid —
+            # a real sibling object < MATCH_RADIUS away cannot re-merge the
+            # halves the split just separated (same-object scatter is ≤0.3 m,
+            # distinct objects observed 0.96–1.17 m apart).
+            radius = TIGHT_MATCH_RADIUS if obj.quarantined else MATCH_RADIUS
+            if math.hypot(obj.world_x - wx, obj.world_y - wy) < radius:
                 return obj
         return None
 
@@ -342,6 +466,28 @@ def tracker_worker(
             obj.positions.append((wx, wy))
             obj.robot_poses.append((rx, ry))
             obj.confidences.append(confidence)
+
+            # Spread-triggered split (t_ca2ea380): if this sighting pushed a
+            # same-class track beyond STABILITY_RADIUS spread, try to divide
+            # the chained sightings into the two real objects before ANY gate
+            # sees the chimera. Fires at most once per chimera build-up (the
+            # halves are fresh, quarantined tracks well below the spread bound).
+            split = obj.try_split()
+            if split is not None:
+                objA, objB = split
+                objects.remove(obj)
+                objects.append(objA)
+                objects.append(objB)
+                sys.stderr.write(
+                    f"[tracker_worker] split chimera {obj.track_id} "
+                    f"({obj.class_name}, {obj.sighting_count} sightings, "
+                    f"spread={obj.position_spread():.2f}m) -> "
+                    f"{objA.track_id} ({objA.sighting_count}) + "
+                    f"{objB.track_id} ({objB.sighting_count}), "
+                    f"quarantine {TIGHT_MATCH_RADIUS}m\n"
+                )
+                # continue processing with the half this sighting belongs to
+                obj = objA if objA.positions[-1] == (wx, wy) else objB
 
             # Cross-class position veto (wrong-class submission repair):
             # flag/renew/clear ambiguity against the nearest different-class track.
