@@ -1,0 +1,1733 @@
+{
+ "aggregate": {
+  "anchor-mr2.0": {
+   "tp": 45,
+   "fp": 37,
+   "dp": 0,
+   "found": 45,
+   "found_per_run": 3.0,
+   "fp_per_run": 2.467
+  },
+  "mr1.2": {
+   "tp": 54,
+   "fp": 81,
+   "dp": 7,
+   "found": 54,
+   "found_per_run": 3.6,
+   "fp_per_run": 5.4
+  },
+  "mr0.9": {
+   "tp": 64,
+   "fp": 82,
+   "dp": 16,
+   "found": 64,
+   "found_per_run": 4.267,
+   "fp_per_run": 5.467
+  },
+  "mr0.75": {
+   "tp": 64,
+   "fp": 82,
+   "dp": 21,
+   "found": 64,
+   "found_per_run": 4.267,
+   "fp_per_run": 5.467
+  },
+  "split-mr2.0": {
+   "tp": 53,
+   "fp": 90,
+   "dp": 77,
+   "found": 53,
+   "found_per_run": 3.533,
+   "fp_per_run": 6.0
+  },
+  "split-mr1.2": {
+   "tp": 61,
+   "fp": 121,
+   "dp": 101,
+   "found": 61,
+   "found_per_run": 4.067,
+   "fp_per_run": 8.067
+  }
+ },
+ "per_run": {
+  "anchor-mr2.0": [
+   {
+    "seed": 1,
+    "run": 1,
+    "found": 3,
+    "tp": 3,
+    "fp": 2,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "2",
+     "4"
+    ]
+   },
+   {
+    "seed": 1,
+    "run": 2,
+    "found": 5,
+    "tp": 5,
+    "fp": 7,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "4",
+     "13"
+    ]
+   },
+   {
+    "seed": 1,
+    "run": 3,
+    "found": 4,
+    "tp": 4,
+    "fp": 5,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "2",
+     "4",
+     "13"
+    ]
+   },
+   {
+    "seed": 2,
+    "run": 1,
+    "found": 2,
+    "tp": 2,
+    "fp": 2,
+    "dp": 0,
+    "tp_keys": [
+     "2",
+     "13"
+    ]
+   },
+   {
+    "seed": 2,
+    "run": 2,
+    "found": 4,
+    "tp": 4,
+    "fp": 3,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "3",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 2,
+    "run": 3,
+    "found": 4,
+    "tp": 4,
+    "fp": 3,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "13"
+    ]
+   },
+   {
+    "seed": 3,
+    "run": 1,
+    "found": 3,
+    "tp": 3,
+    "fp": 1,
+    "dp": 0,
+    "tp_keys": [
+     "3",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 3,
+    "run": 2,
+    "found": 0,
+    "tp": 0,
+    "fp": 0,
+    "dp": 0,
+    "tp_keys": []
+   },
+   {
+    "seed": 3,
+    "run": 3,
+    "found": 3,
+    "tp": 3,
+    "fp": 3,
+    "dp": 0,
+    "tp_keys": [
+     "4",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 4,
+    "run": 1,
+    "found": 2,
+    "tp": 2,
+    "fp": 2,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "3"
+    ]
+   },
+   {
+    "seed": 4,
+    "run": 2,
+    "found": 4,
+    "tp": 4,
+    "fp": 3,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "4",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 4,
+    "run": 3,
+    "found": 2,
+    "tp": 2,
+    "fp": 2,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "13"
+    ]
+   },
+   {
+    "seed": 5,
+    "run": 1,
+    "found": 4,
+    "tp": 4,
+    "fp": 1,
+    "dp": 0,
+    "tp_keys": [
+     "2",
+     "3",
+     "4",
+     "13"
+    ]
+   },
+   {
+    "seed": 5,
+    "run": 2,
+    "found": 2,
+    "tp": 2,
+    "fp": 1,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "3"
+    ]
+   },
+   {
+    "seed": 5,
+    "run": 3,
+    "found": 3,
+    "tp": 3,
+    "fp": 2,
+    "dp": 0,
+    "tp_keys": [
+     "2",
+     "4",
+     "13"
+    ]
+   }
+  ],
+  "mr1.2": [
+   {
+    "seed": 1,
+    "run": 1,
+    "found": 5,
+    "tp": 5,
+    "fp": 3,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "2",
+     "4",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 1,
+    "run": 2,
+    "found": 5,
+    "tp": 5,
+    "fp": 15,
+    "dp": 2,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "4",
+     "13"
+    ]
+   },
+   {
+    "seed": 1,
+    "run": 3,
+    "found": 5,
+    "tp": 5,
+    "fp": 7,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "4",
+     "13"
+    ]
+   },
+   {
+    "seed": 2,
+    "run": 1,
+    "found": 3,
+    "tp": 3,
+    "fp": 7,
+    "dp": 1,
+    "tp_keys": [
+     "1",
+     "2",
+     "13"
+    ]
+   },
+   {
+    "seed": 2,
+    "run": 2,
+    "found": 5,
+    "tp": 5,
+    "fp": 4,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 2,
+    "run": 3,
+    "found": 4,
+    "tp": 4,
+    "fp": 6,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "13"
+    ]
+   },
+   {
+    "seed": 3,
+    "run": 1,
+    "found": 4,
+    "tp": 4,
+    "fp": 5,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "3",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 3,
+    "run": 2,
+    "found": 0,
+    "tp": 0,
+    "fp": 0,
+    "dp": 0,
+    "tp_keys": []
+   },
+   {
+    "seed": 3,
+    "run": 3,
+    "found": 4,
+    "tp": 4,
+    "fp": 6,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "3",
+     "4",
+     "13"
+    ]
+   },
+   {
+    "seed": 4,
+    "run": 1,
+    "found": 4,
+    "tp": 4,
+    "fp": 5,
+    "dp": 1,
+    "tp_keys": [
+     "2",
+     "3",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 4,
+    "run": 2,
+    "found": 4,
+    "tp": 4,
+    "fp": 6,
+    "dp": 2,
+    "tp_keys": [
+     "1",
+     "4",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 4,
+    "run": 3,
+    "found": 2,
+    "tp": 2,
+    "fp": 6,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "13"
+    ]
+   },
+   {
+    "seed": 5,
+    "run": 1,
+    "found": 4,
+    "tp": 4,
+    "fp": 1,
+    "dp": 1,
+    "tp_keys": [
+     "2",
+     "3",
+     "4",
+     "13"
+    ]
+   },
+   {
+    "seed": 5,
+    "run": 2,
+    "found": 2,
+    "tp": 2,
+    "fp": 7,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "3"
+    ]
+   },
+   {
+    "seed": 5,
+    "run": 3,
+    "found": 3,
+    "tp": 3,
+    "fp": 3,
+    "dp": 0,
+    "tp_keys": [
+     "2",
+     "4",
+     "13"
+    ]
+   }
+  ],
+  "mr0.9": [
+   {
+    "seed": 1,
+    "run": 1,
+    "found": 6,
+    "tp": 6,
+    "fp": 3,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "4",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 1,
+    "run": 2,
+    "found": 5,
+    "tp": 5,
+    "fp": 15,
+    "dp": 3,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "4",
+     "13"
+    ]
+   },
+   {
+    "seed": 1,
+    "run": 3,
+    "found": 5,
+    "tp": 5,
+    "fp": 6,
+    "dp": 3,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "4",
+     "13"
+    ]
+   },
+   {
+    "seed": 2,
+    "run": 1,
+    "found": 3,
+    "tp": 3,
+    "fp": 7,
+    "dp": 1,
+    "tp_keys": [
+     "1",
+     "2",
+     "13"
+    ]
+   },
+   {
+    "seed": 2,
+    "run": 2,
+    "found": 5,
+    "tp": 5,
+    "fp": 4,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 2,
+    "run": 3,
+    "found": 4,
+    "tp": 4,
+    "fp": 6,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "13"
+    ]
+   },
+   {
+    "seed": 3,
+    "run": 1,
+    "found": 5,
+    "tp": 5,
+    "fp": 5,
+    "dp": 2,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 3,
+    "run": 2,
+    "found": 0,
+    "tp": 0,
+    "fp": 0,
+    "dp": 0,
+    "tp_keys": []
+   },
+   {
+    "seed": 3,
+    "run": 3,
+    "found": 6,
+    "tp": 6,
+    "fp": 8,
+    "dp": 2,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "4",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 4,
+    "run": 1,
+    "found": 5,
+    "tp": 5,
+    "fp": 5,
+    "dp": 1,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 4,
+    "run": 2,
+    "found": 5,
+    "tp": 5,
+    "fp": 6,
+    "dp": 1,
+    "tp_keys": [
+     "1",
+     "2",
+     "4",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 4,
+    "run": 3,
+    "found": 4,
+    "tp": 4,
+    "fp": 6,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "2",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 5,
+    "run": 1,
+    "found": 4,
+    "tp": 4,
+    "fp": 2,
+    "dp": 2,
+    "tp_keys": [
+     "2",
+     "3",
+     "4",
+     "13"
+    ]
+   },
+   {
+    "seed": 5,
+    "run": 2,
+    "found": 4,
+    "tp": 4,
+    "fp": 6,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "13"
+    ]
+   },
+   {
+    "seed": 5,
+    "run": 3,
+    "found": 3,
+    "tp": 3,
+    "fp": 3,
+    "dp": 1,
+    "tp_keys": [
+     "2",
+     "4",
+     "13"
+    ]
+   }
+  ],
+  "mr0.75": [
+   {
+    "seed": 1,
+    "run": 1,
+    "found": 6,
+    "tp": 6,
+    "fp": 3,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "4",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 1,
+    "run": 2,
+    "found": 5,
+    "tp": 5,
+    "fp": 18,
+    "dp": 3,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "4",
+     "13"
+    ]
+   },
+   {
+    "seed": 1,
+    "run": 3,
+    "found": 5,
+    "tp": 5,
+    "fp": 5,
+    "dp": 6,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "4",
+     "13"
+    ]
+   },
+   {
+    "seed": 2,
+    "run": 1,
+    "found": 3,
+    "tp": 3,
+    "fp": 6,
+    "dp": 1,
+    "tp_keys": [
+     "1",
+     "2",
+     "13"
+    ]
+   },
+   {
+    "seed": 2,
+    "run": 2,
+    "found": 5,
+    "tp": 5,
+    "fp": 5,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 2,
+    "run": 3,
+    "found": 4,
+    "tp": 4,
+    "fp": 6,
+    "dp": 1,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "13"
+    ]
+   },
+   {
+    "seed": 3,
+    "run": 1,
+    "found": 5,
+    "tp": 5,
+    "fp": 5,
+    "dp": 1,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 3,
+    "run": 2,
+    "found": 0,
+    "tp": 0,
+    "fp": 0,
+    "dp": 0,
+    "tp_keys": []
+   },
+   {
+    "seed": 3,
+    "run": 3,
+    "found": 6,
+    "tp": 6,
+    "fp": 8,
+    "dp": 2,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "4",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 4,
+    "run": 1,
+    "found": 5,
+    "tp": 5,
+    "fp": 5,
+    "dp": 2,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 4,
+    "run": 2,
+    "found": 5,
+    "tp": 5,
+    "fp": 6,
+    "dp": 1,
+    "tp_keys": [
+     "1",
+     "2",
+     "4",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 4,
+    "run": 3,
+    "found": 4,
+    "tp": 4,
+    "fp": 6,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "2",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 5,
+    "run": 1,
+    "found": 4,
+    "tp": 4,
+    "fp": 2,
+    "dp": 2,
+    "tp_keys": [
+     "2",
+     "3",
+     "4",
+     "13"
+    ]
+   },
+   {
+    "seed": 5,
+    "run": 2,
+    "found": 4,
+    "tp": 4,
+    "fp": 5,
+    "dp": 1,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "13"
+    ]
+   },
+   {
+    "seed": 5,
+    "run": 3,
+    "found": 3,
+    "tp": 3,
+    "fp": 2,
+    "dp": 1,
+    "tp_keys": [
+     "2",
+     "4",
+     "13"
+    ]
+   }
+  ],
+  "split-mr2.0": [
+   {
+    "seed": 1,
+    "run": 1,
+    "found": 4,
+    "tp": 4,
+    "fp": 4,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "4"
+    ]
+   },
+   {
+    "seed": 1,
+    "run": 2,
+    "found": 5,
+    "tp": 5,
+    "fp": 44,
+    "dp": 10,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "4",
+     "13"
+    ]
+   },
+   {
+    "seed": 1,
+    "run": 3,
+    "found": 4,
+    "tp": 4,
+    "fp": 7,
+    "dp": 9,
+    "tp_keys": [
+     "1",
+     "2",
+     "4",
+     "13"
+    ]
+   },
+   {
+    "seed": 2,
+    "run": 1,
+    "found": 2,
+    "tp": 2,
+    "fp": 3,
+    "dp": 2,
+    "tp_keys": [
+     "2",
+     "13"
+    ]
+   },
+   {
+    "seed": 2,
+    "run": 2,
+    "found": 4,
+    "tp": 4,
+    "fp": 4,
+    "dp": 2,
+    "tp_keys": [
+     "1",
+     "3",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 2,
+    "run": 3,
+    "found": 4,
+    "tp": 4,
+    "fp": 4,
+    "dp": 2,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "13"
+    ]
+   },
+   {
+    "seed": 3,
+    "run": 1,
+    "found": 5,
+    "tp": 5,
+    "fp": 5,
+    "dp": 9,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 3,
+    "run": 2,
+    "found": 0,
+    "tp": 0,
+    "fp": 0,
+    "dp": 0,
+    "tp_keys": []
+   },
+   {
+    "seed": 3,
+    "run": 3,
+    "found": 6,
+    "tp": 6,
+    "fp": 2,
+    "dp": 26,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "4",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 4,
+    "run": 1,
+    "found": 4,
+    "tp": 4,
+    "fp": 4,
+    "dp": 4,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "13"
+    ]
+   },
+   {
+    "seed": 4,
+    "run": 2,
+    "found": 4,
+    "tp": 4,
+    "fp": 5,
+    "dp": 3,
+    "tp_keys": [
+     "1",
+     "4",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 4,
+    "run": 3,
+    "found": 2,
+    "tp": 2,
+    "fp": 3,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "13"
+    ]
+   },
+   {
+    "seed": 5,
+    "run": 1,
+    "found": 4,
+    "tp": 4,
+    "fp": 2,
+    "dp": 3,
+    "tp_keys": [
+     "2",
+     "3",
+     "4",
+     "13"
+    ]
+   },
+   {
+    "seed": 5,
+    "run": 2,
+    "found": 2,
+    "tp": 2,
+    "fp": 1,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "3"
+    ]
+   },
+   {
+    "seed": 5,
+    "run": 3,
+    "found": 3,
+    "tp": 3,
+    "fp": 2,
+    "dp": 7,
+    "tp_keys": [
+     "2",
+     "4",
+     "13"
+    ]
+   }
+  ],
+  "split-mr1.2": [
+   {
+    "seed": 1,
+    "run": 1,
+    "found": 6,
+    "tp": 6,
+    "fp": 3,
+    "dp": 0,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "4",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 1,
+    "run": 2,
+    "found": 5,
+    "tp": 5,
+    "fp": 51,
+    "dp": 8,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "4",
+     "13"
+    ]
+   },
+   {
+    "seed": 1,
+    "run": 3,
+    "found": 5,
+    "tp": 5,
+    "fp": 9,
+    "dp": 11,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "4",
+     "13"
+    ]
+   },
+   {
+    "seed": 2,
+    "run": 1,
+    "found": 3,
+    "tp": 3,
+    "fp": 7,
+    "dp": 7,
+    "tp_keys": [
+     "1",
+     "2",
+     "13"
+    ]
+   },
+   {
+    "seed": 2,
+    "run": 2,
+    "found": 5,
+    "tp": 5,
+    "fp": 5,
+    "dp": 3,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 2,
+    "run": 3,
+    "found": 4,
+    "tp": 4,
+    "fp": 6,
+    "dp": 3,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "13"
+    ]
+   },
+   {
+    "seed": 3,
+    "run": 1,
+    "found": 5,
+    "tp": 5,
+    "fp": 5,
+    "dp": 13,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 3,
+    "run": 2,
+    "found": 0,
+    "tp": 0,
+    "fp": 0,
+    "dp": 0,
+    "tp_keys": []
+   },
+   {
+    "seed": 3,
+    "run": 3,
+    "found": 6,
+    "tp": 6,
+    "fp": 6,
+    "dp": 26,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "4",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 4,
+    "run": 1,
+    "found": 5,
+    "tp": 5,
+    "fp": 5,
+    "dp": 3,
+    "tp_keys": [
+     "1",
+     "2",
+     "3",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 4,
+    "run": 2,
+    "found": 4,
+    "tp": 4,
+    "fp": 6,
+    "dp": 9,
+    "tp_keys": [
+     "1",
+     "4",
+     "5",
+     "13"
+    ]
+   },
+   {
+    "seed": 4,
+    "run": 3,
+    "found": 3,
+    "tp": 3,
+    "fp": 6,
+    "dp": 1,
+    "tp_keys": [
+     "1",
+     "2",
+     "13"
+    ]
+   },
+   {
+    "seed": 5,
+    "run": 1,
+    "found": 4,
+    "tp": 4,
+    "fp": 2,
+    "dp": 4,
+    "tp_keys": [
+     "2",
+     "3",
+     "4",
+     "13"
+    ]
+   },
+   {
+    "seed": 5,
+    "run": 2,
+    "found": 3,
+    "tp": 3,
+    "fp": 7,
+    "dp": 3,
+    "tp_keys": [
+     "1",
+     "3",
+     "13"
+    ]
+   },
+   {
+    "seed": 5,
+    "run": 3,
+    "found": 3,
+    "tp": 3,
+    "fp": 3,
+    "dp": 10,
+    "tp_keys": [
+     "2",
+     "4",
+     "13"
+    ]
+   }
+  ]
+ },
+ "anchor_forensics": [
+  {
+   "seed": 1,
+   "run": 1,
+   "real_pairs_merged": [],
+   "chimera_tracks_gate_rejected": [
+    {
+     "track": "track_8",
+     "cls": "person",
+     "n": 88,
+     "spread": 2.18,
+     "max_conf": 0.43,
+     "gt_covered": [
+      "13"
+     ],
+     "gate_rej_events": 0
+    },
+    {
+     "track": "track_10",
+     "cls": "first_aid_kit",
+     "n": 5,
+     "spread": 1.23,
+     "max_conf": 0.24,
+     "gt_covered": [
+      "5"
+     ],
+     "gate_rej_events": 0
+    }
+   ],
+   "chain_tracks": [],
+   "n_gate_rejects": 46,
+   "splits": 0
+  },
+  {
+   "seed": 1,
+   "run": 2,
+   "real_pairs_merged": [],
+   "chimera_tracks_gate_rejected": [
+    {
+     "track": "track_3",
+     "cls": "first_aid_kit",
+     "n": 17,
+     "spread": 2.37,
+     "max_conf": 0.24,
+     "gt_covered": [
+      "4"
+     ],
+     "gate_rej_events": 15
+    }
+   ],
+   "chain_tracks": [],
+   "n_gate_rejects": 405,
+   "splits": 0
+  },
+  {
+   "seed": 1,
+   "run": 3,
+   "real_pairs_merged": [],
+   "chimera_tracks_gate_rejected": [
+    {
+     "track": "track_3",
+     "cls": "fire_extinguisher",
+     "n": 49,
+     "spread": 3.2,
+     "max_conf": 0.72,
+     "gt_covered": [
+      "2"
+     ],
+     "gate_rej_events": 42
+    }
+   ],
+   "chain_tracks": [],
+   "n_gate_rejects": 323,
+   "splits": 0
+  },
+  {
+   "seed": 2,
+   "run": 1,
+   "real_pairs_merged": [],
+   "chimera_tracks_gate_rejected": [
+    {
+     "track": "track_4",
+     "cls": "fire_extinguisher",
+     "n": 27,
+     "spread": 3.89,
+     "max_conf": 0.82,
+     "gt_covered": [
+      "1"
+     ],
+     "gate_rej_events": 24
+    }
+   ],
+   "chain_tracks": [],
+   "n_gate_rejects": 86,
+   "splits": 0
+  },
+  {
+   "seed": 2,
+   "run": 2,
+   "real_pairs_merged": [],
+   "chimera_tracks_gate_rejected": [
+    {
+     "track": "track_3",
+     "cls": "fire_extinguisher",
+     "n": 28,
+     "spread": 2.8,
+     "max_conf": 0.85,
+     "gt_covered": [
+      "1"
+     ],
+     "gate_rej_events": 25
+    },
+    {
+     "track": "track_9",
+     "cls": "fire_extinguisher",
+     "n": 48,
+     "spread": 2.39,
+     "max_conf": 0.79,
+     "gt_covered": [
+      "2"
+     ],
+     "gate_rej_events": 46
+    }
+   ],
+   "chain_tracks": [],
+   "n_gate_rejects": 88,
+   "splits": 0
+  },
+  {
+   "seed": 2,
+   "run": 3,
+   "real_pairs_merged": [],
+   "chimera_tracks_gate_rejected": [
+    {
+     "track": "track_13",
+     "cls": "first_aid_kit",
+     "n": 2,
+     "spread": 1.8,
+     "max_conf": 0.23,
+     "gt_covered": [
+      "5"
+     ],
+     "gate_rej_events": 1
+    }
+   ],
+   "chain_tracks": [],
+   "n_gate_rejects": 90,
+   "splits": 0
+  },
+  {
+   "seed": 3,
+   "run": 1,
+   "real_pairs_merged": [
+    [
+     "s2:fire_extinguisher",
+     "s3:fire_extinguisher",
+     1.17
+    ]
+   ],
+   "chimera_tracks_gate_rejected": [
+    {
+     "track": "track_1",
+     "cls": "fire_extinguisher",
+     "n": 71,
+     "spread": 2.1,
+     "max_conf": 0.75,
+     "gt_covered": [
+      "1"
+     ],
+     "gate_rej_events": 47
+    },
+    {
+     "track": "track_10",
+     "cls": "first_aid_kit",
+     "n": 2,
+     "spread": 1.65,
+     "max_conf": 0.22,
+     "gt_covered": [
+      "4"
+     ],
+     "gate_rej_events": 1
+    }
+   ],
+   "chain_tracks": [
+    "track_4"
+   ],
+   "n_gate_rejects": 190,
+   "splits": 0
+  },
+  {
+   "seed": 3,
+   "run": 2,
+   "real_pairs_merged": [],
+   "chimera_tracks_gate_rejected": [],
+   "chain_tracks": [],
+   "n_gate_rejects": 0,
+   "splits": 0
+  },
+  {
+   "seed": 3,
+   "run": 3,
+   "real_pairs_merged": [
+    [
+     "s2:fire_extinguisher",
+     "s3:fire_extinguisher",
+     1.17
+    ]
+   ],
+   "chimera_tracks_gate_rejected": [
+    {
+     "track": "track_1",
+     "cls": "fire_extinguisher",
+     "n": 115,
+     "spread": 3.91,
+     "max_conf": 0.83,
+     "gt_covered": [
+      "1"
+     ],
+     "gate_rej_events": 69
+    }
+   ],
+   "chain_tracks": [
+    "track_3"
+   ],
+   "n_gate_rejects": 309,
+   "splits": 0
+  },
+  {
+   "seed": 4,
+   "run": 1,
+   "real_pairs_merged": [
+    [
+     "s1:fire_extinguisher",
+     "s2:fire_extinguisher",
+     0.96
+    ]
+   ],
+   "chimera_tracks_gate_rejected": [
+    {
+     "track": "track_1",
+     "cls": "fire_extinguisher",
+     "n": 36,
+     "spread": 4.46,
+     "max_conf": 0.77,
+     "gt_covered": [
+      "2"
+     ],
+     "gate_rej_events": 28
+    },
+    {
+     "track": "track_3",
+     "cls": "first_aid_kit",
+     "n": 26,
+     "spread": 2.25,
+     "max_conf": 0.3,
+     "gt_covered": [
+      "4"
+     ],
+     "gate_rej_events": 0
+    },
+    {
+     "track": "track_5",
+     "cls": "first_aid_kit",
+     "n": 31,
+     "spread": 2.27,
+     "max_conf": 0.31,
+     "gt_covered": [
+      "5"
+     ],
+     "gate_rej_events": 27
+    },
+    {
+     "track": "track_7",
+     "cls": "person",
+     "n": 43,
+     "spread": 1.34,
+     "max_conf": 0.31,
+     "gt_covered": [
+      "13"
+     ],
+     "gate_rej_events": 41
+    }
+   ],
+   "chain_tracks": [
+    "track_2"
+   ],
+   "n_gate_rejects": 158,
+   "splits": 0
+  },
+  {
+   "seed": 4,
+   "run": 2,
+   "real_pairs_merged": [
+    [
+     "s1:fire_extinguisher",
+     "s2:fire_extinguisher",
+     0.96
+    ]
+   ],
+   "chimera_tracks_gate_rejected": [
+    {
+     "track": "track_6",
+     "cls": "person",
+     "n": 41,
+     "spread": 3.08,
+     "max_conf": 0.29,
+     "gt_covered": [
+      "13"
+     ],
+     "gate_rej_events": 36
+    }
+   ],
+   "chain_tracks": [
+    "track_5"
+   ],
+   "n_gate_rejects": 91,
+   "splits": 0
+  },
+  {
+   "seed": 4,
+   "run": 3,
+   "real_pairs_merged": [
+    [
+     "s1:fire_extinguisher",
+     "s2:fire_extinguisher",
+     0.96
+    ]
+   ],
+   "chimera_tracks_gate_rejected": [
+    {
+     "track": "track_1",
+     "cls": "fire_extinguisher",
+     "n": 66,
+     "spread": 3.95,
+     "max_conf": 0.66,
+     "gt_covered": [
+      "1",
+      "2"
+     ],
+     "gate_rej_events": 57
+    },
+    {
+     "track": "track_2",
+     "cls": "first_aid_kit",
+     "n": 24,
+     "spread": 2.52,
+     "max_conf": 0.28,
+     "gt_covered": [
+      "4"
+     ],
+     "gate_rej_events": 3
+    },
+    {
+     "track": "track_5",
+     "cls": "first_aid_kit",
+     "n": 9,
+     "spread": 1.28,
+     "max_conf": 0.24,
+     "gt_covered": [
+      "5"
+     ],
+     "gate_rej_events": 3
+    }
+   ],
+   "chain_tracks": [
+    "track_1"
+   ],
+   "n_gate_rejects": 88,
+   "splits": 0
+  },
+  {
+   "seed": 5,
+   "run": 1,
+   "real_pairs_merged": [],
+   "chimera_tracks_gate_rejected": [],
+   "chain_tracks": [],
+   "n_gate_rejects": 71,
+   "splits": 0
+  },
+  {
+   "seed": 5,
+   "run": 2,
+   "real_pairs_merged": [],
+   "chimera_tracks_gate_rejected": [
+    {
+     "track": "track_1",
+     "cls": "person",
+     "n": 61,
+     "spread": 3.08,
+     "max_conf": 0.26,
+     "gt_covered": [
+      "13"
+     ],
+     "gate_rej_events": 59
+    },
+    {
+     "track": "track_2",
+     "cls": "fire_extinguisher",
+     "n": 18,
+     "spread": 4.21,
+     "max_conf": 0.86,
+     "gt_covered": [
+      "3"
+     ],
+     "gate_rej_events": 17
+    },
+    {
+     "track": "track_6",
+     "cls": "fire_extinguisher",
+     "n": 74,
+     "spread": 1.77,
+     "max_conf": 0.9,
+     "gt_covered": [
+      "2"
+     ],
+     "gate_rej_events": 71
+    }
+   ],
+   "chain_tracks": [],
+   "n_gate_rejects": 161,
+   "splits": 0
+  },
+  {
+   "seed": 5,
+   "run": 3,
+   "real_pairs_merged": [],
+   "chimera_tracks_gate_rejected": [],
+   "chain_tracks": [],
+   "n_gate_rejects": 48,
+   "splits": 0
+  }
+ ]
+}
