@@ -59,6 +59,7 @@ agent/
   depth_projector.py   bbox → depth → world (x, y) via TF2
   tracker.py           multi-sighting fusion (≥2 diverse poses ≥0.2m apart OR ≥3 close-range in-view frames), anti-hallucination gate (conf margin +0.05, positional stability 1.2m — STABILITY_RADIUS=1.2), cross-class position veto 0.8m, MATCH_RADIUS=2.0 m, CANDIDATE_TIMEOUT_S=180
   agent_node.py        INIT → EXPLORE → DONE, MultiThreadedExecutor; --record-stream [PATH] records the tracker sighting stream (default ON under benchmark stack; per-run naming stream_<scenario>_<seed><run>_<stamp>.jsonl via DERPBOT_STREAM_SCOPE, latest.jsonl fallback rotated by cleanup, t_451895af/t_96cab082)
+  slam_sentinel.py     slam first-map sentinel (t_8673a87f): 45-s grace → ONE restart request via /tmp/derpbot_slam_restart_request → slam_restart_watch.sh (start_stack.sh tmux `slamwatch`, DERPBOT_SLAM_WATCHER_ARMED=1) → one more grace → startup_timeout abort (~90 sim-s worst vs 120 legacy). Pure stdlib; passive when healthy (healthy first-/map p95 19.4 s << 45 s).
   keyframe capture     trigger-gated downscaled JPEGs (320×240 q70, cap 300/run) next to the stream: results/streams/frames/<stream-stem>/f_<simtime>.jpg — ≤1 Hz while ≥1 pending candidate OR during candidate detour/hold navigation, 1 frame/10s idle; encode on background thread (zero detection-latency effect; sim-time names cross-reference stream "t" fields, t_85fe2e5c)
 
 config/
@@ -125,7 +126,7 @@ Anything in committed config/code is omitted. Only things a fresh agent would re
 - **Bumper flag is time-based, not boolean.** `_bumper_contact_time` records sim-time of last non-ground contact. Flag expires after `BUMPER_CONTACT_EXPIRY=3.0s` without new contact. If robot is actively rotating (`|wz| ≥ 0.1`), bumper fast-stuck is suppressed — robot may clear the contact by turning.
 - **Bumper stuck timeout is 5 sim-seconds** (vs 30s for regular). Only triggers if: bumper contact within last 3s AND robot not translating AND robot not rotating.
 - **Stuck logs include robot position** for post-run diagnosis.
-- **Startup timeout:** if no `/map` within `STARTUP_MAP_TIMEOUT=120s` sim-s, explorer aborts (slam_toolbox dead). Prevents burning the entire mission budget in startup.
+- **Startup timeout → slam sentinel (t_8673a87f):** the legacy "abort if no `/map` within `STARTUP_MAP_TIMEOUT=120s`" path is replaced by the slam first-map sentinel (`agent/slam_sentinel.py`): 45-s grace → ONE restart request (flag file, consumed by `scripts/slam_restart_watch.sh`) → one more grace → abort (~90 sim-s worst case). Passive when healthy — healthy first-/map spans (p95 19.4 sim-s over 116 runs) never trigger it. Manual runs without `start_stack.sh` watch no restart and abort at one window.
 - **Spin recovery speed increased:** `max_rotational_vel=2.0`, `min_rotational_vel=1.0` (was 1.0/0.4).
 
 ---
