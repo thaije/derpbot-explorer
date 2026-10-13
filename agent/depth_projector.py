@@ -57,6 +57,25 @@ DEPTH_MIN = 0.30   # metres — discard closer than this
 DEPTH_MAX = 5.00   # metres — sensor valid range up to 6 m; 5 m keeps noise manageable
 DEPTH_SAMPLE_HALF = 2  # sample a (2*half+1)×(2*half+1) = 5×5 patch
 
+# ── Ground-anchored depth clip (t_fd80a2f9 — projection forensics fix) ──────
+# Forensics (results/projection_forensics.md): the 5×5 bbox-centre depth patch
+# reads the WALL BEHIND near objects (a 40–60 px object at ~1 m spans background
+# pixels in the patch), producing 2.5–3.5 m overshoots on sightings at <1.5 m
+# true range — the mechanism behind every projection-driven FP and near-miss
+# death. The bearing is clean (sub-0.1 m on rows where depth reads the object);
+# ONLY the range overshoots. Fix: clip the sampled depth with the range implied
+# by the bbox BOTTOM-edge ray hitting the floor (the object stands on the
+# ground; its ground contact is in the bbox bottom row). Fully generic:
+# one calibrated parameter (camera height above ground, TF/URDF-derived —
+# no class names, no per-class constants). The GP_CLIP factor absorbs
+# bbox-bottom-below-contact noise (OWL-v2 boxes often extend past the object's
+# base); measured optimum 1.35 (zero-sim A/B: per-sighting in-window 0.67→0.93
+# vs nearest same-class GT, attribution-free mean error −61%, FP/run 2.54→1.54).
+GP_CAMERA_HEIGHT_M = 0.25   # camera_link z above ground: URDF camera_joint
+                            # 0.20 + base_link 0.05 (verify via TF if mount changes)
+GP_CLIP = 1.35              # clip depth at GP_CLIP × ground-plane range
+GP_MIN_PITCH = 1e-3         # pitch(rad) above which the bottom ray hits the floor
+
 # TF frames
 WORLD_FRAME = "map"
 CAMERA_FRAME = "camera_link"   # ← confirm from sim with ros2 run tf2_tools view_frames
@@ -171,6 +190,18 @@ class DepthProjector:
             return None
 
         depth = float(np.median(valid))
+
+        # Ground-anchored clip (t_fd80a2f9): bound the sampled depth by the
+        # range the bbox BOTTOM-edge ray implies when it hits the floor. The
+        # object stands on the ground, so its ground contact lies in the bbox
+        # bottom row; a depth sample much beyond that range is the wall behind
+        # the object, not the object. Without a bbox the ray is the image
+        # centre row and the clip degenerates to the horizon guard below.
+        vb = det.cy_px + max(det.h_px, 0.0) / 2.0   # bbox bottom edge (px)
+        pitch = math.atan2(vb - _CY, _FY)           # ray depression angle (>0: down)
+        if pitch > GP_MIN_PITCH:
+            gp_range = GP_CAMERA_HEIGHT_M / math.tan(pitch)
+            depth = min(depth, GP_CLIP * gp_range)
 
         # Back-project to camera frame
         x_cam = (u - _CX) / _FX * depth
