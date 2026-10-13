@@ -67,6 +67,17 @@ GPU_DEVICE = 0
 OWL_MODEL_ID = "google/owlv2-base-patch16-ensemble"
 OWL_CONF_THRESHOLD = 0.15  # tuned: 0.10 gave 3 FPs; 0.12 gave 3 FPs with no net benefit; 0.15 gives 1 FP best precision (fire_ext#2 marginal but found at good nav coverage)
 
+# Keyframe capture (t_85fe2e5c): the Tracker's KeyframeRecorder samples the
+# latest raw camera frame through latest_frame(). The stash is a single tuple
+# reference assignment in _image_cb (~zero cost, off the inference path); the
+# recorder does its JPEG encode + downscale on its own background thread.
+KEYFRAME_WIDTH = 320       # downscaled JPEG width (px)
+KEYFRAME_HEIGHT = 240      # downscaled JPEG height (px)
+KEYFRAME_QUALITY = 70      # JPEG quality (0-95)
+KEYFRAME_ACTIVE_INTERVAL = 1.0   # min seconds between frames while a pending candidate exists
+KEYFRAME_IDLE_INTERVAL = 10.0    # min seconds between sparse idle context frames
+KEYFRAME_MAX_PER_RUN = 300       # hard cap: total JPEGs written per run
+
 
 @dataclass
 class DetectionResult:
@@ -339,6 +350,18 @@ class Detector:
     # Image callback — fast path: convert and enqueue frame
     # ------------------------------------------------------------------
 
+    def latest_frame(self) -> Optional[tuple]:
+        """Latest processed camera frame as (BGR ndarray, cam_timestamp_s).
+
+        Keyframe-capture plumbing (t_85fe2e5c — write-only observer): the
+        Tracker's KeyframeRecorder samples this from its own background
+        thread. Returns None before the first camera frame arrives. The
+        ndarray is shared with the callback (no copy on the hot path) — the
+        recorder must read/encode it before treating it as stable, which the
+        single-assignment stash makes safe enough for diagnostic JPEGs.
+        """
+        return getattr(self, "_latest_frame", None)
+
     def _image_cb(self, msg: Image) -> None:
         import time
         now = time.monotonic()
@@ -366,6 +389,12 @@ class Detector:
             return
 
         stamp = msg.header.stamp
+
+        # Keyframe-capture stash (t_85fe2e5c — write-only observer): remember
+        # the latest processed camera frame for the Tracker's KeyframeRecorder.
+        # A single tuple assignment; the recorder reads it from its own thread.
+        self._latest_frame = (frame, stamp.sec + stamp.nanosec / 1e9)
+
         item = (frame.tobytes(), frame.shape, stamp.sec, stamp.nanosec)
         try:
             self._mp_frames.put_nowait(item)

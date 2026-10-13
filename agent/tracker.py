@@ -51,7 +51,16 @@ import rclpy
 from rclpy.node import Node
 from vision_msgs.msg import Detection2D, Detection2DArray, ObjectHypothesisWithPose
 
-from detector import DetectionResult, OWL_CONF_THRESHOLD
+from detector import (
+    DetectionResult,
+    OWL_CONF_THRESHOLD,
+    KEYFRAME_WIDTH,
+    KEYFRAME_HEIGHT,
+    KEYFRAME_QUALITY,
+    KEYFRAME_ACTIVE_INTERVAL,
+    KEYFRAME_IDLE_INTERVAL,
+    KEYFRAME_MAX_PER_RUN,
+)
 
 MATCH_RADIUS = 2.0          # metres — same class within this → same object
 MIN_SIGHTINGS = 2           # require 2 sightings to filter single-frame noise
@@ -104,6 +113,16 @@ def default_stream_path() -> str:
     p = Path(DEFAULT_STREAM_PATH)
     _rotate_existing(p)
     return DEFAULT_STREAM_PATH
+
+def keyframes_dir_for(stream_path: str) -> str:
+    """Per-run keyframe directory for a stream path (t_85fe2e5c).
+
+    results/streams/frames/<stream-stem>/ — rotates with the per-run stream
+    naming of t_96cab082 (each run's stream stem gets its own frames dir).
+    """
+    stem = Path(stream_path).stem or "stream"
+    return str(Path("results") / "streams" / "frames" / stem)
+
 
 # Anti-hallucination gate (FP backlog #40): OWLv2 hallucinations are low-margin
 # detections whose projected position drifts as the robot moves (near-threshold
@@ -530,6 +549,176 @@ class StreamRecorder:
             pass
 
 
+class KeyframeRecorder:
+    """
+    Trigger-gated keyframe capture (t_85fe2e5c) — write-only observer.
+
+    Trigger set (t_85fe2e5c + orchestrator addendum):
+      - pending-candidate active: >=1 unconfirmed candidate in the tracker's
+        pending dict (read-only peek at the SAME signal frontier_explorer
+        uses via tracker.get_pending_candidates() — no tracker policy change)
+        -> at most 1 frame per second;
+      - candidate-driven navigation phases (detour toward / hold near a
+        candidate, signalled read-only by the explorer via
+        frontier_explorer.set_capture_hook()) -> at most 1 frame per second;
+      - idle (none of the above): sparse context, at most 1 frame per 10s.
+        Kept (vs skipping entirely) because a 320x240 q70 JPEG is ~25 KB ->
+        2.5 KB/s worst case and idle frames let offline forensics align
+        "in-FOV-but-undetected" windows with the surrounding exploration
+        phase and robot pose.
+
+    While any trigger is active the phase is keyframed CONTINUOUSLY at the
+    1 Hz ceiling (not just when the pending list is non-empty at poll time),
+    so "the moment the robot parks wrong" is captured even if the candidate
+    gets confirmed/expired mid-poll. Idle frames stop once the run is within
+    10 frames of the hard cap so context frames can never crowd out the
+    candidate-triggered budget. Hard cap per run (KEYFRAME_MAX_PER_RUN).
+
+    Output naming (addendum): results/streams/frames/<stream-stem>/
+      f_<simtime>.jpg — sim-time so filenames cross-reference sighting-stream
+      lines ("t" field) and result-JSON timelines exactly. Per-run dir rotates
+      with the per-run stream naming of t_96cab082.
+
+    Zero effect on detection latency: the camera frame is a single tuple
+    reference stashed by Detector._image_cb (detector.latest_frame()); all
+    downscale/JPEG/disk work happens on THIS recorder's background thread,
+    never on the inference hot path. Every failure is swallowed — recording
+    can never take the live pipeline down.
+    """
+
+    def __init__(
+        self,
+        frames_dir: str,
+        detector: "Detector",
+        pending_provider,   # Callable[[], list[dict]] — read-only pending candidates
+        clock_node: "Node",
+        extra_trigger_provider=None,  # Callable[[], bool] — explorer detour/hold phase
+    ):
+        self._frames_dir = Path(frames_dir)
+        self._detector = detector
+        self._pending_provider = pending_provider
+        self._extra_trigger_provider = extra_trigger_provider
+        self._clock_node = clock_node
+        self._logger = clock_node.get_logger() if clock_node is not None else None
+        self._count = 0
+        self._last_write_monotonic: Optional[float] = None
+        self._last_written_sim: Optional[float] = None
+        self._running = True
+        try:
+            self._frames_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            self._running = False
+            if self._logger is not None:
+                self._logger.warning("Tracker: keyframe recorder disabled (mkdir failed)")
+
+        self._thread: Optional[threading.Thread] = None
+        self._cv2 = None
+        if self._running:
+            try:
+                import cv2
+                self._cv2 = cv2  # fail fast before starting the thread
+                self._thread = threading.Thread(
+                    target=self._loop, daemon=True, name="keyframe_recorder"
+                )
+                self._thread.start()
+            except ImportError:
+                self._running = False
+                if self._logger is not None:
+                    self._logger.warning(
+                        "Tracker: keyframe recorder disabled (cv2 unavailable in agent process)"
+                    )
+            except Exception as exc:
+                self._running = False
+                if self._logger is not None:
+                    self._logger.warning(f"Tracker: keyframe recorder disabled ({exc})")
+
+    def _sim_time(self) -> float:
+        node = self._clock_node
+        if node is None:
+            return time.time()
+        try:
+            return node.get_clock().now().nanoseconds / 1e9
+        except Exception:
+            return time.time()
+
+    def _loop(self) -> None:
+        while self._running:
+            if self._count >= KEYFRAME_MAX_PER_RUN:
+                break  # hard cap reached — stop the thread entirely
+            try:
+                pending = self._pending_provider() or []
+            except Exception:
+                pending = []
+            extra = False
+            if self._extra_trigger_provider is not None:
+                try:
+                    extra = bool(self._extra_trigger_provider())
+                except Exception:
+                    extra = False
+            active = bool(pending) or extra
+            interval = KEYFRAME_ACTIVE_INTERVAL if active else KEYFRAME_IDLE_INTERVAL
+
+            now = time.monotonic()
+            due = (
+                self._last_write_monotonic is None
+                or (now - self._last_write_monotonic) >= interval
+            )
+            if due:
+                # Idle context frames stop near the cap so they can never
+                # crowd out candidate-triggered keyframes.
+                if active or self._count < KEYFRAME_MAX_PER_RUN - 10:
+                    self._last_write_monotonic = now
+                    self._write_one(sim_time=self._sim_time())
+            time.sleep(0.2)
+
+    def _write_one(self, sim_time: float) -> None:
+        try:
+            frame_item = self._detector.latest_frame()
+            if frame_item is None:
+                return  # no camera frame yet
+            frame, cam_t = frame_item
+            # Sim-time name collision guard (addendum): filename must
+            # cross-reference the stream "t" field exactly — skip the rare
+            # <=100 ms repeat rather than overwrite an earlier frame.
+            if (
+                self._last_written_sim is not None
+                and abs(sim_time - self._last_written_sim) < 0.1
+            ):
+                return
+            h, w = frame.shape[:2]
+            scale = min(KEYFRAME_WIDTH / w, KEYFRAME_HEIGHT / h, 1.0)
+            if scale < 1.0:
+                small = self._cv2.resize(
+                    frame, (int(w * scale), int(h * scale)),
+                    interpolation=self._cv2.INTER_AREA,
+                )
+            else:
+                small = frame
+            ok, buf = self._cv2.imencode(
+                ".jpg", small,
+                [int(self._cv2.IMWRITE_JPEG_QUALITY), KEYFRAME_QUALITY],
+            )
+            if not ok:
+                return
+            out = self._frames_dir / f"f_{sim_time:.3f}.jpg"
+            buf.tofile(str(out))  # single write, off the hot path
+            self._count += 1
+            self._last_written_sim = sim_time
+            if self._count == 1 and self._logger is not None:
+                self._logger.info(
+                    f"Tracker: keyframe capture active (1Hz while candidates "
+                    f"pending or in candidate detour/hold, {KEYFRAME_IDLE_INTERVAL:.0f}s "
+                    f"idle, cap {KEYFRAME_MAX_PER_RUN}) -> {self._frames_dir}"
+                )
+        except Exception:
+            pass  # write-only observer: never take the live pipeline down
+
+    def stop(self) -> None:
+        self._running = False
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+
+
 # ---------------------------------------------------------------------------
 # Main-process Tracker class
 # ---------------------------------------------------------------------------
@@ -610,14 +799,72 @@ class Tracker:
             node=node,
         )
 
+        # Pending candidates: objects with < MIN_SIGHTINGS, exposed for explorer
+        # Dict from track_id → {class_name, world_x, world_y, first_sim_t}
+        # (initialized BEFORE the keyframe recorder below — its background
+        # thread starts polling _peek_pending_candidates immediately.)
+        self._pending_candidates: dict[str, dict] = {}
+        self._pending_candidates_lock = threading.Lock()
+
+        # Keyframe-capture trigger extensions (t_85fe2e5c addendum): the
+        # explorer registers a read-only callback here that returns True while
+        # the robot is navigating toward / holding at a candidate detour goal.
+        # Write-only observer: a callback returning False/True never changes
+        # explorer decisions.
+        self._keyframe_extra_trigger = None
+
+        # Keyframe capture (t_85fe2e5c — write-only observer): trigger-gated
+        # downscaled JPEGs. Trigger = >=1 pending candidate (read-only peek at
+        # _pending_candidates, same signal get_pending_candidates() exposes —
+        # NO policy change) OR explorer-set candidate detour/hold phase
+        # (addendum); idle -> 1 frame/10s sparse context. Frames dir rotates
+        # with the per-run stream naming. Zero effect on detection latency:
+        # encode/write runs on the recorder's own background thread.
+        _record = record_stream
+        if _record is None or _record is True:
+            _stream_path = default_stream_path()
+        elif _record is False:
+            _stream_path = DEFAULT_STREAM_PATH
+        else:
+            _stream_path = str(_record)
+        self._keyframe_recorder: Optional[KeyframeRecorder] = None
+        if _record is not False:
+            self._keyframe_recorder = KeyframeRecorder(
+                frames_dir=keyframes_dir_for(_stream_path),
+                detector=detector,
+                pending_provider=self._peek_pending_candidates,
+                clock_node=node,
+            )
+
         # Tracked objects snapshot for status logging (updated by publisher thread)
         self._published_objects: list[dict] = []
         self._published_lock = threading.Lock()
 
-        # Pending candidates: objects with < MIN_SIGHTINGS, exposed for explorer
-        # Dict from track_id → {class_name, world_x, world_y, first_sim_t}
-        self._pending_candidates: dict[str, dict] = {}
-        self._pending_candidates_lock = threading.Lock()
+    # ------------------------------------------------------------------
+    # Keyframe-capture trigger plumbing (read-only)
+    # ------------------------------------------------------------------
+
+    def _peek_pending_candidates(self) -> list[dict]:
+        """Read-only snapshot of the pending-candidate dict.
+
+        Same signal get_pending_candidates() exposes to the explorer, minus
+        the expiry pruning side effect (capture must never mutate tracker
+        state). Never blocks the publisher thread for long: lock held only
+        for the dict copy.
+        """
+        with self._pending_candidates_lock:
+            return list(self._pending_candidates.values())
+
+    def set_keyframe_extra_trigger(self, provider) -> None:
+        """Register explorer detour/hold hook (t_85fe2e5c addendum).
+
+        provider() -> True while a candidate-driven navigation phase (detour
+        toward / hold near a candidate) is active. Read-only from the
+        explorer's side: the recorder only CALLS it.
+        """
+        self._keyframe_extra_trigger = provider
+        if self._keyframe_recorder is not None:
+            self._keyframe_recorder._extra_trigger_provider = provider
 
     # ------------------------------------------------------------------
     # Relay: detector queue → project + robot pose → worker process
@@ -840,6 +1087,11 @@ class Tracker:
         with self._pending_candidates_lock:
             return track_id in self._pending_candidates
 
+    def has_pending_candidates(self) -> bool:
+        """Read-only: any unconfirmed candidate right now (no expiry pruning)."""
+        with self._pending_candidates_lock:
+            return bool(self._pending_candidates)
+
     def stop(self) -> None:
         self._running = False
         try:
@@ -850,8 +1102,9 @@ class Tracker:
             self._worker.join(timeout=5.0)
         # Flush + close the sighting-stream recorder (t_451895af)
         self._recorder.stop()
-        # Clear diagnostics from frontier_explorer (no longer needed)
-        # (diagnostics were added earlier in this session)
+        # Stop the keyframe-capture thread (t_85fe2e5c)
+        if self._keyframe_recorder is not None:
+            self._keyframe_recorder.stop()
 
 
 # ---------------------------------------------------------------------------

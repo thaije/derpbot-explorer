@@ -280,6 +280,12 @@ class FrontierExplorer:
         self._done_callback = done_callback
         self._logger = node.get_logger()
         self._tracker = tracker  # tracker.Tracker or None
+        # Keyframe-capture detour/hold hook (t_85fe2e5c addendum): when the
+        # tracker supports it, register our navigation-phase flag so the
+        # KeyframeRecorder captures continuously at 1 Hz during candidate
+        # detours/holds — write-only observer, no policy change.
+        if tracker is not None and hasattr(tracker, "set_keyframe_extra_trigger"):
+            tracker.set_keyframe_extra_trigger(lambda: self._capture_navigation_phase)
 
         self._bfs_executor = ProcessPoolExecutor(max_workers=1)
         self._map: Optional[OccupancyGrid] = None
@@ -340,6 +346,21 @@ class FrontierExplorer:
         # Each candidate is visited once; after the detour, SLAM may have updated
         # and the object may be confirmed or the candidate expired.
         self._candidate_visited: set[str] = set()
+
+        # Keyframe-capture phase flag (t_85fe2e5c addendum — WRITE-ONLY
+        # observer signal): True while the robot is navigating toward or
+        # holding at a candidate detour goal. Read via a lock-free bool read
+        # by the tracker's KeyframeRecorder thread; flipping it never changes
+        # any explorer decision — capture-only.
+        self._capture_navigation_phase = False
+
+        # Slam sentinel diagnostics (t_8673a87f): did the sim ever publish
+        # /derpbot_0/scan during the map wait? A dead sim can't be fixed by
+        # restarting slam — this goes into the restart-flag diagnostic.
+        self._scan_seen = False
+        # Sentinel instance created in _explore_loop (needs the sim clock);
+        # _map_cb may fire before that, hence the None guard.
+        self._sentinel = None
 
         # Subscriptions
         # /map is published TRANSIENT_LOCAL — subscriber must also use TRANSIENT_LOCAL
@@ -804,6 +825,10 @@ class FrontierExplorer:
                 )
 
             self._tl("nav2_send", _goal_num)
+            # Keyframe capture (t_85fe2e5c addendum): candidate detour/hold
+            # phase — recorder captures at 1 Hz while this flag is True.
+            # Write-only observer signal.
+            self._capture_navigation_phase = is_detection
             # Geographic goals are preemptable: if a detection candidate
             # appears mid-navigation, cancel and detour toward it.
             # Detection detours are NOT preemptable — we commit to avoid oscillation,
@@ -813,6 +838,9 @@ class FrontierExplorer:
                 preemptable=(not is_detection and not is_patrol),
                 detection_track_id=(best.track_id if is_detection else None),
             )
+            # Keyframe capture (addendum): navigation phase ended — stop the
+            # 1 Hz detour/hold capture regardless of which exit was taken.
+            self._capture_navigation_phase = False
 
             # Handle preemption: geographic goal cancelled because a detection
             # candidate appeared. Don't count as a goal; loop back to re-select.
