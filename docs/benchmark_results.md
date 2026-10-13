@@ -38,7 +38,20 @@ Mechanism (committed `ce3e972`): a pure-stdlib sentinel (`agent/slam_sentinel.py
 
 Unit tests (no sim): `tests/test_slam_sentinel.py` 10/10 (healthy-inside-window, late-map-after-restart recovery, exactly-one-restart across 10 windows, abort-after-restart at ~2×grace, no-watcher abort at one window with zero restarts, restart-flag JSON content + unwritable-path fallback, terminal-state behavior). `tests/test_slam_sentinel_wiring.py` 6/6 (explorer-loop restart/abort/timeline-tag flow with mocked clock, `DERPBOT_SLAM_WATCHER_ARMED` gating, scan diagnostic callback, grace-window sanity vs the 116-run healthy sample). Regression at `ce3e972`: sentinel 16/16, watchdog 3/3, tracker gates 8/8, replay fixture 10/10, ROI module import-gated skip.
 
-**Sim regression (easy 3×1, seeds 1/4/5, `--agent-name derpbot-explorer-slam-sentinel`) is DEFERRED until t_fd80a2f9 releases the sim workstream** (orchestrator steer 2026-10-13). Not yet run: healthy-path sim validation, and the forced-delay failure path is NOT sim-validated (only unit-level with mocked clock) — both to be run and this entry updated when the sim frees up.
+**Sim regression (easy 3×1, seeds 1/4/5, `--agent-name derpbot-explorer-slam-sentinel`) — RUN 2026-10-13 14:28–14:55 after t_fd80a2f9 released the sim (one sim at a time honored; speed 2; pkg1 tmux anchor pin; 3/3 completed, 0 failed, 0 DOA):**
+
+| seed | found | cov% | coll | score | grade |
+|------|-------|------|------|-------|-------|
+| 1 | 4/6 | 95.8 | 4.0 | 57.1 | C |
+| 4 | 1/6 | 65.3 | 0.0 | 42.6 | D |
+| 5 | 2/6 | 98.7 | 0.0 | 48.7 | D |
+| **mean** | **2.33/6** | | | **49.5** | |
+
+Sentinel behavior across all 3 runs: **fully passive** — startup timelines (`| startup |` profile rows: 17.5 / 16.2 / 12.8 sim-s) are identical in shape to pre-sentinel healthy runs (116-run sample p50 13.4 / p95 19.4), ZERO `slam_restart_request` or `startup_timeout` events in any stream, no restart flag written, slamwatch watcher exited clean at its timeout on every stack start (flag consumed: never). No behavior change when slam is healthy, confirmed live.
+
+Score context (honest reading): single-run per-seed spread on this tree is wide; the 2026-10-12 v5-master 5×3 single-run spread for the same seeds includes 3/6 (53.4) and 4/6 (58.4) for seed 4, 3/6 (52.0) for seed 5, 5/6 for seed 1. This batch co-measures t_fd80a2f9's ground-anchored depth clip (kept in HEAD at `8378792`) plus its own variance, so it is a no-regression + health check, not a scored comparison: mean found 2.33 vs anchor per-seed-run values 3–6 shows no systematic startup damage (coverage 65–99%, all runs ran the full 900-s budget exploring). The seed-4 run (1/6, 4 FP-sparse) sits within observed single-run variance for that seed (v5-master 3.67 mean over 3 runs; v9 gate 2/6).
+
+Forced-restart path validated LIVE beyond unit tests: with the post-regression stack (slam session still up), armed the watcher, wrote the restart flag manually, and observed the full contract: flag detected → consumed → slam session killed → relaunched with the fixed self-contained ROS env → slam_toolbox booted and stayed alive. This uncovered a real bug — the original relaunch line died with `ros2: command not found` when the watcher was armed from a non-ROS shell (new tmux sessions merge the CALLING client env over the server env) — fixed at `39baadc` (relaunch sources `/opt/ros/jazzy/setup.bash` itself) and re-verified end-to-end. So the restart-once path WAS forced-tested live, not only in unit tests. Healthy-sim happy path (sentinel passive, agent explores normally) validated by the 3 regression runs above.
 
 ---
 
