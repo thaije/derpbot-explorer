@@ -30,6 +30,13 @@ GRACE_POLL="1"
 # is inherited via the tmux session, but be explicit for the slam command).
 ROS_ENV="export ROS_DISCOVERY_SERVER=127.0.0.1:11811; export RMW_IMPLEMENTATION=rmw_fastrtps_cpp; export ROS_SUPER_CLIENT=1;"
 
+# IMPORTANT (forced-sim-test finding, t_8673a87f): the watcher's tmux session
+# does NOT reliably inherit a ROS-sourced environment — new tmux sessions get
+# the CLIENT shell's env merged over the server env, and a watcher armed from
+# a non-ROS shell launches `ros2: command not found`. Source ROS explicitly in
+# the relaunch command so restart works from any arming context.
+SLAM_LAUNCH="source /opt/ros/jazzy/setup.bash; export PYTHONPATH=/opt/ros/jazzy/lib/python3.12/site-packages:/usr/lib/python3/dist-packages; ${ROS_ENV} cd $EXPLORER_ROOT && ros2 launch slam_toolbox online_async_launch.py slam_params_file:=$EXPLORER_ROOT/config/slam_toolbox_params.yaml use_sim_time:=true"
+
 echo "[slam-restart-watch] watching ${FLAG} (exits after one restart or ${ARM_TIMEOUT}s)"
 
 WAITED=0
@@ -58,7 +65,7 @@ pkill -9 -f "slam_toolbox" 2>/dev/null || true
 sleep 2
 
 echo "[slam-restart-watch] relaunching slam_toolbox (once)..."
-tmux new -s slam -d "${ROS_ENV} cd $EXPLORER_ROOT && ros2 launch slam_toolbox online_async_launch.py slam_params_file:=$EXPLORER_ROOT/config/slam_toolbox_params.yaml use_sim_time:=true"
+tmux new -s slam -d "${SLAM_LAUNCH}"
 
 echo "[slam-restart-watch] restart complete — watcher exiting (never restarts again)"
 exit 0
