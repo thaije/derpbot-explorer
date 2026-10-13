@@ -2,6 +2,31 @@
 
 Historical performance snapshots. Append new entries on top; keep older ones for regression comparison.
 
+## 2026-10-13 — t_ca2ea380: tracker data-association fix (spread-triggered 2-means split of near-duplicate chimeras) — GATE REJECT (easy 5×1; association fix KEPT in HEAD, no 5×3 escalation)
+
+Agent: `derpbot-explorer-v10-assoc` @ `437aeb2` — builds on the t_fd80a2f9 projection fix (`8378792`, KEPT per parent pre-registration). The gates stay; they stop receiving chimera inputs. Mechanism (`70e22bd`, agent/tracker.py association layer ONLY — STABILITY_RADIUS/conf/veto untouched): `TrackedObject.try_split()` — when a same-class track reaches ≥4 sightings and pairwise spread > STABILITY_RADIUS (1.2 m), cluster the chained sightings (2-means, extremes-seeded); split fires only when centroids are ≥0.5 m apart AND both halves carry a corroborated core (≥2 sightings within 0.5 m = two re-sighted real objects); split children are QUARANTINED at TIGHT_MATCH_RADIUS 0.75 m so the 0.96 m sibling cannot re-merge the halves (distinct objects observed 0.96–1.17 m apart; same-object sighting scatter ≤0.3 m post-projection-fix). Unit tests `tests/test_tracker_assoc_split.py` 7/7; full regression green (tracker gates 8/8, replay fixture 10/10, gpclip 7/7, slam sentinel 23+wiring, keyframe 17, watchdog 3). Forensics: `results/assoc_split_phase1_forensics.md` in-repo.
+
+**Phase 1 — zero-sim merge forensics + variant A/B (replay on the t_fd80a2f9 gate streams, replay-valid by construction):** confirmed the attribution — seed4 desk fire-extinguishers (0.96 m apart) match-radius-chained (`MATCH_RADIUS=2.0`) into one track with spread 2.2–4.3 m that gate-rejected despite 150 sightings ≤0.07 m from GT; seed3 desk pair same shape. 2 real-object merges found across 5 streams; 259 gate-reject events carried real mass. Variant comparison (`results/assoc_variant_results.json`, fresh anchor = current-code replay): pure MATCH_RADIUS tightening (1.2/0.9/0.75) REGRESSES found (tighter single-track association starves legitimate re-sightings — the object drifts out of one track without forming a healthy second); spread-triggered split wins: found 4.2→5.2/run (+1.0 ≥ +1.0 ✓), FP 0.8→1.6/run (vs FP budget ≤5.0 ✓), accuracy component +6.6 pts/run mean (seed4 +30.0: 2/6→5/6-equivalent). Phase 2 gate condition met → split implemented (`70e22bd`).
+
+**Phase 3 — sim gate (easy seeds 1–5 × 1 run, speed 2, 5/5 completed; fresh anchor = v9-projfix easy 5×1: found 3.80, FP 1.2, coll 2.8, mean score 58.5):**
+
+| seed | found | FP/run | coll | cov% | dup | score |
+|------|-------|--------|------|------|-----|-------|
+| 1 | 6/6 | 2.0 | 0 | 61.3 | 1 | 77.8 (B) |
+| 2 | 3/6 | 5.0 | 1 | 69.0 | 2 | 48.8 (D) |
+| 3 | 4/6 | 3.0 | 2 | 99.9 | 10 | 58.8 (C) |
+| 4 | 5/6 | 2.0 | 0 | 71.6 | 8 | 64.6 (C) |
+| 5 | 5/6 | 2.0 | 0 | 98.7 | 2 | 66.2 (C) |
+| **mean** | **4.60/6** | **2.8** | **0.6** | | | **63.2** |
+
+**Pre-registered escalate bar: found mean ≥4.9 AND FP/run ≤5.0 AND ≥2 completions. Result: found 4.60 (<4.9 — BINDING), FP 2.8 (≤5.0 ✓), 5/5 completions (✓) → REJECT, no 5×3 escalation.** Per pre-registration the association fix is KEPT in HEAD (correctness fix with zero-sim causality + 7/7 unit contract, not score-tuning); projection fix `8378792` kept either way.
+
+Anchor context: mean score 63.2 vs 58.5; seed1 6/6 (77.8) is the best single easy run in the ledger; the forensics' original chimera seed converted 2/6→5/6. Regressions: seed2 3/6 vs 5/6 (v9), seed3 flat 4/6. FP 2.8/run vs anchor 1.2 — above anchor, consistent with the zero-sim A/B prediction (1.6) plus single-run noise.
+
+**Gate attribution:** seed2's regression is NOT a split artifact (no ≥4-sighting near-dup chain on seed2 in Phase-1 replays) — 5 FP with dup 2 and cov 69% is confirm-gate behavior on sprawling partial-view tracks, cohort-variance territory. seed3's dup_count 10 at found 4/6 is the surviving chimera-lottery case: both split-halves exist but only one reaches the ≥2-sightings-in-0.5 m corroborated core inside the mission window, so the sibling stays unconfirmed. Residual FP pressure concentrates in the split's corroboration threshold, not the association radius.
+
+Result JSONs: `robot-sandbox/results/submissions/derpbot-explorer-v10-assoc/easy_seed{1..5}_run1.json`; per-run streams recorded (`DERPBOT_RECORD_STREAM=1`, `stream_easy_seed*_run1_20261013T*.jsonl`). Runs + cleanup executed solo per invariant (one sim at a time; tmux/fds/anchor sessions killed, no stack processes, no stale flags at completion).
+
 ## 2026-10-13 — t_fd80a2f9: projection root-cause + ground-anchored depth clip — GATE REJECT (easy 5×1; projection defect FIXED, found-mass ceiling moved to the tracker confirm gate)
 
 Agent: `derpbot-explorer-v9-projfix` @ `8378792` — tracker.py/detector.py untouched; the fix is entirely in `agent/depth_projector.py`: the 5×5 bbox-centre depth sample is clipped by the range implied by the bbox BOTTOM-edge ray hitting the floor (`min(depth, 1.35 × 0.25 m/tan(pitch_bottom))`, generic camera-geometry-derived, no class names).
