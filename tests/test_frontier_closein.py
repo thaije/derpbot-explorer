@@ -95,14 +95,24 @@ class FakeOccupancyGrid:
         self.data = data
         self.header = SimpleNamespace(frame_id="map", stamp=SimpleNamespace())
 
-from agent.frontier_explorer import (  # noqa: E402
-    CLOSE_IN_HOLD_S,
-    CLOSE_IN_MAX_ATTEMPTS,
-    CLOSE_IN_MAX_DETOURS,
-    CLOSE_IN_RETRY_RATE_S,
-    COSTMAP_LETHAL_THRESHOLD,
-    FrontierExplorer,
-)
+try:
+    from agent.frontier_explorer import (  # noqa: E402
+        CLOSE_IN_HOLD_S,
+        CLOSE_IN_MAX_ATTEMPTS,
+        CLOSE_IN_MAX_DETOURS,
+        CLOSE_IN_RETRY_RATE_S,
+        COSTMAP_LETHAL_THRESHOLD,
+        FrontierExplorer,
+    )
+except ImportError:
+    # Mechanism reverted (t_5e2d3407 gate REJECT) — these tests only run when
+    # the close-in detour constants exist in agent/frontier_explorer.py again.
+    import pytest
+    pytest.skip(
+        "close-in verification detour not present in agent/frontier_explorer.py "
+        "— import-gated until the mechanism returns",
+        allow_module_level=True,
+    )
 
 PASS = []
 FAIL = []
