@@ -2,6 +2,37 @@
 
 Historical performance snapshots. Append new entries on top; keep older ones for regression comparison.
 
+## 2026-10-13 — t_c6b546ac: event-triggered ROI second-pass detector recall — GATE REJECT (easy 5×1, mechanism reverted)
+
+Agent: `derpbot-explorer-v7-roigate` @ `ef8cb50` (ROI mechanism) — v5-master semantics otherwise unchanged, tracker untouched. Mechanism (forensics category-c fix, 8/19 absence events): when the tracker reports a class pending (unconfirmed, ≥1 sighting) AND the full-frame pass yields no sighting of that class for K=10 relay cycles (~2 s at 5 Hz), ONE extra inference runs on a 320 px center crop around the class's last-known image position, upscaled 2×, conf 0.12; results tagged `source="roi_second_pass"`. Tracker boundary crossed read-only (`agent_node` polls `tracker.get_pending_candidates()`); cooldown 4 s/class keeps ROI ≤1 pass/class/4 s (≤6% extra inference), same subprocess worker (GIL invariant holds).
+
+**REPLAY-A/B LIMITATION (stated explicitly, per pre-registered plan): detector-side changes CANNOT be replayed from recorded streams — no images were recorded, only projected sightings. The replay-first rule therefore yields to this small gate run.**
+
+Unit tests (tests/test_detector_roi.py): 11/11 — trigger fires for silent pending class, skips recently-sighted/non-pending/no-anchor classes, cooldown rate-limit honored, `roi_second_pass` source marker present, ROI hit refreshes sighting clock + image anchor, crop→full-frame coordinate mapping. Regression at `ef8cb50`: watchdog 3/3, tracker gates 8/8, replay fixture 10/10.
+
+Gate (easy seeds 1–5 × 1 run, speed 2, pinned pkg1, 5/5 completed, 0 failed):
+
+| seed | found | FP/run | col | cov% |
+|------|-------|--------|-----|------|
+| 1 | 1/6 | 6.0 | 7.0 | 82.8 |
+| 2 | 2/6 | 5.0 | 1.0 | 95.7 |
+| 3 | 3/6 | 4.0 | 1.0 | 94.3 |
+| 4 | 4/6 | 1.0 | 0.0 | 98.7 |
+| 5 | 3/6 | 5.0 | 0.0 | 98.1 |
+| **mean** | **2.60/6** | **4.2** | | |
+
+**Pre-registered escalate bar: found mean ≥4.9 AND FP/run ≤5.0 AND ≥2 completions. Result: 2.60 found, 4.2 FP, 0 completions → REJECT.** Mechanism reverted at `a661c2c` (tests + diagnosis kept).
+
+Operational notes (honest accounting):
+- Seeds 1–2 ran with a worker-side ROI-drain starvation bug (requests only serviced on frame-queue timeout — effectively never at 5 Hz; 18+7 triggers, 0 hits). Fixed post-batch; seeds 3–5 ran with the drain active (114 triggers, 2 ROI hits total: fire_ext 0.13, first_aid 0.22 — both near-threshold; nothing converted to a found object).
+- Even on the fixed slice (seeds 3–5), mean found 3.0 vs v5-master same-seed mean 4.67 — no evidence of benefit worth a 5×3 batch; the gate rule says stop.
+- Attribution: ROI hits were rare AND low-confidence; the (c)-bucket misses need either higher-res inference than a 2× crop gives (far/small objects at 3–5 m occupy <30 px even upscaled) or a different recall surface (e.g. closer dwell), not more attempts with the same crop.
+- s3r2 collapse diagnosis (separate deliverable, zero-sim, `results/s3r2_collapse_diagnosis.md`): slam_toolbox silent-activation startup abort (no /map within 120 s → STARTUP_MAP_TIMEOUT bail; robot never moved; mission timed out at 901.5 s). NOT watchdog / torch-oom / env. Filed as its own mechanism candidate: slam first-scan sentinel + restart-once.
+
+Result JSONs: `robot-sandbox/results/submissions/derpbot-explorer-v7-roigate/easy_seed{1..5}_run1.json`; streams: `results/streams/stream_easy_seed*_run1_20261013*.jsonl`. Tree = v5-master semantics baseline 4/15 (no change).
+
+---
+
 ## 2026-10-13 — t_6b03f03c: v6 batch 2 reverted to v5-master semantics; min-error publish REJECTED by zero-sim A/B (no sim spent)
 
 Confirmation-policy experiment (bcfc, `eb59b96`) reverted at `dc3515d` — gates suite 8/8, replay fixture 10/10, v5-master semantics restored (STABILITY_RADIUS 1.2, VETO_RADIUS 0.8, margin 0.0, fast-confirm present). One new mechanism, publish-side min-error-per-sighting position (`78b6fb5`: corroborated sighting ≥2 same-track sightings within 0.3 m, else closest-to-mean; REPUBLISH_SHIFT_M kept; generic), evaluated by offline replay A/B on the 3-seed corpus streams (publish events unchanged; sanity anchor held — TP keys == live v5-master run sets {1,2,4}/{1,3,13}/{3}):
