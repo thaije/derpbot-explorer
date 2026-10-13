@@ -147,6 +147,18 @@ fi
 READY_FLAG="${DERPBOT_READY_FLAG:-/tmp/derpbot_agent_ready}"
 rm -f "$READY_FLAG"
 
+# t_8673a87f — slam first-map sentinel restart contract:
+#   1. Clear any stale restart request so a leftover flag from a previous run
+#      can never restart this fresh slam.
+#   2. Arm the watcher in its own tmux session (env marker DERPBOT_SLAM_WATCHER_ARMED=1
+#      is inherited by the agent session and tells the sentinel a restart is
+#      actually possible; without it the sentinel skips straight to the abort
+#      path = legacy behavior).
+rm -f "${DERPBOT_SLAM_RESTART_FLAG:-/tmp/derpbot_slam_restart_request}"
+tmux kill-session -t slamwatch 2>/dev/null || true
+tmux new -s slamwatch -d "DERPBOT_SLAM_WATCHER_ARMED=1 DERPBOT_SLAM_RESTART_FLAG='${DERPBOT_SLAM_RESTART_FLAG:-/tmp/derpbot_slam_restart_request}' $SCRIPT_DIR/slam_restart_watch.sh"
+echo "       Slam restart watcher armed (tmux session: slamwatch)."
+
 echo "       Starting SLAM + Nav2..."
 
 # --- Step 4: Start SLAM (must be within 5s of sim ready) ---

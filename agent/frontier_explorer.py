@@ -31,6 +31,7 @@ from profiler import GoalStats, log_timing_table, write_timeline
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import OccupancyGrid, Odometry
+from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Point, Twist
 from nav2_msgs.action import BackUp, NavigateToPose
 from nav2_msgs.srv import ClearEntireCostmap
@@ -38,10 +39,30 @@ from ros_gz_interfaces.msg import Contacts
 from rclpy.action import ActionClient
 from rclpy.node import Node
 
+# Slam first-map sentinel (t_8673a87f): pure-stdlib state machine + flag writer.
+from slam_sentinel import (
+    SLAM_RESTART_FLAG_DEFAULT,
+    SLAM_SENTINEL_GRACE_S,
+    SlamSentinel,
+    write_restart_flag,
+)
+
 # Debug: dump selected frontier + /map + global costmap to /tmp for offline analysis.
 # Gated on env var so normal runs aren't polluted. See issue #10.
 _FRONTIER_DEBUG = os.environ.get("DERPBOT_FRONTIER_DEBUG") == "1"
 _FRONTIER_DEBUG_DIR = Path(os.environ.get("DERPBOT_FRONTIER_DEBUG_DIR", "/tmp/derpbot_frontier_dumps"))
+
+
+def _slam_watcher_armed() -> bool:
+    """True iff a slam-restart watcher can actually consume the restart flag.
+
+    start_stack.sh sets DERPBOT_SLAM_WATCHER_ARMED=1 when it launches
+    scripts/slam_restart_watch.sh in its own tmux session. Without the watcher
+    the sentinel skips straight to the abort path — requesting a restart with
+    nobody watching would only burn a second grace window before the same
+    abort. Manual dev runs (`python3 agent_node.py` outside start_stack.sh)
+    therefore keep the legacy timeout behavior."""
+    return os.environ.get("DERPBOT_SLAM_WATCHER_ARMED") == "1"
 
 # Grid cell values from Nav2 OccupancyGrid
 FREE = 0
@@ -69,7 +90,11 @@ STUCK_TIME_THRESHOLD = (
 BUMPER_STUCK_TIME_THRESHOLD = 5.0  # seconds — fast stuck trigger on bumper contact
 BUMPER_CONTACT_EXPIRY = 3.0  # seconds — ignore bumper flag if no recent contact
 GROUND_PLANE_NORMAL_Z = 0.9  # contacts with |normal.z| >= this are ground plane
-STARTUP_MAP_TIMEOUT = 120.0  # sim-seconds — abort if no /map received by then
+# Legacy startup timeout kept for reference (t_8673a87f): the slam sentinel
+# replaces this abort path — one grace window (SLAM_SENTINEL_GRACE_S, 45 sim-s)
+# without a restart watcher, two windows (~90 sim-s worst case) with the
+# watcher armed. STARTUP_MAP_TIMEOUT itself is no longer referenced.
+STARTUP_MAP_TIMEOUT = 120.0  # sim-seconds — legacy abort if no /map received
 
 # Blacklist radius: frontiers within this distance of a failed goal are blacklisted
 BLACKLIST_RADIUS = 0.5  # metres
@@ -377,6 +402,16 @@ class FrontierExplorer:
         node.create_subscription(
             OccupancyGrid, "/map", self._map_cb, map_qos, callback_group=reentrant
         )
+        # Raw laser scan: sentinel diagnostic input only (s3r2 mechanism check —
+        # was the sim publishing scans at all while slam stayed silent?). Never
+        # gates any decision by itself.
+        node.create_subscription(
+            LaserScan,
+            "/derpbot_0/scan",
+            self._scan_cb,
+            rclpy.qos.QoSProfile(depth=5),
+            callback_group=reentrant,
+        )
         node.create_subscription(
             Odometry,
             "/derpbot_0/odom",
@@ -444,6 +479,14 @@ class FrontierExplorer:
     def _map_cb(self, msg: OccupancyGrid) -> None:
         with self._map_lock:
             self._map = msg
+        # Sentinel: first /map arrived — passivate (no restart/abort).
+        if self._sentinel is not None:
+            self._sentinel.mark_map()
+
+    def _scan_cb(self, msg: LaserScan) -> None:
+        """Sentinel diagnostic only: record that the sim publishes scans.
+        Never gates any decision by itself."""
+        self._scan_seen = True
 
     def _global_costmap_cb(self, msg: OccupancyGrid) -> None:
         with self._costmap_lock:
@@ -672,19 +715,50 @@ class FrontierExplorer:
         spin_msg.angular.z = 0.5  # rad/s — gentle arc
         stop_msg = Twist()
         _publish_count = 0
+        # Slam first-map sentinel (t_8673a87f, s3r2-class abort): passive while
+        # slam is healthy — healthy first-/map spans (3.6—19.5 sim-s over a
+        # 116-run 2026-10 profile sample, p95 19.4) are far inside the 45-s
+        # grace window, so the sentinel never fires there (score-neutral).
+        # At one full grace window with no /map it requests exactly ONE slam
+        # restart via the start_stack.sh watcher contract (flag file) and
+        # waits one more window; only then aborts (~90 sim-s worst case, and
+        # strictly less wasted budget than the legacy 120-s abort when no
+        # watcher is armed).
+        sentinel = SlamSentinel(
+            clock=self._sim_time,
+            watcher_armed=_slam_watcher_armed(),
+        )
+        self._sentinel = sentinel
         while self._map is None and self._exploring and rclpy.ok():
             self._cmd_vel_pub.publish(spin_msg)
             _publish_count += 1
             time.sleep(0.05)  # 20 Hz
-            # Timeout: if /map hasn't arrived within STARTUP_MAP_TIMEOUT sim-s,
-            # slam_toolbox is likely dead or the sim clock is stalled. Bail out
-            # — the benchmark script will catch the missing result file.
-            if self._sim_time() - t0 > STARTUP_MAP_TIMEOUT:
-                self._logger.error(
-                    f"FrontierExplorer: no /map after {STARTUP_MAP_TIMEOUT:.0f}s sim — "
-                    f"slam_toolbox may be dead. Aborting."
+            decision = sentinel.tick()
+            if decision is not None and decision.action == "restart":
+                # Exactly one restart request per run (sentinel never re-arms).
+                sent_ok = write_restart_flag(
+                    SLAM_RESTART_FLAG_DEFAULT,
+                    reason=decision.reason,
+                    sim_t=decision.sim_t,
+                    scan_seen=self._scan_seen,
                 )
-                self._tl("startup_timeout", 0, f"no /map after {STARTUP_MAP_TIMEOUT:.0f}s")
+                self._logger.warning(
+                    f"FrontierExplorer: no /map after {SLAM_SENTINEL_GRACE_S:.0f}s sim — "
+                    f"requesting ONE slam_toolbox restart (flag={'written' if sent_ok else 'WRITE FAILED'})"
+                )
+                self._tl(
+                    "slam_restart_request", 0,
+                    f"no /map after {SLAM_SENTINEL_GRACE_S:.0f}s sim; flag={'written' if sent_ok else 'FAILED'}",
+                )
+            elif decision is not None and decision.action == "abort":
+                self._logger.error(
+                    f"FrontierExplorer: no /map — sentinel abort ({decision.reason}) — "
+                    f"slam_toolbox not producing a map. Aborting."
+                )
+                self._tl(
+                    "startup_timeout", 0,
+                    f"no /map; sentinel abort ({decision.reason}) at sim {decision.sim_t:.0f}s",
+                )
                 self._cmd_vel_pub.publish(stop_msg)
                 self._exploring = False
                 self._done_callback()
