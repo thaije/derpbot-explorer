@@ -19,7 +19,16 @@ the loop by running _explore_loop with stubbed-out nav/bfs pieces and a
 map-publishing timer.
 
 Interpreter: system python3.12 + ROS paths, OR any python with the ROS mocks
-(test_frontier_closein pattern). Run: python3.12 -m pytest tests/test_slam_sentinel_wiring.py -q
+(test_frontier_closein pattern). The tallied __main__ run is the authoritative
+gate (it exits nonzero on the check() FAIL list):
+
+    python3.12 tests/test_slam_sentinel_wiring.py
+
+pytest also runs the test_* functions and — via tests/conftest.py (t_1779f975)
+— fails the session if any module's check() tally recorded FAILs, so the
+pytest count can no longer read green while the tallied run is red:
+
+    python3.12 -m pytest tests/test_slam_sentinel_wiring.py -q
 """
 
 import importlib
@@ -93,6 +102,10 @@ from slam_sentinel import SLAM_SENTINEL_GRACE_S  # noqa: E402
 
 PASS = []
 FAIL = []
+# Opt this module into the tests/conftest.py pytest tally guard (t_1779f975):
+# the check() FAIL list is authoritative, so pytest must fail the session if
+# it is ever non-empty after a pytest run.
+TALLY_GATE = True
 
 
 def check(name, cond, detail=""):
@@ -153,30 +166,65 @@ def set_time(ex, t):
 # ------------------------------------------------------- test 1: healthy path
 
 def test_healthy_map_within_grace(monkeypatch=None):
-    """/map arrives at 18 sim-s (well within the 45-s window): loop exits, the
-    timeline has NO slam_restart_request/startup_timeout entries, no flag."""
+    """/map arrives at 18 sim-s (well within the 45-s window): loop exits via
+    map arrival, ZERO sentinel decisions, and the flag writer is NEVER
+    invoked (asserted on a spy around the module-level writer — the exact
+    callable _explore_loop calls at the restart branch)."""
     ex, fe = build_explorer()
     with tempfile.NamedTemporaryFile(suffix=".json") as tf:
         flag_path = tf.name
-        flags_written = []
+        with open(flag_path, "rb") as fh:
+            flag_before = fh.read()
+        writer_calls = []
+        real_writer = fe.write_restart_flag
 
-        def fake_write_flag(path, **kw):
-            flags_written.append(path)
-            return True
+        def spy_write_flag(path, **kw):
+            writer_calls.append(path)
+            return real_writer(path, **kw)
 
-        # Drive the exact sentinel branch logic used by _explore_loop: instead
-        # of replicating the loop (thread timing), verify the components:
-        # sentinel decisions on a healthy timeline + no flag written.
-        sentinel = fe.SlamSentinel(ex._sim_time, watcher_armed=True)
-        ex._sentinel = sentinel
-        # map arrives at +18s
-        set_time(ex, ex._sim_clock + 18.0)
-        ex._map_cb(SimpleNamespace(header=SimpleNamespace(frame_id="map")))
-        d = sentinel.tick()
-        check("healthy: no decision", d is None)
-        check("healthy: state RECOVERED", sentinel.state == "RECOVERED")
-        fake_write_flag(flag_path, reason="no_map_watcher_armed", sim_t=0, scan_seen=False)
-        check("healthy: no flag written in real run", not flags_written)
+        # Spy on the module's flag writer so nothing on the healthy path can
+        # write a restart flag without this test seeing it.
+        fe.write_restart_flag = spy_write_flag
+        try:
+            sentinel = fe.SlamSentinel(
+                clock=lambda: ex._sim_clock, watcher_armed=True
+            )
+            ex._sentinel = sentinel
+            # map arrives at +18s
+            set_time(ex, ex._sim_clock + 18.0)
+            ex._map_cb(SimpleNamespace(header=SimpleNamespace(frame_id="map")))
+            d = sentinel.tick()
+            check("healthy: no decision", d is None)
+            check("healthy: state RECOVERED", sentinel.state == "RECOVERED")
+            check("healthy: writer not called", writer_calls == [],
+                  f"writer_calls={writer_calls}")
+            check("healthy: flag file untouched",
+                  open(flag_path, "rb").read() == flag_before)
+            # Loop replica (map-wait segment of _explore_loop, kept in sync):
+            # map is already set -> the loop exits before the first tick, so
+            # neither the restart nor the abort branch can fire.
+            restarts, aborts, written = 0, 0, []
+            while ex._map is None and ex._exploring:
+                set_time(ex, ex._sim_clock + 0.1)
+                decision = sentinel.tick()
+                if decision is not None and decision.action == "restart":
+                    restarts += 1
+                    ok = fe.write_restart_flag(
+                        flag_path, reason=decision.reason,
+                        sim_t=decision.sim_t, scan_seen=ex._scan_seen,
+                    )
+                    written.append(ok)
+                elif decision is not None and decision.action == "abort":
+                    aborts += 1
+                    ex._exploring = False
+            check("healthy: loop replica zero restarts", restarts == 0,
+                  f"restarts={restarts}")
+            check("healthy: loop replica zero aborts", aborts == 0,
+                  f"aborts={aborts}")
+            check("healthy: loop replica no flag writes", written == [],
+                  f"written={written}")
+        finally:
+            fe.write_restart_flag = real_writer
 
 
 # ------------------------------------------- test 2/3: restart + abort via loop
