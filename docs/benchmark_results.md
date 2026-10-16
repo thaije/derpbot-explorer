@@ -39,6 +39,33 @@ Result JSONs: `robot-sandbox/results/submissions/derpbot-explorer-v10-assoc/easy
 
 ---
 
+## 2026-10-16 — t_cd52b6b5: close-in verification detour RE-GATED on corrected projection (v11-cv2) — GATE REJECT again (easy 5×1, mechanism re-reverted)
+
+Second try of the same mechanism with the premise fixed: the original gate (t_5e2d3407, `derpbot-explorer-v8-closein` @ 6ec2c61) failed because tracker candidates sat 2.5–8.6 m off-object; the ground-anchored depth clip (8378792) moved gate-run projection error to 0.10–0.34 m median (t_fd80a2f9 forensics). Mechanism re-applied unchanged (cherry-pick of 6ec2c61, one conflict vs slam-sentinel/keyframe attrs; commit 7abffb2), constants re-checked and kept: with candidates sub-0.4 m off-object, arrival at the candidate goal places the true object inside FAST_CONFIRM_DIST=1.5 m (no retune; hold 2.0 s = pre-registered dose, budget/rate/attempt rails unchanged). Unit tests `tests/test_frontier_closein.py` un-gated and green (all 25 checks); full regression green (tracker gates 8/8, assoc split 7/7, gpclip 7/7, slam sentinel 10+6, watchdog 3/3, replay fixture 10/10).
+
+Agent: `derpbot-explorer-v11-cv2` @ 7abffb2 — easy 5×1 (900 s, speed 2, pkg1-pinned tmux anchor 10-19,30-39, one sim at a time), 5/5 completed, 0 failed, preflight + cleanup verified clean.
+
+| seed | score | found/6 | FE | FAK | per | FP | dup | coll | cov% |
+|------|-------|---------|----|----|-----|----|----|------|------|
+| 1 | 62.8 C | 5/6 | 3/3 | 1/2 | 1/1 | 4 | 6 | 1 | 98.7 |
+| 2 | 57.7 C | 4/6 | 3/3 | 0/2 | 1/1 | 3 | 6 | 1 | 98.9 |
+| 3 | 68.2 C | 5/6 | 3/3 | 1/2 | 1/1 | 2 | 11 | 0 | 98.3 |
+| 4 | 64.4 C | 4/6 | 2/3 | 2/2 | 0/1 | 1 | 20 | 0 | 98.6 |
+| 5 | 53.9 D | 4/6 | 3/3 | 0/2 | 1/1 | 2 | 2 | 2 | 99.2 |
+| **mean** | **61.4** | **4.40/6** | 14/15 | 4/10 | 4/5 | **2.40** | **9.0** | **0.8** | **98.7** |
+
+**Pre-registered escalate bar: found mean ≥ 4.9/6 AND FP/run ≤ 5.0 AND ≥ 2 completions. Result: found 4.40 (FAIL), FP 2.40 (pass, not attributable per rule), completions 0/5 (FAIL) → REJECT. Mechanism re-reverted (a81e6da), tests kept import-gated, no 5×3 escalation.**
+
+**Hold-confirmation attribution (the question this gate existed to answer — did holds confirm with correct geometry?): NO.** 22 detours started, 18 stop-and-stare holds across seeds 1–4 (s1 3 holds, s2 4, s3 5, s4 4 + seed5 profile md lost — the benchmark harness SIGKILLed the tmux server immediately post-mission, before the 5th run's `_write_timeline`; its result JSON + sighting stream are intact). Every hold exited `confirmed=False` — **0/18 conversions (old gate: 0/9)**, and causality-checking TPs against hold windows finds zero same-class TP within any hold ±5 s — in fact every TP predates every hold (detector finds objects at ordinary in-FOV passes; near-dup re-approach holds add nothing). Guard rails behaved: 0 rate-limit/attempt-cap hits, budget 6/6 reached on seeds 3–4 (budget events fired), `close_in_skip_cell` = 180 suppressions total (candidates repeatedly projected onto unknown/lethal costmap cells — the rails did real work). Mission-clock cost bounded: total hold dwell ≈ 15 + 13 + 12 + 8 ≈ 48 s over 4 runs (~1.3%/run).
+
+Why it STILL fails (`close_in_*` timeline × submission_log × sighting streams, sim-time-checked): the residual easy misses are {s1 FAK1, s2 FAK2, s3 FAK1, s4 FE1+person1, s5 FAK2} — 7/10 FAK + 1 FE + 1 person. The hold fix targets candidates that fire (→ pending) but never re-confirm; these misses instead never accumulate a confirmable sighting chain AT ALL (FAK = detector's lowest-confidence class, 1–6 sightings/run, conf 0.15–0.24; person = zero-sighting timing lottery) — t_3b4b2bd6 attribution unchanged. Two new mechanism-surface observations: (1) seed4 dup=20 (vs cohort 9.0) — the split's quarantined children repeatedly re-fire as candidates and eat the budget on already-found siblings; (2) `close_in_skip_cell` heavy suppression means split-children candidates often project onto obstacle cells, i.e. they are duplicates of already-confirmed objects seen past obstacles. Neither is actionable by dwell time near the candidate.
+
+Paired run1 vs v10-assoc run1 (same seeds): mean 4.40 vs 4.60, diff −0.2/6, per-seed [−1,+1,+1,−1,−1] — within noise; FP 2.40 vs 2.80 (−0.4). No evidence the detour changes cohort outcomes either way.
+
+Result JSONs: `robot-sandbox/results/submissions/derpbot-explorer-v11-cv2/easy_seed{1..5}_run1.json`; gate streams `results/streams/stream_easy_seed{1..5}_run1_20261016T19????Z.jsonl`; timelines `results/profile_20261016T211003..213514.md` (seeds 1–4; seed5 note above). Commits: 7abffb2 re-arm → a81e6da re-revert (v5-master+sentinel+split semantics restored; closein tests import-gated again 1 skipped as designed).
+
+---
+
 # Benchmark Results
 
 Historical performance snapshots. Append new entries on top; keep older ones for regression comparison.
