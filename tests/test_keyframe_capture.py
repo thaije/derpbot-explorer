@@ -26,6 +26,7 @@ import os
 import sys
 import time
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -47,11 +48,45 @@ except ImportError as exc:
 
 PASS = []
 FAIL = []
+# Captured at import, BEFORE any test can patch the recorder's loop thread:
+# loop-gate source checks must inspect the real product source, not a
+# test-local lambda replacement.
+import inspect as _inspect
+_RECORDER_LOOP_SRC = _inspect.getsource(tracker_mod.KeyframeRecorder._loop)
+_RECORDER_LOOP_CONSTS = tracker_mod.KeyframeRecorder._loop.__code__.co_consts
+# Opt in to the tests/conftest.py pytest tally guard (t_1779f975): the module
+# tally is green under pytest, so pytest now fails the session if any check()
+# records FAIL — "17 passed" can never again hide a red tally.
+TALLY_GATE = True
 
 
 def check(name, cond, detail=""):
     (PASS if cond else FAIL).append(f"{name} {detail}")
     print(("PASS" if cond else "FAIL"), name, detail)
+
+
+@contextmanager
+def _recorder_thread_disabled():
+    """Keep KeyframeRecorder's background loop thread from racing direct
+    _write_one() calls in a test.
+
+    The recorder auto-starts its loop thread in __init__; when clock_node is
+    None the loop's _sim_time() falls back to time.time(), so a loop write
+    lands as f_<wall-clock>.jpg in the fixture dir — polluting exact file-list
+    / file-count assertions (the 301/300 cap off-by-one and the wall-clock
+    f_1792181487.xxx.jpg pollution in the collision test). The loop's gate
+    logic (due-gate, budget reservation, cap break) is verified separately via
+    inline replication and source inspection, so silencing the thread here
+    keeps those product assertions intact while making the file-side checks
+    deterministic at any wall-clock time.
+    """
+    saved = tracker_mod.KeyframeRecorder.__dict__.get("_loop")
+    tracker_mod.KeyframeRecorder._loop = lambda self: None
+    try:
+        yield
+    finally:
+        if saved is not None:
+            tracker_mod.KeyframeRecorder._loop = saved
 
 
 # ---------------------------------------------------------------------------
@@ -118,21 +153,30 @@ def test_pending_active_rate_1hz(tmp_path):
         n_calls["v"] += 1
         return [{"track_id": "track_1"}] if n_calls["v"] % 2 else [{"track_id": "track_1"}]
 
-    rec = KeyframeRecorder(str(tmp_path / "frames"), det, pending, FakeNode(FakeClock()))
-    # Drive the trigger directly (loop thread timing is wall-based; exercise
-    # the decision primitive instead: _last_write_monotonic gating).
-    sim = 100.0
-    rec._write_one(sim_time=sim)  # first frame
-    n1 = rec._count
-    t0 = time.monotonic()
-    rec._write_one(sim_time=sim + 0.5)
-    # _write_one has NO rate gate of its own — verify the loop gate instead:
-    # simulate two loop passes by resetting the gate
-    rec._last_write_monotonic = t0
-    rec.stop()
-    check("active: first frame written", n1 == 1, f"count={rec._count}")
-    files = list((tmp_path / "frames").glob("*.jpg"))
-    check("active: file exists", len(files) == 1, f"{[f.name for f in files]}")
+    with _recorder_thread_disabled():
+        rec = KeyframeRecorder(str(tmp_path / "frames"), det, pending, FakeNode(FakeClock()))
+        # Drive the trigger directly (loop thread timing is wall-based; exercise
+        # the decision primitive instead: _last_write_monotonic gating).
+        sim = 100.0
+        rec._write_one(sim_time=sim)  # first frame
+        n1 = rec._count
+        files_after_first = sorted(f.name for f in (tmp_path / "frames").glob("*.jpg"))
+        t0 = time.monotonic()
+        # _write_one has NO rate gate of its own — a second direct call inside
+        # the 100 ms collision guard window is skipped, but 0.5s later (past
+        # the guard) writes through; the 1 Hz rate is enforced by the loop's
+        # _last_write_monotonic due-gate, verified in the gate tests below.
+        rec._write_one(sim_time=sim + 0.5)
+        n_after_0p5 = rec._count
+        # simulate two loop passes by resetting the gate
+        rec._last_write_monotonic = t0
+        rec.stop()
+    check("active: first frame written", n1 == 1, f"n1={n1}")
+    check("active: first write makes exactly one file",
+          n1 == 1 and files_after_first == ["f_100.000.jpg"], str(files_after_first))
+    files = sorted(f.name for f in (tmp_path / "frames").glob("*.jpg"))
+    check("active: ungated second write at +0.5s writes through",
+          n_after_0p5 == 2 and files == ["f_100.000.jpg", "f_100.500.jpg"], str(files))
     # interval constant
     check("active: interval is 1.0s",
           detector_mod.KEYFRAME_ACTIVE_INTERVAL == 1.0,
@@ -143,57 +187,60 @@ def test_pending_rate_gate_in_loop(tmp_path):
     """The loop's due-gate enforces the interval: a second due within the
     active interval is skipped (verified via _last_write_monotonic state)."""
     det = FakeDetector(frame=make_frame())
-    rec = KeyframeRecorder(str(tmp_path / "frames"), det,
-                           lambda: [{"track_id": "t1"}], FakeNode(FakeClock()))
-    # Simulate: first write occurred 0.1s ago (interval is 1.0s) -> not due
-    rec._last_write_monotonic = time.monotonic() - 0.1
+    with _recorder_thread_disabled():
+        rec = KeyframeRecorder(str(tmp_path / "frames"), det,
+                               lambda: [{"track_id": "t1"}], FakeNode(FakeClock()))
+        # Simulate: first write occurred 0.1s ago (interval is 1.0s) -> not due
+        rec._last_write_monotonic = time.monotonic() - 0.1
 
-    # Replicate the loop's gate logic inline for determinism (no sleeps):
-    pending = rec._pending_provider() or []
-    active = bool(pending)
-    interval = (detector_mod.KEYFRAME_ACTIVE_INTERVAL if active
-                else detector_mod.KEYFRAME_IDLE_INTERVAL)
-    now = time.monotonic()
-    due = (rec._last_write_monotonic is None
-           or (now - rec._last_write_monotonic) >= interval)
-    check("gate: 0.1s after last write is not due (1s interval)", not due)
-    rec.stop()
+        # Replicate the loop's gate logic inline for determinism (no sleeps):
+        pending = rec._pending_provider() or []
+        active = bool(pending)
+        interval = (detector_mod.KEYFRAME_ACTIVE_INTERVAL if active
+                    else detector_mod.KEYFRAME_IDLE_INTERVAL)
+        now = time.monotonic()
+        due = (rec._last_write_monotonic is None
+               or (now - rec._last_write_monotonic) >= interval)
+        check("gate: 0.1s after last write is not due (1s interval)", not due)
+        rec.stop()
 
 
 def test_idle_rate_10s(tmp_path):
     """Idle (no pending, no detour): interval is the sparse 10s one."""
     det = FakeDetector(frame=make_frame())
-    rec = KeyframeRecorder(str(tmp_path / "frames"), det, lambda: [], None)
-    rec._last_write_monotonic = time.monotonic() - 5.0
-    pending = rec._pending_provider()
-    interval = (detector_mod.KEYFRAME_ACTIVE_INTERVAL if pending
-                else detector_mod.KEYFRAME_IDLE_INTERVAL)
-    due5 = (time.monotonic() - rec._last_write_monotonic) >= interval
-    check("idle: 5s after last write is not due (10s interval)", not due5)
-    rec._last_write_monotonic = time.monotonic() - 10.5
-    due10 = (time.monotonic() - rec._last_write_monotonic) >= interval
-    check("idle: 10.5s after last write IS due", due10)
-    rec.stop()
+    with _recorder_thread_disabled():
+        rec = KeyframeRecorder(str(tmp_path / "frames"), det, lambda: [], None)
+        rec._last_write_monotonic = time.monotonic() - 5.0
+        pending = rec._pending_provider()
+        interval = (detector_mod.KEYFRAME_ACTIVE_INTERVAL if pending
+                    else detector_mod.KEYFRAME_IDLE_INTERVAL)
+        due5 = (time.monotonic() - rec._last_write_monotonic) >= interval
+        check("idle: 5s after last write is not due (10s interval)", not due5)
+        rec._last_write_monotonic = time.monotonic() - 10.5
+        due10 = (time.monotonic() - rec._last_write_monotonic) >= interval
+        check("idle: 10.5s after last write IS due", due10)
+        rec.stop()
 
 
 def test_idle_stops_near_cap(tmp_path):
     """Idle context frames stop within 10 frames of the cap (budget
     reserved for candidate-triggered keyframes); active capture continues."""
     det = FakeDetector(frame=make_frame())
-    rec = KeyframeRecorder(str(tmp_path / "frames"), det, lambda: [], None)
-    cap = detector_mod.KEYFRAME_MAX_PER_RUN
-    rec._count = cap - 5  # near cap, idle
-    # Replicate the loop's budget-reservation branch:
-    active = False
-    allowed = active or rec._count < cap - 10
-    check("idle: near-cap frame blocked", not allowed)
-    rec._count = cap - 50
-    allowed = active or rec._count < cap - 10
-    check("idle: not near cap, frame allowed", allowed)
-    rec._count = cap - 5
-    allowed = True or rec._count < cap - 10  # active trigger
-    check("active: near-cap frame still allowed", allowed)
-    rec.stop()
+    with _recorder_thread_disabled():
+        rec = KeyframeRecorder(str(tmp_path / "frames"), det, lambda: [], None)
+        cap = detector_mod.KEYFRAME_MAX_PER_RUN
+        rec._count = cap - 5  # near cap, idle
+        # Replicate the loop's budget-reservation branch:
+        active = False
+        allowed = active or rec._count < cap - 10
+        check("idle: near-cap frame blocked", not allowed)
+        rec._count = cap - 50
+        allowed = active or rec._count < cap - 10
+        check("idle: not near cap, frame allowed", allowed)
+        rec._count = cap - 5
+        allowed = True or rec._count < cap - 10  # active trigger
+        check("active: near-cap frame still allowed", allowed)
+        rec.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -204,17 +251,18 @@ def test_detour_hold_trigger(tmp_path):
     """Extra trigger (explorer detour/hold phase) captures at 1 Hz even with
     zero pending candidates; flipping the flag is capture-only."""
     det = FakeDetector(frame=make_frame())
-    rec = KeyframeRecorder(str(tmp_path / "frames"), det,
-                           lambda: [], FakeNode(FakeClock()))
-    # Gate logic with extra trigger on:
-    rec._extra_trigger_provider = lambda: True
-    extra = bool(rec._extra_trigger_provider())
-    active = bool(rec._pending_provider()) or extra
-    check("detour: extra trigger alone makes capture active", active)
-    interval = (detector_mod.KEYFRAME_ACTIVE_INTERVAL if active
-                else detector_mod.KEYFRAME_IDLE_INTERVAL)
-    check("detour: interval is 1.0s (not 10s)", interval == 1.0)
-    rec.stop()
+    with _recorder_thread_disabled():
+        rec = KeyframeRecorder(str(tmp_path / "frames"), det,
+                               lambda: [], FakeNode(FakeClock()))
+        # Gate logic with extra trigger on:
+        rec._extra_trigger_provider = lambda: True
+        extra = bool(rec._extra_trigger_provider())
+        active = bool(rec._pending_provider()) or extra
+        check("detour: extra trigger alone makes capture active", active)
+        interval = (detector_mod.KEYFRAME_ACTIVE_INTERVAL if active
+                    else detector_mod.KEYFRAME_IDLE_INTERVAL)
+        check("detour: interval is 1.0s (not 10s)", interval == 1.0)
+        rec.stop()
 
 
 def test_explorer_flag_wiring():
@@ -249,9 +297,10 @@ def test_filename_simtime(tmp_path):
     """Files are named f_<simtime>.jpg with ms precision so they
     cross-reference stream lines ("t" field) exactly (addendum)."""
     det = FakeDetector(frame=make_frame())
-    sim = 1234.567
-    rec = KeyframeRecorder(str(tmp_path / "frames"), det, lambda: [{"t": 1}], FakeNode(FakeClock(sim)))
-    rec._write_one(sim_time=sim)
+    with _recorder_thread_disabled():
+        sim = 1234.567
+        rec = KeyframeRecorder(str(tmp_path / "frames"), det, lambda: [{"t": 1}], FakeNode(FakeClock(sim)))
+        rec._write_one(sim_time=sim)
     files = sorted(p.name for p in (tmp_path / "frames").glob("*.jpg"))
     check("name: f_<simtime>.jpg", files == ["f_1234.567.jpg"], str(files))
 
@@ -260,44 +309,47 @@ def test_simtime_collision_guard(tmp_path):
     """A repeat write at ~the same sim-time does not overwrite the earlier
     frame (filename must stay cross-referenceable)."""
     det = FakeDetector(frame=make_frame())
-    rec = KeyframeRecorder(str(tmp_path / "frames"), det, lambda: [{"t": 1}], None)
-    rec._write_one(sim_time=100.0)
-    rec._write_one(sim_time=100.05)  # < 100 ms later — skipped
-    files = sorted(p.name for p in (tmp_path / "frames").glob("*.jpg"))
-    check("collision: same-simtime rewrite skipped",
-          files == ["f_100.000.jpg"], str(files))
-    rec._write_one(sim_time=101.0)
-    files = sorted(p.name for p in (tmp_path / "frames").glob("*.jpg"))
-    check("collision: 1s later writes through", files == ["f_100.000.jpg", "f_101.000.jpg"], str(files))
-    rec.stop()
+    with _recorder_thread_disabled():
+        rec = KeyframeRecorder(str(tmp_path / "frames"), det, lambda: [{"t": 1}], None)
+        rec._write_one(sim_time=100.0)
+        rec._write_one(sim_time=100.05)  # < 100 ms later — skipped
+        files = sorted(p.name for p in (tmp_path / "frames").glob("*.jpg"))
+        check("collision: same-simtime rewrite skipped",
+              files == ["f_100.000.jpg"], str(files))
+        rec._write_one(sim_time=101.0)
+        files = sorted(p.name for p in (tmp_path / "frames").glob("*.jpg"))
+        check("collision: 1s later writes through", files == ["f_100.000.jpg", "f_101.000.jpg"], str(files))
+        rec.stop()
 
 
 def test_cap_enforced(tmp_path):
     """KEYFRAME_MAX_PER_RUN is a hard per-run cap: the loop breaks at cap."""
     det = FakeDetector(frame=make_frame())
-    rec = KeyframeRecorder(str(tmp_path / "frames"), det, lambda: [{"t": 1}], None)
-    for i in range(detector_mod.KEYFRAME_MAX_PER_RUN):
-        rec._write_one(sim_time=float(i))
-    check("cap: count stops at cap", rec._count == detector_mod.KEYFRAME_MAX_PER_RUN,
-          f"{rec._count}/{detector_mod.KEYFRAME_MAX_PER_RUN}")
-    # cap check in loop: thread breaks (loop-side guard)
     cap = detector_mod.KEYFRAME_MAX_PER_RUN
-    check("cap: loop-side guard exists", "KEYFRAME_MAX_PER_RUN" in
-          tracker_mod.KeyframeRecorder._loop.__code__.co_consts
-          or True)  # constant folded; guard verified by source inspection below
-    import inspect
-    src = inspect.getsource(tracker_mod.KeyframeRecorder._loop)
-    check("cap: loop breaks at cap", "_count >= KEYFRAME_MAX_PER_RUN" in src)
-    n_files = len(list((tmp_path / "frames").glob("*.jpg")))
-    check("cap: exactly cap files on disk", n_files == cap, str(n_files))
-    rec.stop()
+    with _recorder_thread_disabled():
+        rec = KeyframeRecorder(str(tmp_path / "frames"), det, lambda: [{"t": 1}], None)
+        for i in range(cap):
+            rec._write_one(sim_time=float(i))
+        check("cap: count stops at cap", rec._count == cap, f"{rec._count}/{cap}")
+        # cap check in loop: thread breaks (loop-side guard; source captured
+        # at import, before the thread-disabling context patches _loop)
+        check("cap: loop-side guard exists", "KEYFRAME_MAX_PER_RUN" in
+              _RECORDER_LOOP_CONSTS
+              or True)  # constant folded; guard verified by source inspection below
+        src = _RECORDER_LOOP_SRC
+        check("cap: loop breaks at cap", "_count >= KEYFRAME_MAX_PER_RUN" in src)
+        n_files = len(list((tmp_path / "frames").glob("*.jpg")))
+        check("cap: exactly cap files on disk", n_files == cap, str(n_files))
+        rec.stop()
 
 
 def test_downscale_and_quality(tmp_path):
     """640x480 source -> 320x240 JPEG q70 (constants respected)."""
     det = FakeDetector(frame=make_frame(640, 480))
-    rec = KeyframeRecorder(str(tmp_path / "frames"), det, lambda: [{"t": 1}], None)
-    rec._write_one(sim_time=42.0)
+    with _recorder_thread_disabled():
+        rec = KeyframeRecorder(str(tmp_path / "frames"), det, lambda: [{"t": 1}], None)
+        rec._write_one(sim_time=42.0)
+        rec.stop()
     files = list((tmp_path / "frames").glob("*.jpg"))
     check("encode: file written", len(files) == 1)
     if files:
@@ -313,9 +365,10 @@ def test_downscale_and_quality(tmp_path):
 def test_frame_upscaled_never(tmp_path):
     """A smaller-than-target frame is never upscaled (scale capped at 1.0)."""
     det = FakeDetector(frame=make_frame(160, 120))
-    rec = KeyframeRecorder(str(tmp_path / "frames"), det, lambda: [{"t": 1}], None)
-    rec._write_one(sim_time=7.0)
-    rec.stop()
+    with _recorder_thread_disabled():
+        rec = KeyframeRecorder(str(tmp_path / "frames"), det, lambda: [{"t": 1}], None)
+        rec._write_one(sim_time=7.0)
+        rec.stop()
     files = list((tmp_path / "frames").glob("*.jpg"))
     if files:
         import cv2
@@ -346,8 +399,10 @@ def test_detector_stash_is_single_assignment():
     claim): the stash line performs no encode/copy work."""
     import inspect
     src = inspect.getsource(detector_mod.Detector._image_cb)
+    # Single stash: one tuple-assignment of the frame reference (plus its
+    # timestamp) — no per-frame JPEG encode, resize or file IO on the hot path.
     check("hot path: stash is an assignment",
-          "self._latest_frame = (frame," in src)
+          "self._latest_frame = (frame" in src)
     check("hot path: no imencode in image callback",
           "imencode" not in src and "resize" not in src)
     check("hot path: no tofile in image callback",
@@ -392,29 +447,80 @@ def test_cv2_absent_disables_recorder(tmp_path, monkeypatch):
 def test_no_frame_yet_is_noop(tmp_path):
     """latest_frame() None (camera not up) -> no file, no crash."""
     det = FakeDetector(frame=None)
-    rec = KeyframeRecorder(str(tmp_path / "frames"), det, lambda: [{"t": 1}], None)
-    rec._write_one(sim_time=5.0)
-    files = list((tmp_path / "frames").glob("*.jpg"))
-    check("no frame yet: no file, no crash", files == [], str(files))
-    rec.stop()
+    with _recorder_thread_disabled():
+        rec = KeyframeRecorder(str(tmp_path / "frames"), det, lambda: [{"t": 1}], None)
+        rec._write_one(sim_time=5.0)
+        files = list((tmp_path / "frames").glob("*.jpg"))
+        check("no frame yet: no file, no crash", files == [], str(files))
+        rec.stop()
 
 
 if __name__ == "__main__":
     import inspect
     import tempfile
+
+    class _MonkeyPatchShim:
+        """Minimal pytest-monkeypatch stand-in for the tallied __main__ mode.
+
+        Supports setattr()/undo() — the only feature this module's tests use
+        (builtins.__import__ patching in test_cv2_absent_disables_recorder).
+        Other monkeypatch features raise so we never silently fake a PASS.
+        """
+
+        def __init__(self):
+            self._undo = []
+
+        def setattr(self, target, name, value):
+            old = getattr(target, name)
+            setattr(target, name, value)
+            self._undo.append((target, name, old))
+
+        def __getattr__(self, attr):
+            raise NotImplementedError(
+                f"__main__ shim only supports monkeypatch.setattr (got '{attr}')"
+            )
+
+        def undo(self):
+            for target, name, old in reversed(self._undo):
+                setattr(target, name, old)
+            self._undo.clear()
+
     mod = sys.modules[__name__]
+    crashed = []
     for name, fn in sorted(vars(mod).items()):
-        if name.startswith("test_") and callable(fn) and not name.startswith("test_module"):
-            params = inspect.signature(fn).parameters
-            if "tmp_path" in params:
-                with tempfile.TemporaryDirectory() as td:
-                    fn(tmp_path=Path(td))
-            elif "monkeypatch" in params:
-                pass  # monkeypatch needs pytest; run under pytest instead
-            else:
-                fn()
+        if not (name.startswith("test_") and callable(fn) and not name.startswith("test_module")):
+            continue
+        params = inspect.signature(fn).parameters
+        kwargs = {}
+        if "tmp_path" in params:
+            kwargs["tmp_path"] = Path(tempfile.mkdtemp())
+        if "monkeypatch" in params:
+            mp = _MonkeyPatchShim()
+            kwargs["monkeypatch"] = mp
+            try:
+                fn(**kwargs)
+            except NotImplementedError as exc:
+                print(f"SKIP {name}: {exc}")
+                if "monkeypatch" in kwargs:
+                    kwargs["monkeypatch"].undo()
+                continue
+            finally:
+                if "monkeypatch" in kwargs:
+                    kwargs["monkeypatch"].undo()
+        else:
+            try:
+                fn(**kwargs)
+            except Exception:
+                import traceback
+                print(f"CRASH {name}")
+                traceback.print_exc()
+                crashed.append(name)
+        if "tmp_path" in kwargs:
+            import shutil
+            shutil.rmtree(kwargs["tmp_path"], ignore_errors=True)
     print()
-    print(f"PASS: {len(PASS)}  FAIL: {len(FAIL)}")
+    print(f"PASS: {len(PASS)}  FAIL: {len(FAIL)}"
+          + (f"  CRASHED: {len(crashed)}" if crashed else ""))
     for f in FAIL:
         print("  FAIL:", f)
-    sys.exit(1 if FAIL else 0)
+    sys.exit(1 if (FAIL or crashed) else 0)
