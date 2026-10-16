@@ -1,3 +1,44 @@
+## 2026-10-16 — t_3b4b2bd6: v10-assoc easy 5×3 protocol-parity verification — REPORT-ONLY, no submission (rule FAIL: 4.47 < 4.87 and 1 < 4 completions)
+
+Agent: `derpbot-explorer-v10-assoc` @ HEAD `b4cd9f8` (same tree as the 5×1 gate, mechanism code untouched). Full 5 seeds × 3 runs, easy (900 s), speed 2, pkg1-pinned tmux server (10-19,30-39), one sim at a time, 10 new runs (run1 seeds 1–5 reused from the t_ca2ea380 gate — resumable skip per protocol), 15/15 written, 0 failed, 0 DOA (all statuses SUCCESS/TIME_LIMIT as designed; elapsed ≤904 s). Cleanup verified clean post-batch. Submission yaml validation note: batch-runner validator flags "Missing required keys: ['submitted']" — expected pre-decision state, decision below is report-only.
+
+Pre-registered rule (operator-approved): submit + leaderboard v10 easy iff mean found ≥ 4.87/6 OR completions ≥ 4. **Result: mean found 4.47/6 (<4.87 — FAIL), completions 1/15 (<4 — FAIL) → NO submission, no leaderboard entry; v5-master (4.87/6, 4 completions) remains the easy leaderboard line. Nothing worse was published. Goal 12/15 completions: 1/15 — explicitly NOT met.**
+
+| seed/run | found | FE | FAK | per | FP | dup | coll | cov% | score |
+|----------|-------|----|----|-----|----|----|------|------|-------|
+| 1/1 | 6/6 | 3/3 | 2/2 | 1/1 | 2 | 1 | 0 | 61.3 | 77.8 B |
+| 1/2 | 5/6 | 2/3 | 2/2 | 1/1 | 5 | 15 | 9 | 85.5 | 54.8 D |
+| 1/3 | 5/6 | 3/3 | 2/2 | 0/1 | 2 | 8 | 0 | 60.1 | 65.1 C |
+| 2/1 | 3/6 | 2/3 | 0/2 | 1/1 | 5 | 2 | 1 | 69.0 | 48.8 D |
+| 2/2 | 3/6 | 1/3 | 1/2 | 1/1 | 2 | 0 | 0 | 98.7 | 55.6 C |
+| 2/3 | 4/6 | 3/3 | 0/2 | 1/1 | 4 | 7 | 2 | 93.2 | 56.4 C |
+| 3/1 | 4/6 | 2/3 | 1/2 | 1/1 | 3 | 10 | 2 | 99.9 | 58.8 C |
+| 3/2 | 5/6 | 3/3 | 1/2 | 1/1 | 1 | 8 | 0 | 98.6 | 67.0 C |
+| 3/3 | 4/6 | 3/3 | 1/2 | 0/1 | 2 | 16 | 1 | 99.0 | 58.5 C |
+| 4/1 | 5/6 | 2/3 | 2/2 | 1/1 | 2 | 8 | 0 | 71.6 | 64.6 C |
+| 4/2 | 5/6 | 2/3 | 2/2 | 1/1 | 5 | 10 | 0 | 98.7 | 65.4 C |
+| 4/3 | 5/6 | 2/3 | 2/2 | 1/1 | 2 | 12 | 0 | 98.0 | 68.4 C |
+| 5/1 | 5/6 | 2/3 | 2/2 | 1/1 | 2 | 2 | 0 | 98.7 | 66.2 C |
+| 5/2 | 3/6 | 1/3 | 1/2 | 1/1 | 4 | 2 | 0 | 94.3 | 53.3 D |
+| 5/3 | 5/6 | 3/3 | 1/2 | 1/1 | 3 | 6 | 0 | 98.1 | 65.1 C |
+| **mean** | **4.47/6 (0.744)** | | | | **2.93** | **7.1** | **1.0** | **88.3** | **61.7** |
+
+Per-class recall (15 runs × GT 3 FE / 2 FAK / 1 person): fire_extinguisher 34/45 (0.76), first_aid_kit 20/30 (0.67), person 13/15 (0.87). Precision mean 0.61 (v5 0.53). FP 2.93/run (v5 4.73), collisions 1.0 (v5 0.87), score 61.7 (v5 62.7).
+
+**Per-run attribution (14 non-6/6 runs, GT 3 FE + 2 FAK + 1 person; streams + frames dirs exist for all runs incl. gate run1s, e.g. `results/streams/frames/stream_easy_seed2_run2_20261016T163614Z/` 45 keyframes):**
+- first_aid_kit is the dominant miss: 10/30 FAK missed across 14 runs (never-found in s2r1×2, s2r3, s3; and ≥1 FAK in ten more runs). Stream evidence: FAK sightings are the lowest-confidence class (e.g. s2r2: 6 sightings, conf 0.15–0.24; s2r3: a SINGLE 0.17 sighting all run; s2r1 13-Oct stream: 1 sighting 0.16) — the confirm gate (conf ≥ real-object margin, ≥2 diverse poses) almost never gets a confirmable FAK chain. Same detector-recall bucket the forensics already flagged (max FAK conf 0.36): detector-side, not association.
+- seed2 regression is the batch's largest hole (3/3/4 vs v5 5/4/5 per-seed mean 0.56 vs 0.78): FAK sighting mass collapses on this seed's map layout (1–6 sightings/run). Not a split artifact (no near-dup FAK chain on seed2 in Phase-1 replays).
+- person misses (s1r3, s3r3): zero person sightings in-stream all run (s1r3) — detector never saw the person walking route; timing lottery, not tracker.
+- fire_extinguisher misses (11 total, ≥1 in 10 runs): the split converts the seed4 desk-pair chimera every run (4/×5/5 → 5/6 ×3) but the third-FE + partial-view FE singles still die in the confirm-gate lottery (cov 98% + dup 8–16: split halves exist, sibling half unconfirmed).
+- dup mean 7.1 (v5 0.13): the split's quarantined children double-publish sibling candidates that never both confirm — FP cost 2.93 vs 4.73 on v5 is still NET −1.8 FP/run (bootstrap CI on per-seed paired diff: se 0.61), precision +0.08. The FP story improved; the recall story did not (dup children absorb the confirm budget).
+- One anomalous run: s1r2 had 9 collisions (t=229–464 clustered mid-run) at cov 85.5 — navigation, not perception; cohort-variance outlier.
+
+**Comparison verdict vs v5-master 5×3 at protocol parity (paired per-seed, run-level):** v10-assoc is NOT better: paired mean diff −0.40/6 (−0.067 ratio, t=−0.86, df=4), 95% bootstrap CI [−1.07, +0.47]/6 — within noise, sign suggests no gain. Per-seed: s1 −0.06, s2 −0.22, s3 −0.11, s4 +0.22, s5 −0.17. The association split delivers its engineered effect (seed4 chimera 3/3/5 → 5/5/5, stable) and a real FP/precision win (2.93 vs 4.73, precision 0.61 vs 0.53), but loses the mass elsewhere: found floor stays 3–5/6 with only 1 completion, and the FAK/detector-side + confirm-gate ceiling (previously measured the SAME way in the t_fd80a2f9 forensics — "found-mass dies at the tracker confirm gate") is the binding constraint, unchanged by the split. **Plain answer to the task question: the split+projfix stack is better on FP/precision and seed-4 consistency, but NOT better on found at protocol parity — equal-within-noise, slightly negative; the earlier gate-era numbers (4.60/6 5×1, FP 2.8) replicate (4.47/6 5×3, FP 2.93) rather than improve.**
+
+Result JSONs: `robot-sandbox/results/submissions/derpbot-explorer-v10-assoc/easy_seed{1..5}_run{1..3}.json`; streams: `results/streams/stream_easy_seed{S}_run{R}_20261016T*.jsonl` (new runs) + `20261013T*` gate run1s; keyframes: `results/streams/frames/stream_easy_seed*_2026101*Z/`.
+
+---
+
 # Benchmark Results
 
 Historical performance snapshots. Append new entries on top; keep older ones for regression comparison.
