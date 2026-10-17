@@ -1,3 +1,51 @@
+## 2026-10-17 — t_ea3db560: tiled native-resolution inference (DERPBOT_TILED_INFERENCE=1) @1080p — 5×1 gate REJECT, mechanism reverted, agent-side inventory CLOSED (11/11)
+
+Par basis: **v1-human-derived** (easy par 6.00/6, v1 human teleop n=5/session) — v2 human re-baseline PENDING (operator); all tile-vs-baseline comparisons here are **within-version** (same sandbox v2.0.0 camera, both cohorts v12-det lineage on 1080p), which per the campaign binding takes precedence.
+
+Agent `derpbot-explorer-v12-tile` @ HEAD `bf4506b` (assoc-split lineage = v12-v2 baseline `1fcb550` + precision-doc fix `d2cd78d` + tiling enablement; mechanism first authored at `d5ef4ff` for v1 640×480, re-planned to v2 geometry per the resumption ruling). Diff from the v12-v2 baseline agent: DERPBOT_TILED_INFERENCE=1, DERPBOT_TILED_GRID=3,2 (6 tiles of 360×960 native scale), everything else byte-identical. Easy (900 s), speed 2, pkg1-pinned tmux server, 5/5 runs completed 0 failed.
+
+### Go/no-go math (pre-sim, per the ruling: no full-sim probe)
+
+v2-geometry microbench (offline, pkg1-pinned, RTX 2070 SUPER, noise frames; OWLv2's processor resize makes per-inference wall input-size-INDEPENDENT — full 1920×1080 ≈ per-tile ≈ 139 ms): full-frame 1080p = 139 ms; grid (2,2) = 4×139 ≈ 554 ms → 1.81 Hz FFE; (3,2) = 6×139 ≈ 837 ms → 1.20 Hz FFE; (3,3) = 9×139 ≈ 1261 ms → 0.79 Hz FFE. All three clear the 0.5 Hz FFE HALT bar offline → GO on the 5×1 gate with the 6-tile grid (more tiles = more native pixel area per frame at acceptable FFE). Committed enablement: `DERPBOT_TILED_GRID="<gy>,<gx>"` env (default (2,2)), marker `tile_q{q}` format-generated for grids > 2×2, forwarded through `start_stack.sh` (bf4506b).
+
+Measured in-sim (pkg1, GPU shared with Gazebo): tiled_wall 1141–1597 ms/frame (≈ 1.40× the offline 837 ms) → FFE ≈ 0.86/1.14 Hz — above the pre-registered 0.5 Hz bar, gate allowed to proceed.
+
+### Gate table (easy 5×1, sandbox v2.0.0)
+
+| seed | status | score | found | FE | FAK | per | FP | dup | prec | cov% | dur (sim-s) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | TIME_LIMIT | 61.9 C | 5/6 | 3/3 | 2/2 | 0/1 | 5 | 21 | 0.50 | 67 | 900 |
+| 2 | SUCCESS | 72.3 B | 6/6 | 3/3 | 2/2 | 1/1 | 3 | 6 | 0.67 | 99 | 780 |
+| 3 | TIME_LIMIT | 57.1 C | 4/6 | 3/3 | 0/2 | 1/1 | 5 | 17 | 0.44 | 57 | 901 |
+| 4 | TIME_LIMIT | 59.7 C | 4/6 | 2/3 | 1/2 | 1/1 | 3 | 19 | 0.57 | 71 | 901 |
+| 5 | TIME_LIMIT | 52.7 D | 3/6 | 1/3 | 1/2 | 1/1 | 4 | 3 | 0.43 | 74 | 901 |
+| **mean** | | **60.7** | **4.40/6** | 12/15 | 6/10 | 4/5 | **4.00** | 13.2 | 0.522 | 74 | |
+
+**Pre-registered escalation bar (found ≥ 4.9 AND FP ≤ 5.0 AND ≥ 2 completions): found 4.40 FAIL, FP 4.00 pass, completions 1/5 FAIL → REJECT.** No 5×3, no submission, no leaderboard entry.
+
+### Per-class attribution vs the same-version baseline cohort (v12-v2 gate, c22fee3)
+
+| metric | v12-v2 baseline (native full-frame) | v12-tile (3,2 native-res) | delta |
+|---|---|---|---|
+| FAK sightings/run (mean) | 62.2 | 27.6 | **−56%** |
+| FAK sightings/k-sim-s (mean) | 72.6 | 31.0 | **−57%** |
+| FAK conf median | 0.184 | 0.201 | unchanged (low band is a detector property, as Phase B already established) |
+| FAK recall | 7/10 (0.70) | 6/10 (0.60) | −1 |
+| FE recall | 9/15 (0.60) | 12/15 (0.80) | +3 |
+| person recall | 5/5 (1.00) | 4/5 (0.80) | −1 |
+| FP/run | 2.60 | 4.00 | +54% |
+| dup/run | 7.6 | 13.2 | +74% (tile-edge duplicate pressure, as pre-flagged) |
+| score mean | 62.0 | 60.7 | −1.3 |
+
+**Mechanism verdict: measured-negative in-sim.** The causal chain the ruling proposed ("tiles raise per-frame FAK evidence density at same-position") did not survive contact with the live system: tiles cost **6.0× full-frame wall per frame** (837/139 ms — OWLv2's internal resize makes per-tile wall = full-frame wall), so the 3×2 frame's effective full-frame-equivalent cadence HALVED vs native full-frame (live ≈0.9 Hz vs baseline ≈1.5 Hz), and sighting mass — the constraint the offline bar cleared on — fell 57% per run. The tracker needs cadence more than it needs per-frame native-res coverage at 1080p: full-frame inference already delivers 1.5 Hz of 100%-coverage frames, while tiling bought resolution the low-conf FAK band (unchanged 0.184→0.201) never converts. The FE recall gain (+3/15) is real but is dwarfed in the same table by worse FP, worse dup, worse confirm throughput (1/5 completions), and lower score mean.
+
+**Decision per pre-registration: REJECT → revert.** Reverts `bf4506b` (3cf784b) + `d5ef4ff` (a885611): agent/detector.py tiling code, tests/test_detector_tiled.py, and start_stack.sh forwarding removed; regression suite re-run green (keyframe tallied 42/0, tracker gates 8/8, slam sentinel 27/0, watchdog OK, detector-tiled pytest 29 passed pre-revert). Baseline returns to `1fcb550` + `d2cd78d` + reverts (HEAD `a885611`).
+
+**Agent-side mechanism inventory: 11/11 formally resolved (10 prior + this one), all measured-resolved or resolved-negative by pre-registered bars.** The standing v2 baseline is v12-det-on-v2 (native full-frame OWLv2 @1080p, ≈1.5 Hz). Residual improvement paths are operator-side: (a) G-DINO-threshold re-cut (untested, t_b4361707 caveat), (b) detector-class swap if a real-time model wins a future bake-off, (c) compute (faster GPU raises cadence). Tiling would only re-enter if per-tile wall ever drops far below ~60 ms (9-tile frame < ~0.5 s at ≥10 tiles for full 1080p coverage at ≥0.5 Hz FFE with cadence headroom).
+
+Files: results in `robot-sandbox/results/submissions/derpbot-explorer-v12-tile/`; run1 sighting streams `results/streams/stream_easy_seed*_run1_20261017T17{1655,3436}Z` … `T18{0737,2539}Z` (tile cohort) — NOTE: sighting records carry no per-detection `source` field (relay → stream does not forward it), so tile-attribution by marker must be re-derived from the per-frame `tiled_wall` cadence signature; counted FAK masses above come from the stream records as stored. Microbench script + gate aggregator preserved in the kanban workspace (`microbench_v2_tiling.py`, `tile_gate_table.py`).
+
+---
 ## 2026-10-17 — t_b0b71441 Phase B: v12-det-on-v2 scored gate (easy 5×1) — REJECT, no escalation, no submission
 
 Par basis: **v1-human-derived** (easy par 6.00/6, v1 human teleop n=5/session) — v2 human re-baseline PENDING (operator); v2 scores expected to shift vs a v1-camera par. The 5×3 escalation did NOT run (rule below), so no leaderboard effect, nothing to revert — baseline unchanged.
