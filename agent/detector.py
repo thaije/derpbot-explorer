@@ -17,6 +17,15 @@ Pipeline (single-stage):
     Accepted if: confidence >= 0.20 (OWL_CONF_THRESHOLD).
     Output class_name is always one of the mission targets.
 
+Tiled native-resolution inference (t_ea3db560):
+  DERPBOT_TILED_INFERENCE=1 splits each incoming frame into 4 quadrant tiles
+  and runs OWL-v2 per tile at NATIVE crop scale (each 320x240 tile is padded,
+  not downscaled — the object pixel density the model sees doubles vs the
+  full-frame 640x480 resize). Bboxes are remapped to full-frame coords so the
+  detection stream is transparent to consumers; each detection carries
+  source="tile_<q>" for attribution. Frames may also carry a boolean
+  `tiled` flag through the mp queue (absent → not tiled).
+
 Tuning notes:
   - OWL_CONF_THRESHOLD=0.20 validated on low-poly Gazebo sim: no false positives,
     all three target types detected reliably. Do not lower (FP increase).
@@ -36,6 +45,7 @@ import multiprocessing as mp
 import os
 import queue
 import threading
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -67,6 +77,44 @@ GPU_DEVICE = 0
 OWL_MODEL_ID = "google/owlv2-base-patch16-ensemble"
 OWL_CONF_THRESHOLD = 0.15  # tuned: 0.10 gave 3 FPs; 0.12 gave 3 FPs with no net benefit; 0.15 gives 1 FP best precision (fire_ext#2 marginal but found at good nav coverage)
 
+# ── Tiled native-resolution inference (t_ea3db560) ────────────────────────────
+# Enabled with DERPBOT_TILED_INFERENCE=1 (read in BOTH processes: the relay
+# uses the flag to tag detections that arrive without a source marker, the
+# worker to select the tiled inference path). TILING_GRID=(2,2): 4 quadrant
+# tiles over the incoming frame; remap is exact when (H,W) % grid == 0.
+TILING_GRID = (2, 2)
+TILING_ENABLED = os.environ.get("DERPBOT_TILED_INFERENCE", "0") == "1"
+# Full-frame-equivalent wall of one tiled frame = GRID tiles × per-tile wall.
+# Measured on RTX 2070 SUPER (GPU shared w/ Gazebo at RTF 2.0): full-frame
+# ~161 ms, 4-tile ~645 ms ⇒ ~1.55 Hz FFE — above the 0.5 Hz HALT bar.
+TILING_SOURCE_MARKERS = ["tile_q0", "tile_q1", "tile_q2", "tile_q3"]
+
+
+def tile_grid(h: int, w: int, grid: tuple[int, int] = TILING_GRID):
+    """Yield (q, y0, y1, x0, x1) tiles covering the frame in row-major order.
+
+    Exact for (h % gy, w % gx) == 0 (camera frames qualify: 480/640 × (2,2));
+    ragged edges are absorbed into the LAST row/column tile so coverage stays
+    total (a tile only shrinks, never drops or overlaps).
+    """
+    gy, gx = grid
+    ys = [(h * i) // gy for i in range(gy + 1)]
+    xs = [(w * i) // gx for i in range(gx + 1)]
+    tiles = []
+    q = 0
+    for iy in range(gy):
+        for ix in range(gx):
+            tiles.append((q, ys[iy], ys[iy + 1], xs[ix], xs[ix + 1]))
+            q += 1
+    return tiles
+
+
+def remap_tile_box_to_full(tile, box):
+    """(q, y0, y1, x0, x1) + xyxy box in tile-local px → full-frame xyxy px."""
+    _, y0, _y1, x0, _x1 = tile
+    x1, y1, x2, y2 = box
+    return (x1 + x0, y1 + y0, x2 + x0, y2 + y0)
+
 # Keyframe capture (t_85fe2e5c): the Tracker's KeyframeRecorder samples the
 # latest raw camera frame through latest_frame(). The stash is a single tuple
 # reference assignment in _image_cb (~zero cost, off the inference path); the
@@ -90,6 +138,9 @@ class DetectionResult:
     h_px: float
     # ROS timestamp as (sec, nanosec) tuple
     stamp: object
+    # Attribution marker: "full_frame", "tile_<q>", or a mechanism tag
+    # ("roi_second_pass"). Default keeps every pre-tiling consumer unchanged.
+    source: str = "full_frame"
 
 
 # ---------------------------------------------------------------------------
@@ -174,70 +225,118 @@ def _inference_worker(
         frame_bytes, shape, stamp_sec, stamp_nanosec = item
         frame = np.frombuffer(frame_bytes, dtype=np.uint8).reshape(shape)
 
-        outputs = inputs = target_sizes = results = None
-        try:
-            rgb = _cv2.cvtColor(frame, _cv2.COLOR_BGR2RGB)
-            pil_image = PILImage.fromarray(rgb)
-            inputs = processor(text=queries, images=pil_image, return_tensors="pt")
-            inputs = {
-                k: (v.half() if v.dtype == torch.float32 else v).to(
-                    f"cuda:{GPU_DEVICE}"
+        def _infer_crop(crop_bgr):
+            """One OWL-v2 inference on a BGR crop → list[dict] in CROP coords.
+
+            Same single-stage pipeline as the non-tiled path; the caller owns
+            coordinate remapping and source markers so this helper stays
+            shared between both paths.
+            """
+            outputs = inputs = target_sizes = results = None
+            try:
+                rgb = _cv2.cvtColor(crop_bgr, _cv2.COLOR_BGR2RGB)
+                pil_image = PILImage.fromarray(rgb)
+                inputs = processor(text=queries, images=pil_image, return_tensors="pt")
+                inputs = {
+                    k: (v.half() if v.dtype == torch.float32 else v).to(
+                        f"cuda:{GPU_DEVICE}"
+                    )
+                    for k, v in inputs.items()
+                }
+                target_sizes = torch.tensor(
+                    [(crop_bgr.shape[0], crop_bgr.shape[1])],
+                    dtype=torch.int32,
+                    device=f"cuda:{GPU_DEVICE}",
                 )
-                for k, v in inputs.items()
-            }
-            target_sizes = torch.tensor(
-                [(shape[0], shape[1])], dtype=torch.int32, device=f"cuda:{GPU_DEVICE}"
-            )
-            with torch.inference_mode():
-                outputs = model(**inputs)
-            results = processor.post_process_grounded_object_detection(
-                outputs,
-                target_sizes=target_sizes,
-                threshold=OWL_CONF_THRESHOLD,
-            )[0]
-            # Convert GPU tensors to CPU/numpy immediately to release CUDA memory.
-            # post_process returns {"scores": tensor, "labels": tensor, "boxes": tensor}
-            # on GPU — keeping them alive prevents the CUDA allocator from reclaiming.
-            det_scores = results["scores"].cpu().tolist()
-            det_labels = results["labels"].cpu().tolist()
-            det_boxes = results["boxes"].cpu().tolist()
+                with torch.inference_mode():
+                    outputs = model(**inputs)
+                results = processor.post_process_grounded_object_detection(
+                    outputs,
+                    target_sizes=target_sizes,
+                    threshold=OWL_CONF_THRESHOLD,
+                )[0]
+                # Convert GPU tensors to CPU/numpy immediately to release CUDA memory.
+                # post_process returns {"scores": tensor, "labels": tensor, "boxes": tensor}
+                # on GPU — keeping them alive prevents the CUDA allocator from reclaiming.
+                det_scores = results["scores"].cpu().tolist()
+                det_labels = results["labels"].cpu().tolist()
+                det_boxes = results["boxes"].cpu().tolist()
+            finally:
+                del outputs, inputs, target_sizes, results
+                torch.cuda.empty_cache()
+            out = []
+            for score, label_idx, box in zip(det_scores, det_labels, det_boxes):
+                x1, y1, x2, y2 = box
+                idx = int(label_idx)
+                if idx >= len(targets):
+                    continue
+                out.append(
+                    {
+                        "class_name": targets[idx],
+                        "confidence": float(score),
+                        "cx_px": (x1 + x2) / 2,
+                        "cy_px": (y1 + y2) / 2,
+                        "w_px": x2 - x1,
+                        "h_px": y2 - y1,
+                    }
+                )
+            return out
+
+        detections = []
+        try:
+            t_inf_start = time.perf_counter()
+            if TILING_ENABLED:
+                # ── Tiled native-resolution path (t_ea3db560) ────────────────
+                # 4 quadrant tiles, each inferred at native crop scale; boxes
+                # remapped to full-frame coords so downstream consumers see a
+                # single unchanged detection stream. Tile-local detections are
+                # marked source="tile_<q>" for attribution; tile-boundary dupes
+                # (object straddling an edge) are left to tracker-side dedup.
+                for tile in tile_grid(shape[0], shape[1]):
+                    q, y0, y1_, x0, x1_ = tile
+                    tile_dets = _infer_crop(frame[y0:y1_, x0:x1_])
+                    for d in tile_dets:
+                        fx1, fy1, fx2, fy2 = remap_tile_box_to_full(
+                            tile,
+                            (
+                                d["cx_px"] - d["w_px"] / 2,
+                                d["cy_px"] - d["h_px"] / 2,
+                                d["cx_px"] + d["w_px"] / 2,
+                                d["cy_px"] + d["h_px"] / 2,
+                            ),
+                        )
+                        d["cx_px"] = (fx1 + fx2) / 2
+                        d["cy_px"] = (fy1 + fy2) / 2
+                        d["w_px"] = fx2 - fx1
+                        d["h_px"] = fy2 - fy1
+                        d["source"] = TILING_SOURCE_MARKERS[q]
+                        detections.append(d)
+            else:
+                detections = _infer_crop(frame)
+                for d in detections:
+                    d["source"] = "full_frame"
+            t_inf_end = time.perf_counter()
         except Exception as exc:
             result_queue.put({"warning": f"inference error: {exc}"})
             continue
-        finally:
-            del outputs, inputs, target_sizes, results
-            torch.cuda.empty_cache()
+
+        for d in detections:
+            d["stamp_sec"] = stamp_sec
+            d["stamp_nanosec"] = stamp_nanosec
 
         _inf_n += 1
-        if _inf_n % 20 == 0:
-            _alloc = torch.cuda.memory_allocated() / 1024 / 1024
-            _reserved = torch.cuda.memory_reserved() / 1024 / 1024
-            result_queue.put({
-                "vram": f"inf#{_inf_n} alloc={_alloc:.0f}MB reserved={_reserved:.0f}MB"
-            })
-
-        detections = []
-        for score, label_idx, box in zip(det_scores, det_labels, det_boxes):
-            x1, y1, x2, y2 = box
-            cx = (x1 + x2) / 2
-            cy = (y1 + y2) / 2
-            w = x2 - x1
-            h = y2 - y1
-            idx = int(label_idx)
-            if idx >= len(targets):
-                continue
-            detections.append(
-                {
-                    "class_name": targets[idx],
-                    "confidence": float(score),
-                    "cx_px": cx,
-                    "cy_px": cy,
-                    "w_px": w,
-                    "h_px": h,
-                    "stamp_sec": stamp_sec,
-                    "stamp_nanosec": stamp_nanosec,
-                }
-            )
+        # Tiling probe instrumentation (t_ea3db560 step 2): per-frame inference
+        # wall every 5th frame so the FFE detection rate is measurable from
+        # the agent logs during the dev probe.
+        if _inf_n % 5 == 0:
+            if TILING_ENABLED:
+                result_queue.put({
+                    "vram": f"inf#{_inf_n} tiled_wall={(t_inf_end - t_inf_start) * 1000:.0f}ms"
+                })
+            elif _inf_n % 100 == 0:
+                result_queue.put({
+                    "vram": f"inf#{_inf_n} fullframe_wall={(t_inf_end - t_inf_start) * 1000:.0f}ms"
+                })
 
         try:
             result_queue.put({"detections": detections}, timeout=5.0)
@@ -532,6 +631,11 @@ class Detector:
                         w_px=d["w_px"],
                         h_px=d["h_px"],
                         stamp=(d["stamp_sec"], d["stamp_nanosec"]),
+                        source=(
+                            d["source"]
+                            if "source" in d
+                            else ("tile_?" if TILING_ENABLED else "full_frame")
+                        ),
                     )
                     try:
                         self.detections.put_nowait(det)
