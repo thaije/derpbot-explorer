@@ -76,6 +76,9 @@ TF chain: `map → odom → base_footprint → base_link → camera_link / lidar
 
 Anything in committed config/code is omitted. Only things a fresh agent would rediscover the hard way.
 
+### Camera / projection (sandbox v2.0.0, t_4aa1e7ff)
+- **Sandbox camera is 1920×1080 as of v2.0.0** (was 640×480 in v1.x), same 90° H-FOV → fx ≈ 960. `agent/depth_projector.py` takes intrinsics from `/derpbot_0/rgbd/camera_info` (loud 5-s fallback warning if absent); per-run stream headers carry the `camera` object (header written on FIRST sighting — construction-time snapshots predate camera_info and are always v1_fallback); `scripts/projection_forensics.py` reads per-stream headers, v1 streams replay on 640×480 constants. Detector cost rose with the area ratio (~×7/frame): full-frame OWLv2 ≈ 1.5 Hz wall at 1080p (vs ≈ 5-6 Hz at 480p) — still above the 0.5 Hz HALT bar. Score pars remain v1-human-derived; v2 human re-baseline pending (operator); agent-vs-agent deltas within same sandbox_version only.
+
 ### EKF / odometry
 - **Gazebo diff-drive plugin quantizes yaw to ~3 distinct quaternions.** Raw `/odom_raw` orientation snaps between 2–3 values even when stationary (yaw wrapping at ±π). The EKF must use `odom0_differential: true` to consume velocity deltas instead of absolute pose, eliminating quantization artefacts.
 - **Gazebo sensors publish zero covariances.** `/odom_raw` and `/imu` both report all-zeros covariance matrices. Without overrides (`odom0_pose_covariance`, `imu0_orientation_covariance`), `robot_localization` treats inputs as infinitely certain → position covariance diverges to 10⁸–10¹⁰ and yaw oscillates between competing "perfect" sources.
