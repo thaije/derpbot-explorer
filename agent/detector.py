@@ -81,37 +81,13 @@ OWL_CONF_THRESHOLD = 0.15  # tuned: 0.10 gave 3 FPs; 0.12 gave 3 FPs with no net
 # Enabled with DERPBOT_TILED_INFERENCE=1 (read in BOTH processes: the relay
 # uses the flag to tag detections that arrive without a source marker, the
 # worker to select the tiled inference path). TILING_GRID=(2,2): 4 quadrant
-# tiles over the incoming frame; remap stays exact for ragged edges because
-# tile_grid() absorbs the remainder into the LAST row/column tile (v2 1080p:
-# rows 360+360+360 = 1080, still exact — only odd frame sizes get ragged).
-# DERPBOT_TILED_GRID="<gy>,<gx>" overrides the grid per process without
-# touching code (measured on RTX 2070 SUPER, noise frames, offline):
-#   full 1080p ≈ 139 ms; (2,2) 4 tiles ≈ 554 ms → 1.81 Hz FFE;
-#   (3,2) 6 tiles ≈ 837 ms → 1.20 Hz FFE; (3,3) 9 tiles ≈ 1261 ms → 0.79 Hz
-#   FFE — all three grids clear the 0.5 Hz FFE HALT bar.
+# tiles over the incoming frame; remap is exact when (H,W) % grid == 0.
 TILING_GRID = (2, 2)
-TILING_GRID_ENV = os.environ.get("DERPBOT_TILED_GRID", "")
 TILING_ENABLED = os.environ.get("DERPBOT_TILED_INFERENCE", "0") == "1"
-
-
-def _tiling_grid() -> tuple[int, int]:
-    """DERPBOT_TILED_GRID="<gy>,<gx>" override; falls back to (2,2)."""
-    if TILING_GRID_ENV.strip():
-        try:
-            gy, gx = (int(p) for p in TILING_GRID_ENV.split(","))
-            if gy >= 1 and gx >= 1:
-                return (gy, gx)
-        except ValueError:
-            pass
-    return TILING_GRID
 # Full-frame-equivalent wall of one tiled frame = GRID tiles × per-tile wall.
 # Measured on RTX 2070 SUPER (GPU shared w/ Gazebo at RTF 2.0): full-frame
 # ~161 ms, 4-tile ~645 ms ⇒ ~1.55 Hz FFE — above the 0.5 Hz HALT bar.
 TILING_SOURCE_MARKERS = ["tile_q0", "tile_q1", "tile_q2", "tile_q3"]
-# Grid-size-independent marker (grids beyond 2x2 produce q >= 4): the relay
-# only pattern-matches the "tile_" prefix, so never truncate/clip on a
-# fixed-size list (t_ea3db560 v2 re-plan: 1080p may run 3x2/3x3 grids).
-TILING_SOURCE_MARKER_FMT = "tile_q{}"
 
 
 def tile_grid(h: int, w: int, grid: tuple[int, int] = TILING_GRID):
@@ -311,13 +287,12 @@ def _inference_worker(
             t_inf_start = time.perf_counter()
             if TILING_ENABLED:
                 # ── Tiled native-resolution path (t_ea3db560) ────────────────
-                # DERPBOT_TILED_GRID tiles, each inferred at native crop
-                # scale; boxes remapped to full-frame coords so downstream
-                # consumers see a single unchanged detection stream. Tile-local
-                # detections are marked source="tile_<q>" for attribution;
-                # tile-boundary dupes (object straddling an edge) are left to
-                # tracker-side dedup.
-                for tile in tile_grid(shape[0], shape[1], _tiling_grid()):
+                # 4 quadrant tiles, each inferred at native crop scale; boxes
+                # remapped to full-frame coords so downstream consumers see a
+                # single unchanged detection stream. Tile-local detections are
+                # marked source="tile_<q>" for attribution; tile-boundary dupes
+                # (object straddling an edge) are left to tracker-side dedup.
+                for tile in tile_grid(shape[0], shape[1]):
                     q, y0, y1_, x0, x1_ = tile
                     tile_dets = _infer_crop(frame[y0:y1_, x0:x1_])
                     for d in tile_dets:
@@ -334,7 +309,7 @@ def _inference_worker(
                         d["cy_px"] = (fy1 + fy2) / 2
                         d["w_px"] = fx2 - fx1
                         d["h_px"] = fy2 - fy1
-                        d["source"] = TILING_SOURCE_MARKER_FMT.format(q)
+                        d["source"] = TILING_SOURCE_MARKERS[q]
                         detections.append(d)
             else:
                 detections = _infer_crop(frame)
