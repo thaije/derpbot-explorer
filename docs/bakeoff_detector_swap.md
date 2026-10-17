@@ -10,7 +10,7 @@ Raw per-frame scores: `results/bakeoff/frame_scores_<model>.jsonl`, summaries `r
   runs of v10/v11, i.e. 15 v10-assoc + 13 from 10-13/10-16 sessions), 5396 keyframes.
 - Pose pairing: robot pose (odom `rx, ry, ryaw`) from the run's sighting stream at
   matched sim-time ±0.5 s (strict) — 1435 keyframes qualify. Sensitivity re-run at
-  ±2.0 s (2226 keyframes) to check that the verdict is not a pairing artifact.
+  ±2.0 s (2228 keyframes) to check that the verdict is not a pairing artifact.
 - GT: recorded per-run `ground_truth_objects` from the v10-assoc submission JSONs
   (mission targets: fire_extinguisher ×3, first_aid_kit ×2, person ×1 per run —
   seed-dependent placements; verified identical across the submissions that carry
@@ -50,14 +50,29 @@ accurate geometry; verdict unchanged:
 
 ## Pre-registered swap bar
 
-Winner must show **FE rate ≥ 1.5× OWLv2 AND FE+person ≥ 1.0× AND FP-proxy ≤ OWLv2**.
+The pre-registered bar (task body, Phase 1) is: winner must show
+**FAK rate ≥ 1.5× OWLv2 AND FE+person ≥ 1.0× AND FP-proxy ≤ OWLv2** (all three).
 
-- YOLO-World-S: FE ×0.64 (bar needs ≥1.5) — **FAIL**; FAK visibility is a hard zero
+Under-criterion results, both readings (the first leg is stated both ways here
+because a strictly-FE form of that leg is mathematically vacuous — OWLv2 FE is
+0.826, so ≥ 1.5× would demand FE ≥ 1.24 > 1.0, impossible; the pre-registered
+FAK reading is the operative one):
+
+| leg | requirement | YOLO-World-S | G-DINO-tiny |
+|---|---|---|---|
+| FAK ≥ 1.5× OWLv2 (pre-registered) | ≥ 0.478 | 0.000 (×0.00) — FAIL | 0.585 (×1.83) — pass |
+| (FE ≥ 1.5× OWLv2 — vacuous form) | ≥ 1.240 | 0.529 — FAIL (leg unsatisfiable for all) | 0.812 — FAIL (leg unsatisfiable for all) |
+| FE+person ≥ 1.0× OWLv2 (rate product) | ≥ 0.613 | 0.412 (×0.85) — FAIL | 0.721 (×1.18) — pass |
+| FP-proxy ≤ OWLv2 (per frame) | ≤ 0.271 | 0.213 — pass | 0.946 (×3.5) — **FAIL** |
+
+- YOLO-World-S: **FAIL** (all three legs); FAK visibility is a hard zero
   (512+ visible instances, no detection at any conf — probe at conf 0.02 with
   6 alternate phrasings still produced nothing: YOLO-World's closed-caption-aligned
   vocabulary does not cover the flat red box in this renderer at all).
-- Grounding-DINO-tiny: FAK ×1.83 and person ×1.20 with ~2× the confidence mass —
-  but FE ×0.98 (bar needs ≥1.5) and FP-proxy ×3.5 — **FAIL** (two criteria).
+- Grounding-DINO-tiny: clears the pre-registered FAK leg (×1.83) and the
+  FE+person leg (×1.18) — but **FAIL**s the FP-proxy leg (×3.5); FAK gain is
+  inseparable from its FP cost at the 0.15 threshold. Two-leg clearing is not
+  enough: the bar is AND-of-three, so the verdict is FAIL.
 
 **Verdict: no candidate clears the swap bar. Detector-swap is measured-negative.**
 Per the pre-registration: STOP here — no Phase 2 backend work, no Phase 3 gate;

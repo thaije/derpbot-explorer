@@ -63,7 +63,7 @@ CENTER_Z = {                   # object-center height above ground (mesh/sdf-der
 }
 FP_PROXY_RADIUS_M = 2.0
 MATCH_BEARING_RAD = 0.20       # GT↔detection match: |Δbearing| ≤ 0.20 rad ≈ 11.5°
-MATCH_DIST_RATIO = 0.30        # …and |Δdist|/dist ≤ 30 %
+# NOTE: no distance term in the match rule — bearing gating only (see main()).
 
 POSE_TOL_S = 0.5
 
@@ -213,12 +213,6 @@ def project_det_to_rel_bearing(det, W, H):
     return rel, v_ang
 
 
-def det_dist_from_vangle(v_ang):
-    """Reserved: distance estimation from the detection's vertical angle —
-    not used by the scoring rule (bearing match only). Kept for future use."""
-    return None
-
-
 # ─── Model backends ───────────────────────────────────────────────────────────
 
 
@@ -349,40 +343,6 @@ def make_model(name, device):
 
 
 # ─── Scoring ──────────────────────────────────────────────────────────────────
-
-
-def score_frame(dets, vis_gt, cx, cy, yaw_w, W, H):
-    """Returns (per-class {cls: (n_gt_insts, n_detected_insts, det_confs)}, fp_list)."""
-    matched = set()   # (det_idx, gt_key)
-    per_class = {}
-    for cls, insts in vis_gt.items():
-        proj = []
-        for inst in insts:
-            p = project_gt(cx, cy, yaw_w, inst["x"], inst["y"], cls, W, H)
-            if p is not None:
-                proj.append((inst, p))
-        insts_hit = set()
-        confs = []
-        for di, det in enumerate(dets):
-            if det["class_key"] != cls:
-                continue
-            drel, dvang = project_det_to_rel_bearing(det, W, H)
-            hit = None
-            for inst, (u, v, d, rel) in proj:
-                if abs(drel - rel) <= MATCH_BEARING_RAD:
-                    # distance plausibility: dets near-frame-center estimate fine,
-                    # edge-case ok — vertical-angle consistency loose
-                    hit = inst
-                    break
-            if hit is not None and hit["key"] not in insts_hit:
-                insts_hit.add(hit["key"])
-                confs.append(det["conf"])
-        per_class[cls] = (len(insts), len(insts_hit), confs)
-
-    # FP proxy: detection whose class has NO un-visibled GT nearby is not checkable
-    # here without gt — handled inline in main(); this helper stays for reuse.
-    fps = [det for di, det in enumerate(dets) if di not in used_det_idx]
-    return per_class, fps
 
 
 def gt_any_within(cx, cy, gt, cls, radius=FP_PROXY_RADIUS_M):
