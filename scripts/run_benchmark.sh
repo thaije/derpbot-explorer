@@ -195,9 +195,15 @@ for DIFF in $DIFFICULTIES; do
 
             log "START ${DIFF}  seed=${SEED}  run=${RUN}  (${RUN_NUM}/${TOTAL})  scenario=${SCENARIO}"
 
-            # Wall-clock timeout: sim budget / speed + 300s overhead for stack
+            # Wall-clock timeout: sim budget / speed + overhead for stack
             # startup, agent-ready wait, and SLAM/Nav2 initialization.
-            WALL_TIMEOUT=$(( ${SIM_TIMEOUT[$DIFF]:-600} / SPEED + 300 ))
+            # t_b0b71441 (v2/1080p): OWLv2 detector cost ~×7/area caps observed
+            # RTF at 0.84–0.89 at --speed 2 (v2probe seed1/seed4); the old
+            # /speed + 300 s formula timed out healthy missions (v2probe-1
+            # seed1, 669/900 sim-s at the deadline; v2probe-2 seed4, 728/900
+            # at RTF 0.84). Budget for an RTF floor of 2/3: sim_budget × 1.5
+            # (i.e. sim_budget × 3 / SPEED wall) + 300 s bringup.
+            WALL_TIMEOUT=$(( ${SIM_TIMEOUT[$DIFF]:-600} * 3 / SPEED + 300 ))
 
             # Touch a marker file so we can find results written after this point.
             MARKER="/tmp/bench_marker_$$_${RUN_NUM}"

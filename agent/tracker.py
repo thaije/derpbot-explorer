@@ -871,14 +871,18 @@ class KeyframeRecorder:
             ):
                 return
             h, w = frame.shape[:2]
-            scale = min(KEYFRAME_WIDTH / w, KEYFRAME_HEIGHT / h, 1.0)
-            if scale < 1.0:
-                small = self._cv2.resize(
-                    frame, (int(w * scale), int(h * scale)),
-                    interpolation=self._cv2.INTER_AREA,
-                )
-            else:
-                small = frame
+            # Full-res option (t_b0b71441): sandbox v2's 1080p hypothesis is
+            # invisible in the 320-wide keyframe corpus (the resolution is
+            # discarded before the bake-off instrument runs), so an env flag
+            # lets instrument runs store detector-input-resolution frames.
+            small = frame
+            if os.environ.get("DERPBOT_KEYFRAME_FULLRES") != "1":
+                scale = min(KEYFRAME_WIDTH / w, KEYFRAME_HEIGHT / h, 1.0)
+                if scale < 1.0:
+                    small = self._cv2.resize(
+                        frame, (int(w * scale), int(h * scale)),
+                        interpolation=self._cv2.INTER_AREA,
+                    )
             ok, buf = self._cv2.imencode(
                 ".jpg", small,
                 [int(self._cv2.IMWRITE_JPEG_QUALITY), KEYFRAME_QUALITY],
