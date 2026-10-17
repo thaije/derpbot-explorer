@@ -1,3 +1,52 @@
+## 2026-10-17 — t_b0b71441 Phase A: v2 1080p OWLv2 probe — offline bar CLEARS (FAK ×2.08, FP-proxy ×1.34) → Phase B gate
+
+Par basis for every table below: **v1-human-derived** (easy par 6.00/6 from v1 human teleop, n=5/session) — sandbox v2 human re-baseline PENDING (operator); v2 scores are expected to shift relative to a v1-camera par, and all v2-vs-v1 deltas here are CROSS-VERSION (640×480 → 1920×1080 camera), so they speak to the resolution hypothesis only, with within-version comparisons taking precedence.
+
+Agent `derpbot-explorer-v2probe(-fr)` @ HEAD `80d06e8` (assoc-split: v12-det lineage = 7aedc20 + f8e3bd4 fixes + v2 migration + fullres-flag). Easy (900 s), speed 2, pkg1-pinned tmux server (10-19,30-39), one sim at a time, streams + keyframes recorded.
+
+### Instrument upgrade (required before the bar could be measured)
+
+The pre-registered instrument ("re-run `bakeoff_run.py` on the v2 frames") was **structurally blind to resolution**: `KeyframeRecorder` downscales every stored frame to `KEYFRAME_WIDTH=320` (agent/detector.py:122), so v1 640×480 → 320×240 JPEGs and v2 1920×1080 → **320×180** JPEGs — two ~320-wide image sets; the 1080p detail is discarded before the detector runs. Measured on the downscale corpus the bar "passed" (FAK 0.479 vs 0.319 = ×1.50 by a hair, FP-proxy 0.209 = ×0.77) — recorded as instrument-blindness, not as signal (`results/bakeoff_v2/`).
+
+Fix (committed `80d06e8`): `DERPBOT_KEYFRAME_FULLRES=1` stores detector-input-resolution keyframes (forwarded via `start_stack.sh`; default off — v1 behavior byte-identical, keyframe tests 42/0 on ROS env). `run_benchmark.sh` wall timeout corrected for v2 RTF (sim×3/speed + 300; observed RTF 0.84–0.89 at speed 2 — the old /speed+300 formula timed out healthy missions twice before the fix). Both probe passes then re-run at full res: `results/bakeoff_v2_fr/` (+ `_tol2` sensitivity).
+
+### Bake-off — OWLv2-on-1080p vs OWLv2-on-v1 (within-model, cross-camera)
+
+| corpus | frames (paired) | FE rate | FAK rate | FAK conf med | person rate | FP-proxy/frame | lat med |
+|---|---|---|---|---|---|---|---|
+| v1 (320×240 downscale of 480p) | 1435 | 0.826 | 0.319 | 0.24 | 0.741 | 0.271 | 289 ms |
+| v2 FR (320w downscale of 1080p — blind corpus) | 225 | 0.908 | 0.479 (×1.50) | 0.21 | 0.690 | 0.209 | 264 ms |
+| **v2 true 1080p (1920×1080)** | 207 | 0.927 | **0.664 (×2.08)** | 0.20 | — (0 vis) | **0.362 (×1.34)** | 372 ms |
+| sensitivity ±2.0 s tol | v1 2228 / v2 342 | 0.747 | 0.273 / v2 **0.548 (×2.01)** | — | — | 0.266 / **0.327 (×1.23)** | — |
+
+**Pre-registered offline bar: FAK rate ≥ 1.5× v1 AND FP-proxy ≤ 1.5× v1. Result: ×2.08 (clears) AND ×1.34 (clears) — sensitivity tol 2.0 s: ×2.01 AND ×1.23 (both hold). Phase A verdict: BAR CLEARS → Phase B gate proceeds per pre-registration.**
+
+Caveats on the offline numbers:
+- person visible-instances = 0 in the FR corpus — a corpus-composition artifact (FR probe runs: person never in-frame during the candidate-dense keyframe windows; person sightings in-stream were 8 on seed1, 0 on seed4, vs 131 on the 320px seed4 run), NOT a model regression claim; person stays unmeasured by this offline instrument on v2.
+- FAK confidence did NOT lift: detected-FAK conf median 0.20 (v1 0.24), max 0.35 (v1 0.46) — 1080p buys more FAK sightings at the same low-conf band, not higher conf. The confirm-gate question (tracker accepts 0.19–0.35 conf chains) is exactly what Phase B tests live.
+- Cross-camera caveat: v1 corpus is 640×480-rendered; composition (which frames exist) is trigger-dependent and not seed-paired across versions.
+
+### Live probe runs (each seed run1, completed missions only)
+
+| run | status | score | found | FE | FAK | per | FP | cov% | dur (sim-s) |
+|---|---|---|---|---|---|---|---|---|---|
+| v2 @320w seed1 | SUCCESS | 76.2 B | 6/6 | 3/3 | 2/2 | 1/1 | 1 | 95.8 | 476 |
+| v2 @320w seed4 | TIME_LIMIT | 71.6 B | 5/6 | 2/3 | 2/2 | 1/1 | 0 | 95.0 | 901 |
+| v2 @1080p seed1 | TIME_LIMIT | 45.5 D | 3/6 | 3/3 | 0/2 | 0/1 | 3 | 62.7 | 900 |
+| v2 @1080p seed4 | TIME_LIMIT | 62.2 C | 4/6 | 2/3 | 2/2 | 0/1 | 2 | 91.0 | 901 |
+
+n=2 per resolution, cross-version vs the v1 5×3 cohort (mean 4.47/6) — probe numbers are hypothesis-plausibility only, NOT gate-grade evidence (that is what the Phase B 5×1 gate is for). FAK live sighting mass (per k-sim-s, per seed/run1): v1 [26–120, med 58] seed1 and [51–342, med 91] seed4; v2@1080p 63 and 354 — within the v1 seed4 band, above the v1 seed1 median. FAK confirmed 2/2 on seed4 in all three v2 runs (the v1 seed4 collapse does not appear at 1080p in these probes); seed1 FAK swings 2/2 → 0/2 between resolutions (n=1). Person 0/1 on both 1080p runs (timing lottery persists). Dup-rate on v2 runs 0.33–0.82 (v1 0.13) — the ~9× pixel-area effect the migration report flagged is real; FP count stayed low (0–3).
+
+### Failed probe attempts (kept for the record)
+
+- v2probe attempt-1: both runs hit the pre-fix 750 s wall deadline with no result; the runner's cleanup killed them (seed1 healthy at RTF 0.89, 669/900 sim-s; seed4 sim-clock froze at 65 s — separate stall). Not scored, streams kept.
+- v2probe attempt-2 (seed4@862 s): healthy, 728/900 sim-s, RTF 0.84 — still short; timeout formula fixed (above). Not scored, stream kept.
+- v2probe attempt-3: stale FDS port → sim-ready failure; clean relaunch procedure (kill_stack + tmux server rebuild) used as fix.
+- mid-flight recorder downgrade catch: one fullres-marked pass still wrote 320-wide frames (flag not forwarded through start_stack.sh); start_stack.sh forwarding added (80d06e8), that pass discarded before scoring.
+
+Files: `results/bakeoff_v2{,_fr{,_tol2}}/` (agent repo), probe raws `office_easy_001_20261017{T155606,T164447,T171228,T173015}.json` (testbed results root) and `results/submissions/derpbot-explorer-v2probe{,-fr}/`, streams+frames in the agent repo `results/streams/`.
+
+---
 ## 2026-10-16 — t_649e32e7: keyframe capture pytest-mode tally FAILs fixed + __main__ runner repaired + TALLY_GATE opted in (test-harness only, no product change)
 
 Follow-up to t_1779f975, fixes the pre-existing `tests/test_keyframe_capture.py` defects at `caa2b8f`. Root cause of the 6 hidden pytest-mode tally FAILs: `KeyframeRecorder.__init__` auto-starts the loop thread, and every test constructed recorders with `clock_node=None` — `_sim_time()` then falls back to `time.time()`, so the loop wrote `f_<wall-clock-epoch>.jpg` files into the tmp fixture dir, racing the direct `_write_one()` calls (301/300 cap inflation; the `[f_100.000.jpg, f_1792181487.xxx.jpg]` pollution in the collision and rate tests). Fix: a `_recorder_thread_disabled()` context manager patches `KeyframeRecorder._loop` to a no-op for the direct-write tests (loop due-gate/budget/cap logic stays verified via inline replication and source inspection — captured at import time so the checks inspect the real source, not the patch) — all file-side assertions are now exact and wall-clock-independent. Also: `test_pending_active_rate_1hz` asserted 1 file while its own two ungated direct writes at +0.5 s correctly produce two (the 100 ms collision guard only applies to ±0.1 s) — split into separate exact assertions for the first write and the past-guard write-through. The `hot path: stash is an assignment` check matched `self._latest_frame = (frame,` but `Detector._image_cb` actually stashes `(frame.copy(), ...)` — pattern relaxed to the real single-tuple-assignment contract. The `__main__` runner no longer crashes on `monkeypatch`-parameterised tests: a minimal `_MonkeyPatchShim` (setattr/undo only — the one feature this module uses; unsupported monkeypatch features raise → printed SKIP, never a fake PASS), per-test tmp dirs with cleanup, and per-test crash capture so one failing test no longer aborts the whole run.
