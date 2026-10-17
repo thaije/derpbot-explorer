@@ -1,3 +1,28 @@
+## 2026-10-17 — t_b0b71441 Phase B: v12-det-on-v2 scored gate (easy 5×1) — REJECT, no escalation, no submission
+
+Par basis: **v1-human-derived** (easy par 6.00/6, v1 human teleop n=5/session) — v2 human re-baseline PENDING (operator); v2 scores expected to shift vs a v1-camera par. The 5×3 escalation did NOT run (rule below), so no leaderboard effect, nothing to revert — baseline unchanged.
+
+Agent `derpbot-explorer-v12-v2` @ HEAD `1fcb550` (assoc-split lineage: 7aedc20 + f8e3bd4 + v2 migration commits + fullres-flag `80d06e8`). Easy (900 s), speed 2, pkg1-pinned tmux server (10-19,30-39), one sim at a time, 5/5 completed 0 failed (results in `robot-sandbox/results/submissions/derpbot-explorer-v12-v2/`).
+
+| seed | status | score | found | FE | FAK | per | FP | dup | coll | cov% | dur |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | SUCCESS | 74.6 B | 6/6 | 3/3 | 2/2 | 1/1 | 2 | 3 | 0 | 69.1 | 509 |
+| 2 | TIME_LIMIT | 55.4 C | 4/6 | 2/3 | 1/2 | 1/1 | 5 | 5 | 1 | 98.7 | 901 |
+| 3 | TIME_LIMIT | 58.3 C | 4/6 | 1/3 | 2/2 | 1/1 | 3 | 14 | 1 | 99.0 | 900 |
+| 4 | TIME_LIMIT | 71.5 B | 5/6 | 2/3 | 2/2 | 1/1 | 0 | 15 | 0 | 95.1 | 901 |
+| 5 | TIME_LIMIT | 50.1 D | 2/6 | 1/3 | 0/2 | 1/1 | 3 | 1 | 0 | 98.6 | 900 |
+| **mean** | | **62.0** | **4.20/6** | 9/15 | 7/10 | 5/5 | **2.60** | 7.6 | 0.4 | **92.5** | |
+
+**Pre-registered escalation bar (submit-side of the gate): found mean ≥ 4.9 AND FP/run ≤ 5.0 AND ≥ 2 completions. Result: found 4.20 (FAIL), FP 2.60 (pass, not attributable per rule), completions 1/5 (FAIL) → NO ESCALATION, no 5×3, no submission, no leaderboard entry. Goal 12/15: explicitly NOT MET (1/5 completions).**
+
+Per-class recall (5 runs × GT 3 FE / 2 FAK / 1 person): fire_extinguisher 9/15 (0.60), first_aid_kit 7/10 (0.70), person 5/5 (1.00). Precision mean 0.77.
+
+**FAK sighting-mass attribution (the campaign headline metric):** the v1 collapse (conf 0.15–0.24, 1–6 sightings/run on seed2, 10/30 FAK missed across the v1 5×3) did NOT reproduce as a FAK problem at 1080p — FAK recall 7/10 and live FAK sighting mass per run 21/29/69/177/15 (conf med 0.16–0.21, same low band as v1). The misses swung to **fire_extinguisher (6/15)** + seed5 (both FAK missed, 15 sightings only — the seed5 analogue of the old collapse, now on a different seed) + person confirmed 5/5 in every run (v1's timing lottery did not appear in the person slot here). Miss table: seed1 —, seed2 {FE2, FAK4}, seed3 {FE2, FE3}, seed4 {FE3}, seed5 {FE1, FE3, FAK4, FAK5}. Dup mean 7.6 (v1 5×3: 7.1) unchanged — the ~9×-pixel-area duplicate pressure flagged at migration persists (15 dups on seed4).
+- FAK conf lift DID NOT materialize in live missions: detected-FAK conf median 0.19–0.21 (bake-off max 0.35), the low-conf band is a detector property, not a resolution property. 1080p bought sighting MASS (bake-off FAK instance-rate ×2.08) which converts to confirmations on 4/5 seeds — but not on the low-mass run (seed5, 15 sightings).
+
+**Rule-branch decision: 4.20 < 4.9 → stop.** Everything kept (baseline unchanged, sandbox stays v2.0.0 operator-sanctioned, nothing reverted). The pre-registered Phase-B stop condition puts the operator decision back on: (a) G-DINO-threshold variant (the t_b4361707 bake-off's FAK-gain-inseparable-from-FP issue could in principle be re-cut at a higher threshold — untested), (b) camera fidelity beyond 1080p (diminishing: FAK conf unchanged v1→1080p, so resolution does not lift the low-conf tail), or (c) remain at v12-det-on-v2 as the standing v2 baseline. No next gate is pre-authorized by this campaign.
+
+---
 ## 2026-10-17 — t_b0b71441 Phase A: v2 1080p OWLv2 probe — offline bar CLEARS (FAK ×2.08, FP-proxy ×1.34) → Phase B gate
 
 Par basis for every table below: **v1-human-derived** (easy par 6.00/6 from v1 human teleop, n=5/session) — sandbox v2 human re-baseline PENDING (operator); v2 scores are expected to shift relative to a v1-camera par, and all v2-vs-v1 deltas here are CROSS-VERSION (640×480 → 1920×1080 camera), so they speak to the resolution hypothesis only, with within-version comparisons taking precedence.
