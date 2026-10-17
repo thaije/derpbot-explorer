@@ -194,7 +194,14 @@ if [[ $START_AGENT -eq 1 ]]; then
         [[ -n "${DERPBOT_STREAM_RUN:-}" ]] && SCOPE="${SCOPE}_${DERPBOT_STREAM_RUN}"
         STREAM_SCOPE_FWD="DERPBOT_STREAM_SCOPE='${SCOPE}'"
     fi
-    tmux new -s agent -d "${ROS_ENV} cd $EXPLORER_ROOT && DERPBOT_READY_FLAG='$READY_FLAG' $FRONTIER_DEBUG_FWD $STREAM_FLAG_FWD $STREAM_SCOPE_FWD $EXPLORER_ROOT/.venv/bin/python agent/agent_node.py ${AGENT_FLAGS}"
+    # t_b0b71441: forward the recorder's full-res keyframe flag (default off).
+    KEYFRAME_FULLRES_FWD="DERPBOT_KEYFRAME_FULLRES='${DERPBOT_KEYFRAME_FULLRES:-0}'"
+    # t_ea3db560: forward the tiled native-resolution inference flag + grid
+    # (both default off/(2,2) — detector behavior byte-identical when unset;
+    # DERPBOT_TILED_GRID is read by BOTH detector processes).
+    TILED_FLAG_FWD="DERPBOT_TILED_INFERENCE='${DERPBOT_TILED_INFERENCE:-0}'"
+    TILED_GRID_FWD="DERPBOT_TILED_GRID='${DERPBOT_TILED_GRID:-}'"
+    tmux new -s agent -d "${ROS_ENV} cd $EXPLORER_ROOT && DERPBOT_READY_FLAG='$READY_FLAG' $FRONTIER_DEBUG_FWD $STREAM_FLAG_FWD $STREAM_SCOPE_FWD $KEYFRAME_FULLRES_FWD $TILED_FLAG_FWD $TILED_GRID_FWD $EXPLORER_ROOT/.venv/bin/python agent/agent_node.py ${AGENT_FLAGS}"
 
     if [[ "${PAUSED:-0}" == "1" ]]; then
         # Poll for the agent's ready flag. The flag is created at the top of
