@@ -34,11 +34,18 @@ STREAMS = os.path.join(REPO, "results", "streams")
 SUBMISSIONS = os.path.expanduser(
     "~/Projects/robot-sandbox/results/submissions")
 
-# camera model — mirrors agent/depth_projector.py exactly
+# camera model — MIRRORS agent/depth_projector.py V1 FALLBACK (640×480, 90°).
+# streams (t_4aa1e7ff): each stream's header may carry a per-run camera
+# object {"fx", "fy", "cx", "cy", "width", "height", "source"}; when present
+# it overrides the constants below (v2.0.0: 1920×1080, fx≈960). Streams
+# without a "camera" header key are pre-v2 and replay on these v1 constants,
+# keeping the whole v1 corpus valid.
 H_FOV_DEG = 90.0
 W_PX, H_PX = 640, 480
 FX = FY = (W_PX / 2) / math.tan(math.radians(H_FOV_DEG / 2))  # ≈320
 CX, CY = W_PX / 2, H_PX / 2
+V1_CAMERA = {"fx": FX, "fy": FY, "cx": CX, "cy": CY,
+             "width": W_PX, "height": H_PX, "source": "v1_no_header"}
 SAMPLE_HALF = 2            # 5×5 patch, median (as live code)
 DEPTH_MIN, DEPTH_MAX = 0.30, 5.00
 CAM_Z = 0.20               # camera_joint z above base_link/base_footprint
@@ -60,7 +67,7 @@ def world_to_map(wx, wy, spawn):
 
 
 def load_stream(path):
-    header, out = None, []
+    header, out = {}, []
     with open(path) as fh:
         for raw in fh:
             raw = raw.strip()
@@ -90,21 +97,51 @@ def inventory():
     return runs
 
 
-def replay_projection(s, header):
+def stream_camera(header: dict) -> dict:
+    """Per-run camera model from the stream header (v2, t_4aa1e7ff).
+
+    Returns the header "camera" object when present, else the v1 640×480
+    constants — pre-v2 streams replay byte-identical to their live run.
+    Missing keys are synthesised from the header's OWN width/height
+    (cx=width/2, cy=height/2, fy=fx), never from the v1 constants — a v2
+    header must not silently inherit v1 geometry.
+    """
+    cam = header.get("camera")
+    if isinstance(cam, dict) and cam.get("fx") and cam.get("width"):
+        fx = float(cam["fx"])
+        w = int(cam["width"])
+        h = int(cam["height"])
+        return {
+            "fx": fx,
+            "fy": float(cam.get("fy", fx)),
+            "cx": float(cam.get("cx", w / 2.0)),
+            "cy": float(cam.get("cy", h / 2.0)),
+            "width": w,
+            "height": h,
+            "source": cam.get("source", "header"),
+        }
+    return V1_CAMERA
+
+
+def replay_projection(s, header, cam=None):
     """Analytic re-derivation of depth_projector.project() from the stream row.
 
     Returns (u, v, depth_used, px, py, bearing_ray_map) — all map frame.
     NOTE: the recorded per-sighting x,y IS this projection (depth from the live
     5×5 patch); we recompute the full ray geometry instead of only its 2D end.
+    `cam` = per-run camera model (stream_camera(header)); defaults to v1.
     """
-    cx, cy, w, h = s["bbox"]
-    u, v = cx, cy
+    if cam is None:
+        cam = stream_camera(header)
+    fx, fy, cx, cy = cam["fx"], cam["fy"], cam["cx"], cam["cy"]
+    cx_, cy_, w, h = s["bbox"]
+    u, v = cx_, cy_
     depth = s.get("depth")
     rrx, rry, ryaw = s["rx"], s["ry"], s["ryaw"]
     if depth is None:
         return None
-    x_cam = (u - CX) / FX * depth
-    y_cam = (v - CY) / FY * depth
+    x_cam = (u - cx) / fx * depth
+    y_cam = (v - cy) / fy * depth
     # camera→world: +Z fwd = robot +x; camera +X right → world -y (code maps)
     # code builds PointStamped(z_cam, -x_cam, -y_cam) then TF2 rotates by ryaw.
     dx_r, dy_r = depth, -x_cam                   # robot/body frame pre-yaw
@@ -132,7 +169,7 @@ def main():
                for k, e in gt.items()}
 
         for s in sightings:
-            rr = replay_projection(s, header)
+            rr = replay_projection(s, header, stream_camera(header))
             if rr is None:
                 continue
             cls = s["class_name"]

@@ -52,7 +52,7 @@ import threading
 import time
 import json
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 import rclpy
 from rclpy.node import Node
@@ -585,6 +585,11 @@ class StreamRecorder:
 
     Output format:
       line 1: {"type": "header", "spawn_pose": {...}, "map_pgm": ..., ...}
+              plus the per-run camera intrinsics object
+              {"camera": {"fx", "fy", "cx", "cy", "width", "height",
+               "source"}} (v2 migration, t_4aa1e7ff) — replay/forensics
+              re-derive the camera model per run from this; streams without
+              a "camera" key are pre-v2 and replay at 640×480/90° v1.
       n>1:    {"type": "sighting", "class_name", "confidence", "bbox":
                [cx, cy, w, h] (px), "x", "y" (map frame), "depth" (m, the
                median depth sample used for the projection, may be null),
@@ -596,7 +601,8 @@ class StreamRecorder:
 
     _WORLD_STATE = Path("/tmp/arst_worlds/world_state.json")
 
-    def __init__(self, record_path: Optional[str], node: "Node"):
+    def __init__(self, record_path: Optional[str], node: "Node",
+                 camera_model: "Optional[dict | Callable[[], dict]]" = None):
         self._logger = node.get_logger() if node is not None else None
         # Clock handle for sim-time stamps (weak-ish ref; node outlives recorder)
         self._clock_node = node
@@ -604,10 +610,27 @@ class StreamRecorder:
         self._n = 0
         if not record_path:
             return
+        # Lazy open: the header line is written on the FIRST record() call, not
+        # at construction (t_4aa1e7ff). At recorder construction the executor
+        # hasn't spun yet, so a camera_info-driven model can't have arrived —
+        # every run 2.0.0+ would otherwise get a 'v1_fallback' header even in
+        # v2 scenes. Written-on-first-sighting the snapshot reflects the live
+        # model (first sighting is always ≥ seconds after camera_info; runs
+        # without camera_info keep the loud DepthProjector fallback warning).
+        # The header remains the physically first line of the file.
+        self._p = Path(record_path)
+        self._camera_model = camera_model
         try:
-            p = Path(record_path)
-            p.parent.mkdir(parents=True, exist_ok=True)
-            self._fh = open(p, "a", buffering=1)  # line-buffered
+            self._p.parent.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            self._fh = None
+            if self._logger is not None:
+                self._logger.warning(f"Tracker: stream recorder disabled ({exc})")
+
+    def _open_and_write_header(self) -> None:
+        """Materialise the file + header line (deferred from __init__)."""
+        try:
+            self._fh = open(self._p, "a", buffering=1)  # line-buffered
             header = {
                 "type": "header",
                 "spawn_pose": self._read_spawn_pose(),
@@ -615,9 +638,20 @@ class StreamRecorder:
                 "map_resolution": self._read_map_res(),
                 "started_wall": time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()),
             }
+            # Per-run camera intrinsics (v2 migration, t_4aa1e7ff): snapshot of
+            # the projector's live model so replay/forensics can always
+            # re-derive the camera model for THIS run. A zero-arg callable is
+            # evaluated HERE (first sighting, executor live); a dict is used
+            # as-is (pre-v2 callers/tests). "source" records a fallback if the
+            # model is still the static v1 pinhole at this point.
+            if self._camera_model is not None:
+                model = (self._camera_model() if callable(self._camera_model)
+                         else dict(self._camera_model))
+                if model is not None:
+                    header["camera"] = dict(model)
             self._fh.write(json.dumps(header) + "\n")
             if self._logger is not None:
-                self._logger.info(f"Tracker: recording sighting stream → {p}")
+                self._logger.info(f"Tracker: recording sighting stream → {self._p}")
         except Exception as exc:
             self._fh = None
             if self._logger is not None:
@@ -665,7 +699,12 @@ class StreamRecorder:
         depth: Optional[float] = None,
     ) -> None:
         if self._fh is None:
-            return
+            if getattr(self, "_open_failed", False) or not hasattr(self, "_p"):
+                return  # recording off (no path) or open already failed once
+            self._open_and_write_header()
+            if self._fh is None:
+                self._open_failed = True
+                return
         try:
             node = getattr(self, "_clock_node", None)
             sim_t = 0.0
@@ -943,6 +982,17 @@ class Tracker:
                 default_stream_path() if record_stream in (None, True) else str(record_stream)
             ),
             node=node,
+            # Per-run intrinsics header (v2 migration, t_4aa1e7ff): the
+            # recorder snapshots the projector's CURRENT camera model when it
+            # writes the header line (deferred to the FIRST sighting — at
+            # construction the executor hasn't spun, so camera_info could not
+            # have arrived yet; a construction-time snapshot would always be
+            # the v1 fallback). The supplier keeps the model live to that
+            # moment; its "source" field records a fallback if it is still one.
+            camera_model=(
+                self._projector.get_camera_model
+                if hasattr(self._projector, "get_camera_model") else None
+            ),
         )
 
         # Pending candidates: objects with < MIN_SIGHTINGS, exposed for explorer
