@@ -34,6 +34,7 @@ Verification overlay:
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import math
 import re
@@ -65,6 +66,8 @@ HFOV = math.pi / 2
 FOV_EDGE_SLACK = 0.02          # rad
 
 POSE_TOL_S = 0.5
+DEFAULT_INTERP_MAX_SPAN_S = 1.0   # cap on the bracketing span interpolation
+# will cross; wider in-tol brackets fall back to the nearer flank's pose.
 MAX_RANGE_M = 6.0
 MIN_RANGE_M = 0.4
 
@@ -212,30 +215,104 @@ def load_frames_dir(d: Path):
     return sorted((float(f.stem[2:]), f) for f in d.glob("f_*.jpg"))
 
 
-def pose_at(poses: dict, t: float, tol=POSE_TOL_S, max_spread: float = None):
-    """Best timestamps: distinct stream timestamps within ±tol of the frame.
+EPS_YAW_RAD = 1e-3      # dedup threshold on yaw (≈0.06°)
+EPS_XY_M = 1e-4         # dedup threshold on x/y
+EPS_T_S = 2e-3          # frame↔stream timestamp coincidence window
 
-    Yields ONE aggregated pose via aggregate_pose_rows from the rows whose
-    |Δt| equals the minimum (the stream is not uniformly sampled — multiple
-    rows may sit at slightly different, equally-near times; all minimal-Δt
-    rows are aggregated together). Returns (x, y, yaw, spread) or None when
-    nothing is within tol, or when the intra-batch yaw spread exceeds
-    max_spread (unregisterable frame — review round 2, item 2).
+
+def distinct_pose_samples(poses: dict):
+    """Aggregate rows per timestamp, then DROP carried-over (stale) samples.
+
+    When no odometry tick arrived between sightings the stream re-emits the
+    PREVIOUS pose at the later timestamp (pose byte-identical to the prior
+    distinct one; measured 2459/20518 timestamps across 93 streams, review
+    round 3 item 1). A frame whose nearest timestamp is such a carried-over
+    sample used to get a stale pose while the robot turned — the f_713.312
+    symptom (nearest rows both said yaw 59.63° while the robot turned
+    ~14°/s → 0.23 rad bearing error on every class in the frame). Nearest-
+    timestamp selection and intra-batch aggregation (r2 item 2) cannot see
+    this: the rows AGREE with each other — they are just old.
+    Returns a sorted list of (t, x, y, yaw, spread) fresh distinct samples.
     """
-    if not isinstance(poses, dict):
-        raise TypeError("poses must be a {t: [rows]} dict from load_stream")
-    cand = [pt for pt in poses if abs(pt - t) <= tol]
-    if not cand:
+    samples = []
+    for t in sorted(poses):
+        x, y, yaw, spread = aggregate_pose_rows(poses[t])
+        if samples:
+            _, px, py, pyaw, _ = samples[-1]
+            if (abs(x - px) < EPS_XY_M and abs(y - py) < EPS_XY_M
+                    and abs((yaw - pyaw + math.pi) % (2 * math.pi) - math.pi)
+                    < EPS_YAW_RAD):
+                continue          # carried-over pose — not a fresh sample
+        samples.append((t, x, y, yaw, spread))
+    return samples
+
+
+def pose_at(samples: list, t: float, tol=POSE_TOL_S, max_spread: float = None,
+            interp_max_span=DEFAULT_INTERP_MAX_SPAN_S):
+    """Pose for a keyframe from the FRESH pose samples, bounded-stale.
+
+    Staleness invariant (review round 3 item 1): the pose used for a frame
+    is never older than --pose-tol relative to the FRESHNESS of what feeds
+    it — where freshness of a sample is its own timestamp, and the
+    freshness of an interpolation or exact hit carried by bracketing
+    samples is the NEARER FLANK. (The old nearest-row pose was stale by
+    design: a carried-over duplicate sits up to a second-plus from the
+    previous fresh sample but was trusted at face value.)
+
+    Cases (freshness = min(|Δt| to the flanks used) unless noted):
+      t coincides with a fresh sample            → that pose, flag False
+      t strictly between fresh samples, bracket  → LINEAR interpolation
+        span ≤ --interp-max-span                   (xy lerped, yaw lerped
+        (both flanks within ±tol)                  after unwrapping), flag
+                                                   interp=True — the
+                                                   r2-requested remedy
+      one flank within ±tol                      → that pose, flag False
+      no flank within ±tol                       → None (frame dropped)
+    max_spread (aggregate_pose_rows) gates every path. Returns
+    (x, y, yaw, spread, flag, interp: [True=interpolated | False=single
+    sample], src: [t_lo, t_hi]) or None.
+    """
+    times = [s[0] for s in samples]
+    i = bisect.bisect_left(times, t)
+    lo = samples[i - 1] if i > 0 else None
+    hi = samples[i] if i < len(samples) else None
+    # exact coincidence with a fresh sample — freshest possible, no flag
+    if lo is not None and abs(lo[0] - t) <= EPS_T_S:
+        hi_f = hi and abs(hi[0] - t) <= EPS_T_S
+        if hi_f:   # duplicate-timestamp keyframe: bracket is degenerate
+            return lo[1], lo[2], lo[3], max(lo[4], hi[4]), False, \
+                [lo[0], hi[0]]
+        return lo[1], lo[2], lo[3], lo[4], False, [lo[0], lo[0]]
+    if hi is not None and abs(hi[0] - t) <= EPS_T_S:
+        return hi[1], hi[2], hi[3], hi[4], False, [hi[0], hi[0]]
+    lo_ok = lo is not None and (t - lo[0]) <= tol
+    hi_ok = hi is not None and (hi[0] - t) <= tol
+    if lo_ok and hi_ok:
+        # interior bracket: interpolate (span-capped), freshness = nearer flank
+        (t0, x0, y0, yaw0, sp0), (t1, x1, y1, yaw1, sp1) = lo, hi
+        if (t1 - t0) <= interp_max_span:
+            f = (t - t0) / (t1 - t0)
+            # yaw lerp on the unwrapped branch closest to yaw0
+            yaw1_u = yaw0 + ((yaw1 - yaw0 + math.pi) % (2 * math.pi) - math.pi)
+            x, y = x0 + f * (x1 - x0), y0 + f * (y1 - y0)
+            yaw = yaw0 + f * (yaw1_u - yaw0)
+            spread = max(sp0, sp1)
+            if max_spread is not None and spread > max_spread:
+                return None
+            return x, y, yaw, spread, True, [t0, t1]
+        # bracket too wide to interpolate across, both flanks in tol:
+        # freshness of the nearer flank is still within tol → nearest flank
+        s = lo if (t - lo[0]) <= (hi[0] - t) else hi
+        return s[1], s[2], s[3], s[4], False, [s[0], s[0]]
+    if lo_ok:
+        s = lo
+    elif hi_ok:
+        s = hi
+    else:
         return None
-    dt_min = min(abs(pt - t) for pt in cand)
-    best = [pt for pt in cand if abs(pt - t) == dt_min]
-    rows = []
-    for pt in sorted(best):
-        rows.extend(poses[pt])
-    x, y, yaw, spread = aggregate_pose_rows(rows)
-    if max_spread is not None and spread > max_spread:
+    if max_spread is not None and s[4] > max_spread:
         return None
-    return x, y, yaw, spread
+    return s[1], s[2], s[3], s[4], False, [s[0], s[0]]
 
 
 def stream_camera(header: dict) -> dict:
@@ -432,6 +509,10 @@ def main() -> int:
                     help="drop frames whose aggregated stream rows disagree on "
                          "yaw by more than this many RADIANS (unregisterable "
                          "pose; default: no gate, spread recorded per frame)")
+    ap.add_argument("--interp-max-span", type=float, default=DEFAULT_INTERP_MAX_SPAN_S,
+                    help="cap on the bracketing span pose interpolation will "
+                         "cross (review round 3 item 1); wider in-tol brackets "
+                         "fall back to the nearer flank's pose. Default 1.0 s")
     ap.add_argument("--runs", nargs="*", default=None)
     args = ap.parse_args()
 
@@ -470,20 +551,27 @@ def main() -> int:
                 continue
             header, pose_rows = load_stream(stream_path)
             cam = stream_camera(header)
-            # group stream rows by timestamp for deterministic aggregation
+            # group stream rows by timestamp for deterministic aggregation, then
+            # drop carried-over (stale) samples (review round 3, item 1)
             from collections import defaultdict as _dd
             poses = _dd(list)
             for (t, rx, ry, ryaw) in pose_rows:
                 poses[round(float(t), 6)].append((t, rx, ry, ryaw))
+            samples = distinct_pose_samples(poses)
+            n_samples_raw = len(poses)
+            n_samples_fresh = len(samples)
+            n_frames_interp = 0
             split = run_split(run_key_full)
             n_vis_frames = 0
             n_dropped_spread = 0
             spread_worst = 0.0
             for (t, fpath) in load_frames_dir(run_dir):
-                pose = pose_at(poses, t, args.pose_tol, args.yaw_spread_gate)
+                pose = pose_at(samples, t, args.pose_tol, args.yaw_spread_gate,
+                               interp_max_span=args.interp_max_span)
                 if pose is None:
                     continue
-                px, py, pyaw, spread = pose
+                px, py, pyaw, spread, interp, pose_src = pose
+                n_frames_interp += 1 if interp else 0
                 spread_worst = max(spread_worst, spread)
                 img = cv2.imread(str(fpath))
                 if img is None:
@@ -547,17 +635,25 @@ def main() -> int:
                     "run": run_key_full, "split": split, "seed": seed, "run_n": run,
                     "t": t, "camera": cam_out,
                     "robot_xy": [round(cp[0], 3), round(cp[1], 3)], "yaw": round(yaw_w, 4),
-                    "pose_rows": len(poses.get(round(t, 6), [])),
+                    "pose_rows": n_samples_raw,
+                    "pose_samples_fresh": n_samples_fresh,
+                    "pose_interpolated": interp,
+                    "pose_src_t": [round(pose_src[0], 6), round(pose_src[1], 6)],
                     "pose_aggregated": True,
                     "yaw_spread": round(spread, 4),
                     "objects": objects, "n_objects": len(objects),
                 }) + "\n")
                 n_frames += 1
             per_run[run_key_full] = {"split": split, "frames": n_vis_frames,
-                                     "seed": seed, "camera": cam["source"]}
+                                     "seed": seed, "camera": cam["source"],
+                                     "pose_samples_raw": n_samples_raw,
+                                     "pose_samples_fresh": n_samples_fresh,
+                                     "frames_interpolated": n_frames_interp}
             print(f"== {run_key_full} [{split}]: {n_vis_frames} frames "
                   f"(of {len(load_frames_dir(run_dir))}, worst yaw spread "
-                  f"{math.degrees(spread_worst):.1f}°)")
+                  f"{math.degrees(spread_worst):.1f}°, {n_samples_raw - n_samples_fresh}"
+                  f" carried-over pose samples dropped, {n_frames_interp} frames "
+                  f"pose-interpolated)")
     # split files
     split_runs = defaultdict(list)
     for rk, info in per_run.items():

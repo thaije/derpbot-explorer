@@ -11,8 +11,9 @@ Any prompt-driven open-vocab backend can be scored against it in minutes with
 ```
 results/recog_benchmark/
   manifest.jsonl        1 line per keyframe: image, camera model, robot pose,
-                        objects=[{key, cls, mission, range, bearing, bbox,
-                        range_bin, area_bin, area_px}]
+                        pose provenance (pose_interpolated / pose_src_t /
+                        pose_samples_fresh), objects=[{key, cls, mission,
+                        range, bearing, bbox, range_bin, area_bin, area_px}]
   dataset_stats.json    frames/instances/runs/class-bins + config + prompts
   generated_gt/         per-run GT for runs with no result JSON (stress splits)
   split_corpus.txt      57 runs (seeds 1–5 easy, v1 + v2 FULLRES; tuned-on data)
@@ -25,21 +26,80 @@ results/recog_benchmark/
 
 | | |
 |---|---|
-| frames | **4810 of 15130 stored keyframes** — the retained frames have an in-tolerance pose pairing; **365 of them are zero-object frames** (320 corpus, 45 holdout) with only negative labels. `dataset_stats.json` reports both total frames (4810) and per-run object-bearing frames (`run_list[*].frames`) |
-| visible-GT instances | **8800** |
-| splits | corpus 4249 frames / 57 runs · holdout 523 frames / 5 runs · stress 38 frames / 2 runs |
+| frames | **4633 of 15130 stored keyframes** — the retained frames have a bounded-stale pose pairing (see "Pose staleness" below); **354 of them are zero-object frames** (310 corpus, 44 holdout) with only negative labels. `dataset_stats.json` reports both total frames (4633) and per-run object-bearing frames (`run_list[*].frames`) |
+| visible-GT instances | **8473** |
+| splits | corpus 4081 frames / 57 runs · holdout 514 frames / 5 runs · stress 38 frames / 2 runs |
 | GT source | v10-assoc / stream-corpus / v2holdout result JSONs (`ground_truth_objects`, all 8 renderable scenario classes; `mission_target` flag preserved); stress runs use `generated_gt/` (deterministic WorldGenerator replay, ≤0.0004 m vs in-sim SDF). **Per-object yaw + exact spawn z** come from the deterministic WorldGenerator replay (`generated_gt_with_yaw/`, `scripts/replay_object_yaws.py`; GT coordinates re-verified ≤0.002 m on all 25 replayed runs + all 64 benchmark run keys) |
-| pose pairing | sighting-stream rows aggregated per timestamp (median rx/ry + circular-mean yaw when a batch carries multiple rows), nearest distinct timestamp within ±0.5 s, odom→world via spawn header (bake-off pipeline, 84 % bearing agreement). The stream rows at one timestamp can disagree on yaw (5954 multi-row timestamps / 91 streams, 7.9 % with >5° intra-t spread, worst 179° — review r2 item 2); the aggregated pose + the frame's intra-batch `yaw_spread` (rad, max deviation from the circular mean) are recorded per frame. 166 frames exceed a 5° spread and 34 exceed 15° (worst 34°) — treat `yaw_spread` as a per-frame label-confidence axis |
-| camera provenance | per-run stream-header `camera` block (v2 camera_info) or the v1 640×480 pinhole constants (`source=v1_no_header`), with fx/fy/cx/cy AND width/height **scaled to the stored JPEG resolution** plus `native_width`/`native_height`/`scale` (review r2 item 4). Stored-res census: 1869 frames true 1920×1080 (all holdout+stress + FULLRES probes), 1698 at 320×240 (v1 detector-input), 1243 at 320×180 (v2 legacy header-proof slice). The **corpus 1080p slice is 1869 − holdout/stress = 1308 frames**, not "3112/4256" — native-header frames downscaled to 320-wide storage carry a 320-res camera block |
-| labels per class | fire_extinguisher 3496 · first_aid_kit 1885 · office_chair 911 · person 782 · drill 581 · drink_can 479 · trash_can 403 · suitcase 263 (exit_sign: 0 visible — SDF-posed at z = 1.25 m on the office door headers `wall_door_header_*`; the PGM wall-clearance LOS test blocks it from every reachable viewpoint, treated like the other unreachable env classes) |
+| pose pairing | sighting-stream rows aggregated per timestamp (median rx/ry + circular-mean yaw when a batch carries multiple rows), then reduced to FRESH distinct pose samples (carried-over duplicates from sighting batches without odometry ticks are DROPPED — 2459/20518 stream timestamps across 93 streams re-emit the previous pose byte-identical); the frame pose is INTERPOLATED between the bracketing fresh samples (span ≤ 1 s, yaw lerped after unwrapping; 1539/4633 frames interpolated), nearest fresh sample otherwise, always within ±0.5 s; odom→world via spawn header (bake-off pipeline) |
+| camera provenance | per-run stream-header `camera` block (v2 camera_info) or the v1 640×480 pinhole constants (`source=v1_no_header`), with fx/fy/cx/cy AND width/height **scaled to the stored JPEG resolution** plus `native_width`/`native_height`/`scale`. Stored-res census: 1822 frames true 1920×1080 (all holdout+stress + corpus FULLRES probes), 1588 at 320×240 (v1 detector-input), 1223 at 320×180 (v2 legacy header-proof slice) — the **corpus 1080p slice is 1270 frames** |
+| labels per class | fire_extinguisher 3350 · first_aid_kit 1810 · office_chair 884 · person 753 · drill 562 · drink_can 461 · trash_can 394 · suitcase 259 (exit_sign: 0 visible — SDF-posed at z = 1.25 m beside the office door headers; the PGM wall-clearance LOS test blocks it from every reachable viewpoint, treated like the other unreachable env classes) |
 | bins | range ≤1.5 / 1.5–3 / 3–6 m · area tiny(<100)/small(<1000)/large px² · clutter = per-frame instance count |
-| config | pose_tol 0.5 s · max_range 6.0 m · hfov 1.5708 rad · range_bins [1.5, 3.0] · area_bins [100, 1000] |
+| config | pose_tol 0.5 s · interp_max_span 1.0 s · max_range 6.0 m · hfov 1.5708 rad · range_bins [1.5, 3.0] · area_bins [100, 1000] |
 
 Label-verification overlay: `scripts/verify_labels.py --frame <run>/<frame>`
-draws the projected GT bboxes onto the stored JPEG (spot-checked on v1 and v2
-FULLRES frames; residual ≈0.03 rad from the ±0.5 s pairing tolerance on a
-spinning robot — plus the per-frame recorded `yaw_spread` above for the
-multi-row tail).
+draws the projected GT bboxes onto the stored JPEG.
+
+### Pose staleness fix (review round 3, item 1) — rebuild 2026-10-18 21:18
+
+**Root cause (measured).** When no odometry tick arrived between sightings the
+stream re-emits the PREVIOUS pose at the later timestamp: 2459 of 20518 stream
+timestamps across 93 streams carry a pose byte-identical to the prior distinct
+one (carry-over gaps up to >1.9 s; median 0.03 s). Nearest-timestamp pairing
+trusted those rows at face value, and intra-batch aggregation (r2 item 2)
+cannot see the problem — the rows AGREE with each other, they are just old.
+
+**Fix.** `pose_at` now (a) aggregates rows per timestamp, (b) drops
+carried-over samples (`distinct_pose_samples`), and (c) when the frame time
+falls strictly between two bracketing fresh samples, LINEARLY INTERPOLATES the
+pose (xy lerped; yaw lerped on the closest unwrapped branch; r2-requested
+remedy). Interpolation is span-capped at `--interp-max-span 1.0` — wider
+in-tol brackets fall back to the nearer flank; the pose is never derived from
+an observation older than ±0.5 s. Effect on the corpus: 1500/4626 common
+frames changed pose, 1539/4633 frames are interpolated, 184 frames (3.8 %,
+previously paired ONLY via a stale carried-over pose) are DROPPED — including
+the review's `f_713.312` exhibit — and 7 frames gained a pose that previously
+had none. Every frame records `pose_interpolated`, `pose_src_t` (the source
+sample times), and `pose_samples_fresh` for auditability.
+
+**Measured residual tail (image-grounded, `scripts/measure_person_tail.py`,
+committed; data in `person_tail_measure.json`/`person_tail_summary.json`).**
+On hi-vis jacket HSV-blob containment, 251 unclipped person frames
+(box AND mask ≥3 px from every border, ≥150 jacket px):
+
+- jacket-pixel containment: median 1.000, mean 0.965; **7 frames below 0.5**,
+  4 of those at ≤0.05 (one holdout: seed10 f_711.504);
+- box-centre → blob-centre lateral offset at the person's range
+  (|Δbearing|·range): median 0.22 m, p90 0.52 m, p95 0.67 m, max 1.65 m;
+  95/251 frames exceed 0.3 m, 32 exceed 0.5 m;
+- rendered exhibits from the DELIVERED manifest:
+  `results/recog_benchmark/review_overlays_r4_seed10_f711.png` (person
+  reclining; box covers torso+legs, boot pokes out right — correct
+  registration, hull limitation) and
+  `review_overlays_r4_seed2_f244.png` (settled/reclining person, box extends
+  past the resting body).
+
+**The two remaining tail causes, stated as limitations:**
+
+1. **Reclining/settled person exceeds the standing-hull geometry** (review r3
+   item 1d): the person mesh is a sitting/stationary character; when it
+   settles or reclines the body mass shifts up to ~1 body width outside the
+   mesh-derived hull, even with perfectly registered camera pose. The worst
+   frames (f_203.344, f_131.120, f_244.600) are all reclining/settled poses;
+   several have an EXACT pose (fresh sample at the frame's own timestamp,
+   spread 0) — pose staleness is NOT the cause there.
+2. **Keyframe-vs-sighting micro-latency on a spinning robot**: the stream may
+   carry one fresh sample exactly at the frame's t while the NEXT sample
+   (0.1 s later) shows a 10°+ jump — the pixels were captured sometime inside
+   that window (e.g. seed5 f_203.344: rows 157.8°@t, 169.0°@t+0.11 s;
+   measured residual up to ~0.2 rad ≈ the inter-sample jump). Bounded by the
+   bracketing span; not visible to `yaw_spread` (intra-t only).
+
+`yaw_spread` REMAINS usable only as the intra-batch disagreement axis (173
+frames >5°, 41 >15°, worst 170° on the current manifest); it CANNOT detect
+stale nearest-row poses any more — those frames no longer exist in the
+dataset — and it cannot see either residual cause above. Use
+`pose_interpolated`/`pose_src_t` + the measured tail above when weighting
+per-frame label confidence.
 
 ### Instrument fix inside this dataset (frame-t parser)
 
@@ -149,60 +209,65 @@ latency) + `README.md` table.
 
 ## Reproduction check (dataset validity)
 
-**One run per protocol, both executed on the post-r2-rebuild manifest (4810
-frames, yaw-rotated hulls, aggregated poses) — no mixed-protocol table
-(review r1 item1 / r2 item1).** The FP-proxy is computed at an explicit
-`--fp-conf` (default **0.15 = the bake-off's CONF_THRESHOLD**); summary + docs
-state it per row (review r2 item 1: comparing an FP@0.05 against a
-baseline's FP@0.15 is a ~3× handicap, and `--bar` now flags a baseline whose
-FP threshold differs).
+**One executed run per protocol — `r4_mission_bakedef` — executed on the
+post-r3 (pose-staleness) rebuild of the manifest (4633 frames, 2026-10-18
+21:18).** The prior executed run `r3_mission_bakedef` is PRE-rebuild: it paired
+against the 2026-10-18 19:15 manifest (backup:
+`results/recog_benchmark/manifest_prev_r3.jsonl`), 175 of its frames no longer
+exist in the delivered manifest, and it is retained for provenance with its
+stale-artifact note; it backs NO claim here. The FP-proxy is computed at an
+explicit `--fp-conf` (default **0.15 = the bake-off's CONF_THRESHOLD**);
+summary + docs state it per row (review r2 item 1).
 
-Population statement: the rebuilt corpus pairing gate retains **1314 of the
-bake-off's 1435 v1 frames** (121 lost — with correct fractional-second pairing
-they have no ±0.5 s pose match; they were only pairable via the stale pose).
-The rebuilt label set is therefore NOT the bake-off's 1435-frame population:
-reproduction is evaluated on the **intersection (1314 frames)**, and the
-full-corpus numbers below are the single-run protocol artifact cited for the
-Phase-3 sweep.
+Population statement: the pose-staleness rebuild retains **1228 of the
+bake-off's 1435 v1 frames** (207 lost — 121 already lost to the frame-t fix,
+86 more now dropped because their only in-tol pose source was a carried-over
+stale sample: they were only pairable via the stale pose, or their bracket is
+out of tolerance). The delivered label set is therefore NOT the bake-off's
+1435-frame population: reproduction is evaluated on the **intersection (1228
+frames)**, and the full-corpus numbers below are the single-run protocol
+artifact cited for the Phase-3 sweep.
 
 ### Single-run protocol artifact — full rebuilt corpus, 3 mission prompts
-Run `results/eval_recog/r3_mission_bakedef` (owlv2, conf grid 0.05–0.50,
-`--fp-mode gt_within_radius --fp-conf 0.15`, 4249 frames):
+Run `results/eval_recog/r4_mission_bakedef` (owlv2, conf grid 0.05–0.50,
+`--fp-mode gt_within_radius --fp-conf 0.15`, 4081 frames):
 
 | metric | value |
 |---|---|
-| FE rate@0.15 | 0.9045 |
-| FAK rate@0.15 | 0.5220 |
-| person rate@0.15 | 0.8553 |
-| FP-proxy/frame @ conf ≥ 0.15 (gt_within_radius) | 0.3518 |
-| precision@0.15 (FE/FAK/person) | 0.534 / 0.947 / 0.781 |
+| FE rate@0.15 | 0.9091 |
+| FAK rate@0.15 | 0.5303 |
+| person rate@0.15 | 0.8614 |
+| FP-proxy/frame @ conf ≥ 0.15 (gt_within_radius) | 0.3475 |
+| precision@0.15 (FE/FAK/person) | 0.537 / 0.953 / 0.784 |
 
-### Reproduction — same 1314-frame intersection, matched thresholds (conf ≥ 0.15)
+### Reproduction — matched thresholds (conf ≥ 0.15) on the shared 1228-frame population
 
-| metric | harness (rebuilt labels) | bake-off (1435 frames, stale-pose labels) | Δ |
+Two rescores of stored detections on the frames the pose-corrected manifest
+shares with the bake-off's 1435 (both from `frame_records.jsonl`, single
+inference generation each; NOT new inference):
+
+- **harness column** = `r4_mission_bakedef` records scored against the
+  CURRENT (delivered) labels — `summary_intersect1228_fpconf15.json`;
+- **bake-off column** = the bake-off-era `corpus_owlv2_repro_bakedef`
+  records scored against their own era's labels
+  (`summary_intersect1228_bakeoff_fpconf15.json`; 3 of the 1228 lack an
+  old-manifest pose, scored only in the harness column). Each column is one
+  protocol's detections on one population — no mixed-protocol cell.
+
+| metric | harness (current labels) | bake-off (stale-pose labels) | Δ |
 |---|---|---|---|
-| FE rate@0.15 | 0.8678 | 0.8263 | +0.042 |
-| FAK rate@0.15 | 0.3785 | 0.3186 | +0.060 |
-| person rate@0.15 | 0.8603 | 0.7414 | +0.119 |
-| FP-proxy/frame @ 0.15 | 0.2953 | 0.2711 | +0.024 |
+| FE rate@0.15 | 0.8731 | 0.8732 | −0.000 |
+| FAK rate@0.15 | 0.3830 | 0.3753 | +0.008 |
+| person rate@0.15 | 0.8682 | 0.8295 | +0.039 |
+| FP-proxy/frame @ 0.15 | 0.2923 | 0.2963 | −0.004 |
 
-At the bake-off's own operating point (conf ≥ 0.15, gt_within_radius FP) the
-harness reproduces the bake-off table within label-correction noise: +0.04 FE,
-+0.06 FAK, +0.12 person, +0.02 FP/frame. The residual deltas are the label
-corrections, not a harness mismatch:
-
-- GT visibility sets differ on 611/1314 frames across all 9 classes (164 on
-  the 3 mission classes): 167 old-label mission instances are REMOVED by the
-  corrected pairing (visible-with-a-1-s-stale-pose but actually out of
-  range/FOV — verified visually: the "first_aid_kit" at f_63.888 of
-  seed1_run1_20261013T113817Z is a few-pixel smudge at ~6 m, not a 0.9 m-range
-  kit the stale label claimed), 17 are ADDED (in-tolerance now). Removing
-  stale visible labels lowers n_gt where the old instrument over-labeled —
-  the measured DETECTION rate denominator shrinks and the rate rises.
-- Person/FAK rate deltas are amplified by the hull fixes (the old person hull
-  sat 0.37 m too high, missing every lower body, and FAK hulls sat 0.11 m too
-  low) — a corrected (larger, floor-contact hull) both matches MORE
-  detections and admits more GT instances.
+At the bake-off's own operating point the harness reproduces the bake-off
+table within label-correction noise: |Δ| ≤ 0.04 on all rates, ≤ 0.005 on the
+FP proxy — on a population the stale-pose pipeline cannot even label
+consistently (86 of these frames were only pairable via a carried-over stale
+pose). The r3-era table's larger deltas (+0.12 person) came from the same
+comparison with a less-corrected label set; the pose-staleness fix and
+reproduction are two views of the same correction.
 
 Historical note: the intermediate r2-era table printed "DOES NOT reproduce"
 with FAK 0.6285 vs 0.3186 — that comparison read the harness's conf ≥ 0.05
@@ -212,19 +277,19 @@ is the near-reproduction above.
 
 What IS validated:
 
-1. **GT consistency**: on the 1314 shared frames, corrected labels keep the
-   mission-class set identical on ~87 %; every disagreement
-   inspected visually sided with the corrected label (overlay + frame
-   reading). NOTE (review r2 item 5): class-SET agreement is weak evidence —
-   item 2 of r2 shows the class set can be right while every box in the frame
-   is misregistered — the binding checks are the per-frame `yaw_spread`
-   metadata + overlay verification, not the set-overlap number.
+1. **GT consistency**: on the shared population, the rate columns above agree
+   within noise between the delivered labels and the bake-off-era labels
+   where the old instrument was correct, and the measured label-correction
+   deltas (stale-pose frames REMOVED from the dataset instead of
+   relabeled-wrong) side with the delivered labels. The binding per-frame
+   check is now the pose provenance (`pose_interpolated` / `pose_src_t`) +
+   the measured image-grounded tail (above) + overlay verification.
    Instance geometry is mesh/SDF/replay-derived and renders true on
    overlay spot-checks (v1 + v2 FULLRES).
 2. **Harness == bake-off protocol**: the harness reuses bakeoff_run.py's
    pose→camera pipeline, prompts, matching fallback, FP radius, and (via
    `--fp-conf 0.15`) the bake-off's operating threshold; the
-   identical-model sanity run `r3_mission_bakedef` behaves like the bake-off's
+   identical-model sanity run `r4_mission_bakedef` behaves like the bake-off's
    other runs (same detector, latency ~0.26 s/frame GPU).
 3. Earlier runs are kept for provenance with their protocol knobs recorded:
    `r2_mission_strict`/`r2_mission_bakedef` (pre-r3 manifest, FP-proxy
