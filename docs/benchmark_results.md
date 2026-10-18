@@ -1,3 +1,37 @@
+## 2026-10-18 — t_f4620454: matched-version pair completed (v12-v2 easy 5×3 @ sandbox v2.0.0 vs v10-assoc 5×3 @ v1.0.3) — SIM-EFFECT VERDICT: NULL on found at matched code version
+
+Par basis: **v1-human-derived** (easy par 6.00/6, v1 human teleop n=5/session) — **v2 human re-baseline PENDING (operator)**; the paired deltas below are therefore v1-human-derived-par-relative in spirit, and agent deltas are only interpretable at matched sandbox version, which is exactly what this entry holds fixed.
+
+Agent: `derpbot-explorer-v12-v2` @ code `d2cd78d` (HEAD-at-batch `a1f14bd` is behavior-identical: net agent diff `b4cd9f8..HEAD` is recorder-only, detector/explorer net-zero; DERPBOT_TILED_INFERENCE off — same code as the v1 twin) vs twin `derpbot-explorer-v10-assoc` @ `b4cd9f8`. Easy (900 s) × 5 seeds × 3 runs, speed 2, pkg1-pinned tmux server (10-19,30-39), one sim at a time. v2 side: 15/15 written 2 failed-then-retried to completion (10-18 08:56Z spawn-failure spiral — 5× "Sim did not become ready within 60s" — recovered by the surviving resumable runner 11:08–14:33 CEST; t_91d433ec's batch, finished here); v1 side: 15/15 (t_3b4b2bd6 batch), 0 failed. Provenance: every one of the 15 v2 submission JSONs traces to a unique raw mission result (`robot-sandbox/results/office_easy_001_2026101[78]*Z.json`, exact signature match incl. submission timestamps); no duplicates, no re-runs overwriting.
+
+### Paired table (per-seed means, 3 runs each; sandbox v2.0.0 minus v1.0.3, sim otherwise held fixed)
+
+Par: **v1-human-derived** (easy par 6.00/6) + **v2 human re-baseline pending** — treat absolute v2 levels with that caveat.
+
+| seed | found v2 | found v1 | Δfound | score v2 | score v1 | Δscore | v2 per-class (FE/FAK/per, of 9/6/3) | FP v2 | dup v2 | cov% v2 | coll v2 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 5.67 | 5.33 | +0.33 | 72.9 | 65.9 | +7.0 | FE 9, FAK 5, per 3 | 1.67 | 2.7 | 79.3 | 2.33 |
+| 2 | 4.00 | 3.33 | +0.67 | 56.4 | 53.6 | +2.8 | FE 8, FAK 1, per 3 | 4.67 | 6.7 | 98.9 | 1.00 |
+| 3 | 4.67 | 4.33 | +0.33 | 62.9 | 61.4 | +1.5 | FE 7, FAK 4, per 3 | 3.00 | 7.7 | 90.5 | 0.33 |
+| 4 | 5.00 | 5.00 | 0.00 | 69.9 | 66.1 | +3.8 | FE 7, FAK 6, per 2 | 1.00 | 11.0 | 97.7 | 0.00 |
+| 5 | 3.33 | 4.33 | −1.00 | 58.4 | 61.5 | −3.1 | FE 4, FAK 3, per 3 | 2.00 | 2.0 | 88.9 | 0.00 |
+| **all** | **4.53/6** | **4.47/6** | **+0.07** | **64.1** | **61.7** | **+2.4** | FE 35/45 (.78) vs v1 34; FAK 19/30 (.63) vs 20; per 14/15 (.93) vs 13 | **2.47** (v1 2.93) | **6.0** (v1 7.1) | **91.1** (v1 88.3) | **0.73** (v1 1.00) |
+
+### Paired-delta verdict (the deliverable)
+
+- **Found/6, pooled Δ (v2−v1): +0.07/6, 95% bootstrap CI [−0.80, +0.80] (10k resamples, seed 42) — zero inside, half-width ±0.80 ≫ the effect. Wins/ties/losses 6/6/3. VERDICT: the v2.0.0 Full-HD camera effect on found-mass, at matched agent code and sim protocol, is NULL — indistinguishable from zero.** Seed-level: s1 +0.33 (CI [0.00,1.00]), s2 +0.67 ([0.00,1.00]), s3 +0.33 ([0.00,1.00]), s4 0.00 ([−1.00,+1.00]), s5 −1.00 ([−3.00,+2.00]); n=3 per seed makes these CIs coarse, but no seed is individually decisive and seed5 (the noise-dominant seed, deltas −3/+2/−2) nets negative.
+- **Score/grade: pooled Δscore +2.4 (CI [−3.4, +8.4], zero inside — not significant). Grade hist v2 {A1 B3 C10 D1} vs v1 {B1 C11 D3}; completions (SUCCESS) 3/15 vs 1/15 — directionally more completions at 1080p but nowhere near the campaign goal-check target (12/15): **goal check 12/15: explicitly NOT MET (3/15)**.
+- **Per-class recall: FE 35/45 (0.778 vs v1 0.756, +1 object), FAK 19/30 (0.633 vs 0.667, −1), person 14/15 (0.933 vs 0.867, +1).** No class moves enough to matter at n=15.
+- **FAK conf band: pooled conf median 0.187 (v2) vs 0.190 (v1), both 0.15–0.37/0.41 — UNCHANGED, replicating the Phase-B finding that the low-conf band is a detector property that resolution does not lift.** FAK sighting mass, however, moved: per-seed paired mass mean v2 69.1/run vs v1 38.1/run (**×1.81 pooled; per-seed ×0.63 s1 / ×5.50 s2 / ×1.80 s3 / ×1.75 s4 / ×3.42 s5**; ≈256 vs 141 per 10k sim-s). The 1080p camera delivers its engineered evidence-density gain (this is Phase-A's offline bar, now confirmed live at 5×3) — but the mass converts to found objects only weakly and unevenly (s2: ×5.5 mass yet FAK recall 1/6; s1: mass ×0.63 yet FAK 5/6), because the confirm-gate/tracker, not evidence mass, is the binding constraint at matched code.
+- **Dup-pressure (the 7.6 gate → answer): v2 5×3 dup/run mean 6.0 — BELOW the 7.6 v2 5×1 gate reference (and below the v1 twin's 7.1). The 1080p pixel-area duplicate pressure flagged at migration did not worsen in the full batch; seed4 remains the dup hotspot (11.0/run vs cohort 6.0), as in every prior cohort.**
+- Secondary: precision mean v2 0.670 vs v1 0.614 (+0.056); FP/run 2.47 vs 2.93 (−0.46); collisions 0.73 vs 1.00. All small, same direction as the tile-gate attribution: v2 slightly safer/cleaner, not more effective.
+
+**Bottom line: with agent code held exactly matched (the pair exists to isolate the sim), sandbox v2.0.0's camera bump buys sighting mass (×1.81 FAK), slightly cleaner FP/precision/collisions, and a couple more completions, but ZERO detectable change in the mission metric that defines the leaderboard (found/6, Δ +0.07 with CI straddling zero), and the v2 par stays v1-human-derived pending the operator's human re-baseline. The earlier v12-v2 5×1 gate cohort (4.20/6, dup 7.6, prec 0.633 mean) sits inside this batch's run1s and replicates within noise in the 5×3 (4.53/6, dup 6.0, prec 0.670).**
+
+Result JSONs: `robot-sandbox/results/submissions/derpbot-explorer-v12-v2/easy_seed{1..5}_run{1..3}.json` (raw sources `robot-sandbox/results/office_easy_001_20261017T{175023,213422,213944,180801,215843,221659,182133,223535,183908,185656}Z.json` + `20261018T{132554,134356,135759,141547,143336}Z.json`). Sighting streams: gate run1s `results/streams/stream_easy_seed*_run1_20261017T15-16??Z.jsonl`, batch stream evidence `…_20261017T19/20??Z.jsonl` + `…_20261018T11-12??Z.jsonl` (FAK masses above from these records). Leaderboard: both entries verified in `robot-sandbox/docs/leaderboard.json` (v12-v2 @ v2.0.0 total_score mean 0.756±0.188; v10-assoc @ v1.0.3 0.744±0.153), n=15 each.
+
+---
+
 ## 2026-10-17 — t_ea3db560: tiled native-resolution inference (DERPBOT_TILED_INFERENCE=1) @1080p — 5×1 gate REJECT, mechanism reverted, agent-side inventory CLOSED (11/11)
 
 Par basis: **v1-human-derived** (easy par 6.00/6, v1 human teleop n=5/session) — v2 human re-baseline PENDING (operator); all tile-vs-baseline comparisons here are **within-version** (same sandbox v2.0.0 camera, both cohorts v12-det lineage on 1080p), which per the campaign binding takes precedence.
