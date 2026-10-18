@@ -25,20 +25,21 @@ results/recog_benchmark/
 
 | | |
 |---|---|
-| frames | **4817 of 15304 stored keyframes** — the retained frames have an in-tolerance pose pairing; **372 of them are zero-object frames** (327 corpus, 45 holdout) with only negative labels. `dataset_stats.json` reports both total frames (4817) and per-run object-bearing frames (`run_list[*].frames`) |
-| visible-GT instances | **8764** |
-| splits | corpus 4256 frames / 57 runs · holdout 523 frames / 5 runs · stress 38 frames / 2 runs |
-| GT source | v10-assoc / stream-corpus / v2holdout result JSONs (`ground_truth_objects`, all 8 renderable scenario classes; `mission_target` flag preserved); stress runs use `generated_gt/` (deterministic WorldGenerator replay, ≤0.0004 m vs in-sim SDF) |
-| pose pairing | sighting-stream pose at matched sim-time ±0.5 s, odom→world via spawn header (bake-off pipeline, 84 % bearing agreement) |
-| camera provenance | per-run stream-header `camera` block (v2: fx≈960 @ 1920×1080 from camera_info, 3112 frames incl. holdout+stress, `source=camera_info`) or the v1 640×480 pinhole constants (1705 frames, `source=v1_no_header`); bboxes/areas in the STORED keyframe resolution |
-| labels per class | fire_extinguisher 3494 · first_aid_kit 1880 · office_chair 908 · person 763 · drill 571 · drink_can 478 · trash_can 403 · suitcase 266 (exit_sign: 0 visible — SDF-posed at z = 1.25 m on the office door headers `wall_door_header_*`; the PGM wall-clearance LOS test blocks it from every reachable viewpoint, treated like the other unreachable env classes) |
+| frames | **4810 of 15130 stored keyframes** — the retained frames have an in-tolerance pose pairing; **365 of them are zero-object frames** (320 corpus, 45 holdout) with only negative labels. `dataset_stats.json` reports both total frames (4810) and per-run object-bearing frames (`run_list[*].frames`) |
+| visible-GT instances | **8800** |
+| splits | corpus 4249 frames / 57 runs · holdout 523 frames / 5 runs · stress 38 frames / 2 runs |
+| GT source | v10-assoc / stream-corpus / v2holdout result JSONs (`ground_truth_objects`, all 8 renderable scenario classes; `mission_target` flag preserved); stress runs use `generated_gt/` (deterministic WorldGenerator replay, ≤0.0004 m vs in-sim SDF). **Per-object yaw + exact spawn z** come from the deterministic WorldGenerator replay (`generated_gt_with_yaw/`, `scripts/replay_object_yaws.py`; GT coordinates re-verified ≤0.002 m on all 25 replayed runs + all 64 benchmark run keys) |
+| pose pairing | sighting-stream rows aggregated per timestamp (median rx/ry + circular-mean yaw when a batch carries multiple rows), nearest distinct timestamp within ±0.5 s, odom→world via spawn header (bake-off pipeline, 84 % bearing agreement). The stream rows at one timestamp can disagree on yaw (5954 multi-row timestamps / 91 streams, 7.9 % with >5° intra-t spread, worst 179° — review r2 item 2); the aggregated pose + the frame's intra-batch `yaw_spread` (rad, max deviation from the circular mean) are recorded per frame. 166 frames exceed a 5° spread and 34 exceed 15° (worst 34°) — treat `yaw_spread` as a per-frame label-confidence axis |
+| camera provenance | per-run stream-header `camera` block (v2 camera_info) or the v1 640×480 pinhole constants (`source=v1_no_header`), with fx/fy/cx/cy AND width/height **scaled to the stored JPEG resolution** plus `native_width`/`native_height`/`scale` (review r2 item 4). Stored-res census: 1869 frames true 1920×1080 (all holdout+stress + FULLRES probes), 1698 at 320×240 (v1 detector-input), 1243 at 320×180 (v2 legacy header-proof slice). The **corpus 1080p slice is 1869 − holdout/stress = 1308 frames**, not "3112/4256" — native-header frames downscaled to 320-wide storage carry a 320-res camera block |
+| labels per class | fire_extinguisher 3496 · first_aid_kit 1885 · office_chair 911 · person 782 · drill 581 · drink_can 479 · trash_can 403 · suitcase 263 (exit_sign: 0 visible — SDF-posed at z = 1.25 m on the office door headers `wall_door_header_*`; the PGM wall-clearance LOS test blocks it from every reachable viewpoint, treated like the other unreachable env classes) |
 | bins | range ≤1.5 / 1.5–3 / 3–6 m · area tiny(<100)/small(<1000)/large px² · clutter = per-frame instance count |
 | config | pose_tol 0.5 s · max_range 6.0 m · hfov 1.5708 rad · range_bins [1.5, 3.0] · area_bins [100, 1000] |
 
 Label-verification overlay: `scripts/verify_labels.py --frame <run>/<frame>`
 draws the projected GT bboxes onto the stored JPEG (spot-checked on v1 and v2
 FULLRES frames; residual ≈0.03 rad from the ±0.5 s pairing tolerance on a
-spinning robot).
+spinning robot — plus the per-frame recorded `yaw_spread` above for the
+multi-row tail).
 
 ### Instrument fix inside this dataset (frame-t parser)
 
@@ -68,9 +69,20 @@ Per-class box geometry was re-derived from the rendered model chain
 - verified: on the rebuilt labels, the box-bottom→floor-contact gap for
   unclipped person instances is median −7.6 px, p90 −1.3 px, and **0 % of
   instances sit >50 px above the floor-contact row** (was 47 % before the
-  fix). Overlay re-checks: `results/recog_benchmark/review_overlays_r2/`
+  fix). The exact metric derivation lives in the round-1 worker session
+  (jacket-mask floor-contact row fit — not committed as a script; the
+  overlay spot-checks below reproduce it visually). Overlay re-checks:
+  `results/recog_benchmark/review_overlays_r2/`
   (3 holdout person frames incl. seed10 f157 — the reviewer's original
   exhibit, plus seed9 f221/f430).
+- **review round 2, item 3 — yaw-dependent hull centres**: the model-frame
+  centre offsets are now ROTATED by the object's placement yaw
+  (`R(obj_yaw)·offset`) before projection. Placement yaws are recovered
+  offline via the WorldGenerator replay (no yaw lives in the GT JSONs;
+  `scripts/replay_object_yaws.py`, coordinate-verified ≤0.002 m on all 25
+  runs). Applying the person offset unrotated misplaced the hull 0.32–0.46 m
+  for 75 % of instances; the per-instance yaw is also recorded in the
+  manifest. `office_chair`/`drill` get the same (smaller-amplitude) fix.
 
 ### Known limitation — labels are occlusion-unaware
 
@@ -91,6 +103,7 @@ condition). No partial-LOS flag exists in the current manifest schema.
 .venv/bin/python scripts/eval_recog.py --model owlv2 [--split corpus|holdout|stress] \
     [--runs <run names>] [--classes fire_extinguisher ...] \
     [--conf-points 0.05 0.10 ...] [--fp-mode unmatched|gt_within_radius] \
+    [--fp-conf 0.15] \
     [--bar bakeoff --bar-baseline <baseline summary.json>] \
     [--out results/eval_recog/<name>]
 ```
@@ -111,7 +124,8 @@ FP-proxy — TWO configurable modes (`--fp-mode`):
 - `unmatched` (default, strict): detection matches no in-frame GT.
 - `gt_within_radius` (bake-off-compatible): detection whose same-class GT is
   not within 2 m of the camera, matched dets excluded — the definition behind
-  the bake-off's FP-proxy numbers. GT lookup covers all splits: v10-assoc /
+  the bake-off's FP-proxy numbers, evaluated at `--fp-conf` (default 0.15,
+  the bake-off operating point). GT lookup covers all splits: v10-assoc /
   stream-corpus / **v2holdout** result-JSON dirs + the benchmark's
   `generated_gt/` for the stress runs (reviewer round 1, item 5) — the
   lenient mode no longer silently degrades to strict on holdout/stress.
@@ -119,76 +133,104 @@ FP-proxy — TWO configurable modes (`--fp-mode`):
 Bar logic — `--bar bakeoff` re-evaluates the t_b4361707 swap bar in-harness:
 per conf ∈ {0.15, 0.30, 0.50}, FAK rate ≥ 1.5× the baseline's, min(FE,
 person) rate ≥ 1.0×, and FP-proxy/frame ≤ the baseline's (same `--fp-mode`
-both sides; baseline summary.json via `--bar-baseline`). Written to
+both sides; baseline summary.json via `--bar-baseline`). The FP-proxy
+threshold must match too — a baseline whose `fp_proxy_min_conf` differs from
+this run's `--fp-conf` is recorded as `fp_conf_mismatch: true` in
+`summary.json["bar"]` with a loud stdout warning (review r2 item 1: an
+FP@0.05-vs-FP@0.15 comparison is a ~3× handicap). Written to
 `summary.json["bar"]` + the README table. `--bar none` (default) skips it.
+
+Output protocol knobs, all recorded in `summary.json`: `fp_mode`,
+`fp_conf`, `conf_points`, `iou_gate`, `bearing_gate`, `frames`, plus per-class
+rate@each-conf / precision@0.15 / conf med/p90.
 
 Outputs: `summary.json` + `frame_records.jsonl` (per-frame dets, matches, FP,
 latency) + `README.md` table.
 
 ## Reproduction check (dataset validity)
 
-**One run per protocol, both from the rebuilt (frame-t-fixed) manifest — no
-mixed-protocol table this time (reviewer round 1, item 1).** Population
-statement: the rebuilt corpus pairing gate retains **1317 of the bake-off's
-1435 v1 frames** (118 frames lost — with correct fractional-second pairing
-they have no ±0.5 s pose match; they were only pairable via the staled pose).
-All numbers below are from single executed runs in `results/eval_recog/`.
+**One run per protocol, both executed on the post-r2-rebuild manifest (4810
+frames, yaw-rotated hulls, aggregated poses) — no mixed-protocol table
+(review r1 item1 / r2 item1).** The FP-proxy is computed at an explicit
+`--fp-conf` (default **0.15 = the bake-off's CONF_THRESHOLD**); summary + docs
+state it per row (review r2 item 1: comparing an FP@0.05 against a
+baseline's FP@0.15 is a ~3× handicap, and `--bar` now flags a baseline whose
+FP threshold differs).
 
-Mission-3 prompts (fire_extinguisher / first_aid_kit / person), full rebuilt
-corpus (4256 frames):
+Population statement: the rebuilt corpus pairing gate retains **1314 of the
+bake-off's 1435 v1 frames** (121 lost — with correct fractional-second pairing
+they have no ±0.5 s pose match; they were only pairable via the stale pose).
+The rebuilt label set is therefore NOT the bake-off's 1435-frame population:
+reproduction is evaluated on the **intersection (1314 frames)**, and the
+full-corpus numbers below are the single-run protocol artifact cited for the
+Phase-3 sweep.
 
-| run | fp-mode | FE | FAK | person | FP-proxy/frame | precision@0.15 (FE/FAK/person) |
-|---|---|---|---|---|---|---|
-| `r2_mission_strict` | unmatched | 0.8987 | 0.5212 | 0.8495 | 1.512 | 0.53 / 0.94 / 0.76 |
-| `r2_mission_bakedef` | gt_within_radius | 0.8987 | 0.5212 | 0.8495 | 0.966 | 0.53 / 0.94 / 0.76 |
+### Single-run protocol artifact — full rebuilt corpus, 3 mission prompts
+Run `results/eval_recog/r3_mission_bakedef` (owlv2, conf grid 0.05–0.50,
+`--fp-mode gt_within_radius --fp-conf 0.15`, 4249 frames):
 
-Restricted to the 1317-frame intersection with the bake-off population (same
-model, same prompts, same `gt_within_radius` FP definition):
+| metric | value |
+|---|---|
+| FE rate@0.15 | 0.9045 |
+| FAK rate@0.15 | 0.5220 |
+| person rate@0.15 | 0.8553 |
+| FP-proxy/frame @ conf ≥ 0.15 (gt_within_radius) | 0.3518 |
+| precision@0.15 (FE/FAK/person) | 0.534 / 0.947 / 0.781 |
 
-| metric | harness (rebuilt labels) | bake-off (stale-pose labels) |
-|---|---|---|
-| FE rate | 0.8979 | 0.8263 |
-| FAK rate | 0.6285 | 0.3186 |
-| person rate | 0.9403 | 0.7414 |
-| FP-proxy/frame | 0.8998 | 0.2711 |
+### Reproduction — same 1314-frame intersection, matched thresholds (conf ≥ 0.15)
 
-These DO NOT reproduce the bake-off numbers, and that is expected: the
-rebuild fixed the stale-pose instrument, and the bake-off's numbers were
-measured ON the stale instrument. Decomposition on the shared 1317 frames:
+| metric | harness (rebuilt labels) | bake-off (1435 frames, stale-pose labels) | Δ |
+|---|---|---|---|
+| FE rate@0.15 | 0.8678 | 0.8263 | +0.042 |
+| FAK rate@0.15 | 0.3785 | 0.3186 | +0.060 |
+| person rate@0.15 | 0.8603 | 0.7414 | +0.119 |
+| FP-proxy/frame @ 0.15 | 0.2953 | 0.2711 | +0.024 |
 
-- GT visibility sets differ on 611/1317 frames across all 9 classes (164 on
+At the bake-off's own operating point (conf ≥ 0.15, gt_within_radius FP) the
+harness reproduces the bake-off table within label-correction noise: +0.04 FE,
++0.06 FAK, +0.12 person, +0.02 FP/frame. The residual deltas are the label
+corrections, not a harness mismatch:
+
+- GT visibility sets differ on 611/1314 frames across all 9 classes (164 on
   the 3 mission classes): 167 old-label mission instances are REMOVED by the
   corrected pairing (visible-with-a-1-s-stale-pose but actually out of
   range/FOV — verified visually: the "first_aid_kit" at f_63.888 of
   seed1_run1_20261013T113817Z is a few-pixel smudge at ~6 m, not a 0.9 m-range
-  kit the stale label claimed), 17 are ADDED (in-tolerance now).
-- Person/FAK rate jumps are also amplified by the hull fixes above (the old
-  person hull sat 0.37 m too high, missing every lower body, and FAK hulls
-  sat 0.11 m too low).
+  kit the stale label claimed), 17 are ADDED (in-tolerance now). Removing
+  stale visible labels lowers n_gt where the old instrument over-labeled —
+  the measured DETECTION rate denominator shrinks and the rate rises.
+- Person/FAK rate deltas are amplified by the hull fixes (the old person hull
+  sat 0.37 m too high, missing every lower body, and FAK hulls sat 0.11 m too
+  low) — a corrected (larger, floor-contact hull) both matches MORE
+  detections and admits more GT instances.
 
-So the claim is NOT "reproduces the bake-off table" any more — **the bake-off
-table is a measurement of the stale-pairing instrument and is superseded by
-this corrected benchmark**. What IS validated:
+Historical note: the intermediate r2-era table printed "DOES NOT reproduce"
+with FAK 0.6285 vs 0.3186 — that comparison read the harness's conf ≥ 0.05
+row against the bake-off's conf ≥ 0.15 (threshold mismatch, review r2 item 1)
+and compared a different frame population. At matched thresholds the verdict
+is the near-reproduction above.
 
-1. **GT consistency**: on the 1317 shared frames, corrected labels keep the
-   mission-class set identical on 1153/1317 (87 %); every disagreement
+What IS validated:
+
+1. **GT consistency**: on the 1314 shared frames, corrected labels keep the
+   mission-class set identical on ~87 %; every disagreement
    inspected visually sided with the corrected label (overlay + frame
-   reading). Instance geometry is mesh/SDF-derived and renders true on
+   reading). NOTE (review r2 item 5): class-SET agreement is weak evidence —
+   item 2 of r2 shows the class set can be right while every box in the frame
+   is misregistered — the binding checks are the per-frame `yaw_spread`
+   metadata + overlay verification, not the set-overlap number.
+   Instance geometry is mesh/SDF/replay-derived and renders true on
    overlay spot-checks (v1 + v2 FULLRES).
 2. **Harness == bake-off protocol**: the harness reuses bakeoff_run.py's
-   pose→camera pipeline, prompts, matching fallback, and FP definition; the
-   identical-model sanity run `r2_mission_*` behaves like the bake-off's
-   other runs (same detector, latency family ~0.26-0.29 s/frame GPU).
-3. The old stale-numbers runs are kept for provenance
-   (`results/eval_recog/corpus_owlv2_repro*` — pre-rebuild, NOT comparable to
-   the current manifest; see their mtimes) but are superseded by `r2_mission_*`.
-
-Latency between runs is NOT comparable (shared GPU).
-
-Protocol differences vs the bake-off (both documented, both selectable): the
-harness matches IoU-first with the bearing fallback, sweeps an arbitrary conf
-grid from ONE low-threshold (0.02) inference per backend per frame, and its
-default FP mode is the stricter `unmatched`.
+   pose→camera pipeline, prompts, matching fallback, FP radius, and (via
+   `--fp-conf 0.15`) the bake-off's operating threshold; the
+   identical-model sanity run `r3_mission_bakedef` behaves like the bake-off's
+   other runs (same detector, latency ~0.26 s/frame GPU).
+3. Earlier runs are kept for provenance with their protocol knobs recorded:
+   `r2_mission_strict`/`r2_mission_bakedef` (pre-r3 manifest, FP-proxy
+   implicitly at conf ≥ 0.05 — fp_conf absent from their summaries means
+   "min(conf_points)"; superseded), `corpus_owlv2_repro*` (pre-frame-t-fix,
+   NOT comparable to any current manifest).
 
 ## Zero-gate check
 

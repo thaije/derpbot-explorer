@@ -11,10 +11,10 @@ Per model × class it reports:
   - rate@conf 0.15/0.30/0.50, precision@0.15,
   - FP-proxy/frame (detection with no matchable same-class GT in frame),
   - latency/frame.
-Matching = per-frame class-wise IoU (detection↔GT instance, IoU ≥ MATCH_IOU,
-Hungarian assignment), plus a bearing fallback identical to bakeoff_run.py
-(|Δbearing| ≤ MATCH_BEARING_RAD) for sub-pixel-ish objects. Bar logic
-(detection@conf, FP cap, class mix) is configurable via --bar.
+Matching = per-frame class-wise greedy IoU matching (greedy first-fit on
+detection↔GT instance, IoU ≥ MATCH_IOU), plus a bearing fallback identical to
+bakeoff_run.py (|Δbearing| ≤ MATCH_BEARING_RAD) for sub-pixel-ish objects.
+Bar logic (detection@conf, FP cap, class mix) is configurable via --bar.
 
 Backends live in scripts/detector_backends_owlv2-style modules or are selected
 by --model {owlv2,yolo_world_s,gdino_tiny} (same weights as the live pipeline).
@@ -292,6 +292,11 @@ def main() -> int:
                     choices=["unmatched", "gt_within_radius"],
                     help="FP-proxy definition (default: unmatched; "
                          "gt_within_radius = bake-off-compatible)")
+    ap.add_argument("--fp-conf", type=float, default=0.15,
+                    help="confidence threshold for the FP-proxy (default "
+                         "0.15 = the bake-off operating point; review r2 "
+                         "item 1 — the FP-proxy conf must match the "
+                         "baseline's when compared via --bar)")
     ap.add_argument("--gt-json-dir", default=None,
                     help="dir of per-run result JSONs (for gt_within_radius "
                          "FP mode; default auto-locate)")
@@ -332,7 +337,7 @@ def main() -> int:
                    "confs": [], "fp15": 0}
                for c in classes}
     fp_at_min = 0
-    min_conf = sorted(conf_points)[0]
+    fp_conf = args.fp_conf
     lat, n_frames = [], 0
     out_path = Path(args.out) if args.out else (
         EXPLORER_ROOT / "results" / "eval_recog" /
@@ -410,17 +415,21 @@ def main() -> int:
             pairs_lo = match_frame(dets_all, gts, W, H, args.iou, args.bearing)
             for di, _, _ in pairs_lo:
                 s["confs"].append(round(dets_all[di]["conf"], 4))
-        # FP proxy at the min conf point. Two modes (--fp-mode):
+        # FP proxy at --fp-conf (default 0.15 = the bake-off operating point).
+        # Two modes (--fp-mode):
         #   unmatched        — det matches no in-frame GT instance (strict);
         #   gt_within_radius — bake-off-compatible: det whose class has NO GT
         #                      instance within FP_RADIUS_M of the camera
         #                      (lenient: in-frame-but-unmatched dets near a
         #                      same-class GT don't count).
+        # NOTE the FP conf is NOT tied to conf_points: an FP proxy read at
+        # conf ≥ 0.05 vs a baseline computed at 0.15 is a ~3× handicap
+        # (review r2 item 1) — --bar rejects mismatched thresholds.
         fp_frame = 0
         matched_pairs = {}
         for c, dets_c in det_by_cls.items():
             gts = gt_by_cls.get(c, [])
-            d_keep = sorted((d for d in dets_c if d["conf"] >= min_conf),
+            d_keep = sorted((d for d in dets_c if d["conf"] >= fp_conf),
                             key=lambda d: -d["conf"])
             pairs = match_frame(d_keep, gts, W, H, args.iou, args.bearing)
             matched_idx = {di for di, _, _ in pairs}
@@ -453,7 +462,7 @@ def main() -> int:
     summary = {"model": backend.name, "split": args.split or "all",
                "frames": n_frames,
                "iou_gate": args.iou, "bearing_gate": args.bearing,
-               "fp_mode": args.fp_mode,
+               "fp_mode": args.fp_mode, "fp_conf": fp_conf,
                "conf_points": conf_points, "classes": {}}
     for c in classes:
         s = per_cls[c]
@@ -473,7 +482,7 @@ def main() -> int:
         summary["classes"][c] = cls_sum
     summary["_global"] = {
         "fp_proxy_per_frame": round(fp_at_min / max(1, n_frames), 4),
-        "fp_proxy_min_conf": min_conf,
+        "fp_proxy_min_conf": fp_conf,
         "lat_ms_median": sorted(lat)[len(lat) // 2] if lat else None,
         "lat_ms_p90": sorted(lat)[int(0.9 * (len(lat) - 1))] if lat else None,
     }
@@ -495,12 +504,26 @@ def main() -> int:
             return ((m.get("classes") or {}).get(c) or {}).get(f"rate@{conf:.2f}")
 
         b_fp = ((base.get("_global") or {}).get("fp_proxy_per_frame"))
+        b_fp_conf = (base.get("_global") or {}).get(
+            "fp_proxy_min_conf", (base.get("_global") or {}).get("fp_conf"))
+        # review r2 item 1: an FP-proxy compared at different confidence
+        # thresholds is unsound (FP@0.05 vs FP@0.15 is a ~3× handicap) —
+        # record and FLAG the mismatch rather than silently fail.
+        fp_conf_mismatch = (b_fp_conf is not None
+                            and abs(float(b_fp_conf) - fp_conf) > 1e-9)
         bar_eval = {
             "preset": "bakeoff",
             "baseline_run": str(args.bar_baseline),
             "same_fp_mode": base.get("fp_mode") == args.fp_mode,
+            "fp_conf": fp_conf,
+            "baseline_fp_conf": b_fp_conf,
+            "fp_conf_mismatch": bool(fp_conf_mismatch),
             "per_conf": {},
         }
+        if fp_conf_mismatch:
+            print(f"WARNING --bar bakeoff: baseline FP-proxy computed at conf "
+                  f">= {b_fp_conf} but this run used --fp-conf {fp_conf}; the "
+                  f"FP comparison is UNSOUND (re-run with matching --fp-conf).")
         checks = []
         for conf in RATE_CONFS:
             fak = rate(summary, "first_aid_kit", conf)
@@ -535,7 +558,7 @@ def main() -> int:
     md = [f"# eval_recog — {backend.name} on `{args.split or 'all'}`",
           "",
           f"frames {n_frames}, matching IoU ≥ {args.iou} (bearing ≤ {args.bearing} rad fallback), "
-          f"FP-proxy @ conf ≥ {min_conf} ({args.fp_mode})",
+          f"FP-proxy @ conf ≥ {fp_conf} ({args.fp_mode})",
           "",
           "| class | n_gt | " + " | ".join(f"rate@{c:.2f}" for c in conf_points) +
           " | precision@0.15 | conf med |",
@@ -549,7 +572,7 @@ def main() -> int:
                   f" | {prec if prec is not None else '—'} | {s['conf_med']} |")
     g = summary["_global"]
     md += ["", f"FP-proxy/frame: **{g['fp_proxy_per_frame']}** ({args.fp_mode}, "
-               f"conf ≥ {min_conf}); latency med "
+               f"conf ≥ {fp_conf}); latency med "
                f"{g['lat_ms_median']} ms (p90 {g['lat_ms_p90']})", ""]
     if "bar" in summary:
         b = summary["bar"]
