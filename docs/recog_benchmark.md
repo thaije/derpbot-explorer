@@ -30,7 +30,7 @@ results/recog_benchmark/
 | visible-GT instances | **8473** |
 | splits | corpus 4081 frames / 57 runs · holdout 514 frames / 5 runs · stress 38 frames / 2 runs |
 | GT source | v10-assoc / stream-corpus / v2holdout result JSONs (`ground_truth_objects`, all 8 renderable scenario classes; `mission_target` flag preserved); stress runs use `generated_gt/` (deterministic WorldGenerator replay, ≤0.0004 m vs in-sim SDF). **Per-object yaw + exact spawn z** come from the deterministic WorldGenerator replay (`generated_gt_with_yaw/`, `scripts/replay_object_yaws.py`; GT coordinates re-verified ≤0.002 m on all 25 replayed runs + all 64 benchmark run keys) |
-| pose pairing | sighting-stream rows aggregated per timestamp (median rx/ry + circular-mean yaw when a batch carries multiple rows), then reduced to FRESH distinct pose samples (carried-over duplicates from sighting batches without odometry ticks are DROPPED — 2459/20518 stream timestamps across 93 streams re-emit the previous pose byte-identical); the frame pose is INTERPOLATED between the bracketing fresh samples (span ≤ 1 s, yaw lerped after unwrapping; 1539/4633 frames interpolated), nearest fresh sample otherwise, always within ±0.5 s; odom→world via spawn header (bake-off pipeline) |
+| pose pairing | sighting-stream rows aggregated per timestamp (median rx/ry + circular-mean yaw when a batch carries multiple rows), then reduced to FRESH distinct pose samples (carried-over duplicates from sighting batches without odometry ticks are DROPPED — 2459/20518 stream timestamps across 93 streams re-emit the previous pose byte-identical); the frame pose is INTERPOLATED between the bracketing fresh samples (span ≤ 1 s, yaw lerped after unwrapping; 1537/4633 frames interpolated), nearest fresh sample otherwise, always within ±0.5 s; odom→world via spawn header (bake-off pipeline) |
 | camera provenance | per-run stream-header `camera` block (v2 camera_info) or the v1 640×480 pinhole constants (`source=v1_no_header`), with fx/fy/cx/cy AND width/height **scaled to the stored JPEG resolution** plus `native_width`/`native_height`/`scale`. Stored-res census: 1822 frames true 1920×1080 (all holdout+stress + corpus FULLRES probes), 1588 at 320×240 (v1 detector-input), 1223 at 320×180 (v2 legacy header-proof slice) — the **corpus 1080p slice is 1270 frames** |
 | labels per class | fire_extinguisher 3350 · first_aid_kit 1810 · office_chair 884 · person 753 · drill 562 · drink_can 461 · trash_can 394 · suitcase 259 (exit_sign: 0 visible — SDF-posed at z = 1.25 m beside the office door headers; the PGM wall-clearance LOS test blocks it from every reachable viewpoint, treated like the other unreachable env classes) |
 | bins | range ≤1.5 / 1.5–3 / 3–6 m · area tiny(<100)/small(<1000)/large px² · clutter = per-frame instance count |
@@ -55,51 +55,90 @@ pose (xy lerped; yaw lerped on the closest unwrapped branch; r2-requested
 remedy). Interpolation is span-capped at `--interp-max-span 1.0` — wider
 in-tol brackets fall back to the nearer flank; the pose is never derived from
 an observation older than ±0.5 s. Effect on the corpus: 1500/4626 common
-frames changed pose, 1539/4633 frames are interpolated, 184 frames (3.8 %,
+frames changed pose, 1537/4633 frames are interpolated, 184 frames (3.8 %,
 previously paired ONLY via a stale carried-over pose) are DROPPED — including
 the review's `f_713.312` exhibit — and 7 frames gained a pose that previously
 had none. Every frame records `pose_interpolated`, `pose_src_t` (the source
 sample times), and `pose_samples_fresh` for auditability.
 
 **Measured residual tail (image-grounded, `scripts/measure_person_tail.py`,
-committed; data in `person_tail_measure.json`/`person_tail_summary.json`).**
-On hi-vis jacket HSV-blob containment, 251 unclipped person frames
-(box AND mask ≥3 px from every border, ≥150 jacket px):
+committed — it regenerates ALL FOUR artifact files:
+`person_tail_measure.json`/`person_tail_summary.json` and
+`fe_tail_measure.json`/`fe_tail_summary.json` from the delivered manifest).**
+Two classes are measured: the person (deformable appearance — hi-vis jacket
+HSV blob) AND a RIGID class (fire_extinguisher red blob, review r4 item 1b),
+so the cause list below covers registration effects, not just hull limits.
 
-- jacket-pixel containment: median 1.000, mean 0.965; **7 frames below 0.5**,
-  4 of those at ≤0.05 (one holdout: seed10 f_711.504);
-- box-centre → blob-centre lateral offset at the person's range
-  (|Δbearing|·range): median 0.22 m, p90 0.52 m, p95 0.67 m, max 1.65 m;
-  95/251 frames exceed 0.3 m, 32 exceed 0.5 m;
-- rendered exhibits from the DELIVERED manifest:
-  `results/recog_benchmark/review_overlays_r4_seed10_f711.png` (person
-  reclining; box covers torso+legs, boot pokes out right — correct
-  registration, hull limitation) and
-  `review_overlays_r4_seed2_f244.png` (settled/reclining person, box extends
-  past the resting body).
+Person (251 unclipped person frames; box AND mask ≥3 px from every border,
+≥150 jacket px):
 
-**The two remaining tail causes, stated as limitations:**
+- jacket-pixel containment: median 1.000, mean 0.9654; **7 frames below 0.5**
+  (one of the 7 is holdout: seed10 f_711.504 at 0.274); the 4 frames at
+  ≤0.05 are ALL CORPUS (f_244.600, f_203.344, f_246.240, f_131.120);
+- box-centre → jacket-centre lateral offset at the person's range
+  (off_m = |err|·range, err = Δbearing between the centres in rad, ONE
+  definition everywhere): median 0.222 m, p90 0.523 m, p95 0.665 m,
+  max 1.648 m; 95/251 exceed 0.3 m, 32 exceed 0.5 m.
+
+Fire extinguisher (rigid-class probe: 716 near-range ≤2.5 m unclipped FE
+boxes ≥30 px wide; in-box = a red blob centroid area ≥40 px inside the box):
+
+- 572/716 boxes contain their blob (median |Δbearing| to the blob centre
+  0.028 rad — the body of the dataset registers well on a rigid class);
+- **144 boxes contain no red blob at all** (109 corpus / 35 holdout): the
+  rigid-class label-off-object tail, median |Δbearing| ≈ 0.10–0.11 rad,
+  p90 0.16 (holdout) – 0.29 (corpus), worst 0.69 rad.
+
+Rendered exhibits from the DELIVERED manifest (verify_labels.py renders):
+
+- `results/recog_benchmark/review_overlays_r5_seed10_f712.png`
+  (seed10 f_712.792) — the registration-correct exhibit, WITH the rigid-class
+  check shown: both FE boxes wrap their extinguishers (blob-vs-box-centre
+  |Δbearing| 0.004 / 0.005 rad), the person box contains the full jacket+
+  torso+legs (containment 1.000), the office_chair box wraps the chair and
+  the FAK box wraps the white-cross kit. This is the frame to eyeball for
+  "labels land on objects".
+- `results/recog_benchmark/review_overlays_r4_seed2_f244.png` (settled/
+  reclining person — a HULL-limited frame, NOT offered as
+  registration-correct; see the cause list).
+
+**The remaining tail causes, stated as limitations:**
 
 1. **Reclining/settled person exceeds the standing-hull geometry** (review r3
    item 1d): the person mesh is a sitting/stationary character; when it
    settles or reclines the body mass shifts up to ~1 body width outside the
    mesh-derived hull, even with perfectly registered camera pose. The worst
-   frames (f_203.344, f_131.120, f_244.600) are all reclining/settled poses;
-   several have an EXACT pose (fresh sample at the frame's own timestamp,
-   spread 0) — pose staleness is NOT the cause there.
+   person frames (f_203.344, f_244.600, f_131.120) are all reclining/settled
+   poses where a rigid class in the SAME frame aligns — pose staleness is NOT
+   the cause there. (A person frame with a hull-limited box is EXHIBIT
+   f_244.600: box over-covers past the resting body.)
 2. **Keyframe-vs-sighting micro-latency on a spinning robot**: the stream may
    carry one fresh sample exactly at the frame's t while the NEXT sample
    (0.1 s later) shows a 10°+ jump — the pixels were captured sometime inside
-   that window (e.g. seed5 f_203.344: rows 157.8°@t, 169.0°@t+0.11 s;
-   measured residual up to ~0.2 rad ≈ the inter-sample jump). Bounded by the
-   bracketing span; not visible to `yaw_spread` (intra-t only).
+   that window. Bounded by the bracketing span; not visible to `yaw_spread`
+   (intra-t only). This CAN displace every class in a frame together.
+3. **Frame-level residual registration** (both classes, review r4 item 1):
+   25 of the 251 unclipped person frames have |Δbearing| > 0.20 rad and the
+   FE tail shows the same
+   shape (144 zero boxes; in 3 frames BOTH visible FEs are off, in 10 mixed
+   frames the off-box FEs point the same way — frame-level displacement, not
+   per-object noise). Residual causes: sub-grid keyframe↔sighting latency
+   (cause 2), the yaw-rate inside the ±0.5 s pairing window on a spinning
+   robot, and interpolation across a 1 s bracket. The measured tail above —
+   NOT `yaw_spread`, which is intra-batch only — is the honest number.
+4. **Carried-object GT displacement** (object-level, not pose-level): a
+   sighting's associated GT xy can sit ~0.2–0.6 m off the object when the
+   association carried an adjacent instance (e.g. seed10 f_154.104: the FE
+   label is ~0.2 rad left of the extinguisher at 1.11 m range while the
+   chair/person labels in the SAME frame align). These are single-object
+   label errors inside an otherwise-registered frame.
 
 `yaw_spread` REMAINS usable only as the intra-batch disagreement axis (173
 frames >5°, 41 >15°, worst 170° on the current manifest); it CANNOT detect
 stale nearest-row poses any more — those frames no longer exist in the
-dataset — and it cannot see either residual cause above. Use
-`pose_interpolated`/`pose_src_t` + the measured tail above when weighting
-per-frame label confidence.
+dataset — and it cannot see causes 1–4 above. Weight per-frame label
+confidence with `pose_interpolated`/`pose_src_t` + the measured person/FE
+tails.
 
 ### Instrument fix inside this dataset (frame-t parser)
 
