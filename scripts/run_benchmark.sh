@@ -214,6 +214,9 @@ for DIFF in $DIFFICULTIES; do
             # It returns once the agent signals ready (~30-60 wall-s).
             # t_96cab082: export the run identifier so the sighting-stream
             # recorder gets per-run naming (stream_…_seedNrunM_<stamp>.jsonl).
+            # t_b0b71441: DERPBOT_KEYFRAME_FULLRES passes through (exported
+            # in the caller's env when set) so instrument runs can record
+            # detector-input-resolution keyframes.
             if ! DERPBOT_STREAM_RUN="run${RUN}" "$SCRIPT_DIR/start_stack.sh" \
                     --scenario "$SCENARIO" \
                     --seed "$SEED" \
