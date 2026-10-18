@@ -65,7 +65,7 @@ def main() -> int:
         cv2.putText(img, f'{o["cls"]} {o["range"]:.1f}m', (int(x1), max(12, int(y1) - 4)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.4, c, 1, cv2.LINE_AA)
         print(f'{o["cls"]:18s} key={o["key"]} range={o["range"]:.2f} '
-              f'bbox=({x1:.0f},{y1:.0f},{x2:.0f},{y2:.0f}) occluded={o["occluded"]}')
+              f'bbox=({x1:.0f},{y1:.0f},{x2:.0f},{y2:.0f})')
     cv2.imwrite(args.out, img)
     print(f"-> {args.out}  (frame_id={needle}, H×W={img.shape[0]}×{img.shape[1]})")
     return 0

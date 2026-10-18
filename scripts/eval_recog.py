@@ -45,10 +45,24 @@ MATCH_BEARING_RAD = 0.20         # fallback (bakeoff rule): |Δbearing| ≤ 0.20
 FP_RADIUS_M = 2.0                # gt_within_radius FP mode (bakeoff rule)
 CONF_POINTS = (0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50)
 RATE_CONFS = (0.15, 0.30, 0.50)
+# gt_within_radius FP mode: per-run full GT result JSONs. v10-assoc covers the
+# v1 corpus runs (seeds 1–5); v2holdout covers the Phase-2 holdout runs (seeds
+# 6–10); stream-corpus covers the probe runs. Non-easy runs (perception_*
+# stress) have no result JSONs — their GT lives in the benchmark's generated_gt
+# dir (deterministic WorldGenerator replay, ≤0.0004 m vs in-sim SDF).
 GT_DIRS = [
     Path("/home/plip/Projects/robot-sandbox/results/submissions/derpbot-explorer-v10-assoc"),
     Path("/home/plip/Projects/robot-sandbox/results/submissions/derpbot-explorer-stream-corpus"),
+    Path("/home/plip/Projects/robot-sandbox/results/submissions/derpbot-explorer-v2holdout"),
 ]
+# bar presets (--bar): name → (conf, rate floor, FP-proxy cap). The swap bar of
+# t_b4361707 is 'bakeoff'; 'none' disables bar evaluation entirely.
+BAR_PRESETS = {
+    "bakeoff": {"confs": RATE_CONFS, "min_rate_fak": 1.5,   # × baseline FAK
+                "min_rate_other": 1.0, "max_fp_ratio": 1.0,
+                "baseline": None},   # baseline rates read from comparison JSON
+    "none": None,
+}
 
 
 def run_key_seed(run_key: str):
@@ -281,6 +295,14 @@ def main() -> int:
     ap.add_argument("--gt-json-dir", default=None,
                     help="dir of per-run result JSONs (for gt_within_radius "
                          "FP mode; default auto-locate)")
+    ap.add_argument("--bar", default="none",
+                    choices=sorted(BAR_PRESETS),
+                    help="bar preset for pass/fail evaluation (default "
+                         "'none'); 'bakeoff' = t_b4361707 swap bar, needs "
+                         "--bar-baseline summary.json")
+    ap.add_argument("--bar-baseline", default=None,
+                    help="summary.json of the baseline run the bar compares "
+                         "against (required with --bar bakeoff)")
     args = ap.parse_args()
 
     import cv2
@@ -307,7 +329,7 @@ def main() -> int:
 
     conf_points = sorted(args.conf_points)
     per_cls = {c: {"tp": {conf: 0 for conf in conf_points}, "n_gt": 0,
-                   "confs": []}
+                   "confs": [], "fp15": 0}
                for c in classes}
     fp_at_min = 0
     min_conf = sorted(conf_points)[0]
@@ -319,7 +341,9 @@ def main() -> int:
     fh = open(out_path / "frame_records.jsonl", "w")
 
     # per-run full GT (all classes) for the gt_within_radius FP mode — from
-    # the same result JSONs the builder used (seed/run indexed)
+    # the same result JSONs the builder used (seed/run indexed). Non-easy
+    # runs fall back to the benchmark's generated_gt dir.
+    generated_gt_dir = (EXPLORER_ROOT / args.manifest).parent / "generated_gt"
     gt_all_cache = {}
     gt_dirs = ([Path(args.gt_json_dir)] if args.gt_json_dir else GT_DIRS)
 
@@ -329,7 +353,13 @@ def main() -> int:
         m_s = run_key_seed(run)
         m_r = run_key_run(run)
         out = {}
-        if m_s is not None and m_r is not None:
+        if "perception_stress" in run:
+            p = generated_gt_dir / f"{run}.json"
+            if p.exists():
+                out = defaultdict(list)
+                for v in json.load(open(p)).values():
+                    out[v["type"]].append({"x": v["x"], "y": v["y"]})
+        elif m_s is not None and m_r is not None:
             for d in gt_dirs:
                 p = d / f"easy_seed{m_s}_run{m_r}.json"
                 if p.exists():
@@ -373,6 +403,8 @@ def main() -> int:
                     key=lambda d: -d["conf"])
                 pairs = match_frame(dets_keep, gts, W, H, args.iou, args.bearing)
                 s["tp"][conf] += len(pairs)
+                if conf == 0.15:
+                    s["fp15"] += max(0, len(dets_keep) - len(pairs))
             # matched-conf distribution at the loosest threshold
             dets_all = sorted(det_by_cls.get(c, []), key=lambda d: -d["conf"])
             pairs_lo = match_frame(dets_all, gts, W, H, args.iou, args.bearing)
@@ -429,6 +461,9 @@ def main() -> int:
         for conf in conf_points:
             cls_sum[f"rate@{conf:.2f}"] = round(s["tp"][conf] / s["n_gt"], 4) \
                 if s["n_gt"] else None
+        tp15 = s["tp"].get(0.15, 0)
+        cls_sum["precision@0.15"] = round(tp15 / (tp15 + s["fp15"]), 4) \
+            if (tp15 + s["fp15"]) else None
         confs = sorted(s["confs"])
         if confs:
             cls_sum["conf_med"] = confs[len(confs) // 2]
@@ -442,27 +477,89 @@ def main() -> int:
         "lat_ms_median": sorted(lat)[len(lat) // 2] if lat else None,
         "lat_ms_p90": sorted(lat)[int(0.9 * (len(lat) - 1))] if lat else None,
     }
+
+    # ── Bar evaluation (--bar; default none) ─────────────────────────────────
+    # 'bakeoff' = the t_b4361707 swap bar pre-registered there: candidate vs
+    # baseline (its summary.json via --bar-baseline) at confs 0.15/0.30/0.50:
+    #   FAK rate ≥ 1.5× baseline AND (FE+person) rate ≥ 1.0× baseline AND
+    #   FP-proxy/frame ≤ baseline × 1.0.
+    if args.bar == "bakeoff":
+        if not args.bar_baseline:
+            print("--bar bakeoff requires --bar-baseline (baseline summary.json)")
+            return 1
+        base = json.loads(Path(args.bar_baseline).read_text())
+        bc = (base.get("classes") or {})
+        g = summary["_global"]
+
+        def rate(m, c, conf):
+            return ((m.get("classes") or {}).get(c) or {}).get(f"rate@{conf:.2f}")
+
+        b_fp = ((base.get("_global") or {}).get("fp_proxy_per_frame"))
+        bar_eval = {
+            "preset": "bakeoff",
+            "baseline_run": str(args.bar_baseline),
+            "same_fp_mode": base.get("fp_mode") == args.fp_mode,
+            "per_conf": {},
+        }
+        checks = []
+        for conf in RATE_CONFS:
+            fak = rate(summary, "first_aid_kit", conf)
+            fak_b = rate(base, "first_aid_kit", conf)
+            fe = min(rate(summary, "fire_extinguisher", conf) or 0,
+                     rate(summary, "person", conf) or 0)
+            fe_b = min(rate(base, "fire_extinguisher", conf) or 0,
+                       rate(base, "person", conf) or 0)
+            fp = summary["_global"]["fp_proxy_per_frame"]
+            row = {
+                "fak": fak, "fak_baseline": fak_b,
+                "fak_ratio": round(fak / fak_b, 3) if fak and fak_b else None,
+                "min_fe_person": fe, "min_fe_person_baseline": fe_b,
+                "fp_proxy": fp, "fp_proxy_baseline": b_fp,
+            }
+            ok = (
+                fak is not None and fak_b and fak >= 1.5 * fak_b
+                and fe >= 1.0 * fe_b
+                and b_fp is not None and fp <= b_fp
+            )
+            row["pass"] = bool(ok)
+            checks.append(row)
+            bar_eval["per_conf"][f"{conf:.2f}"] = row
+        bar_eval["pass_any_conf"] = any(r["pass"] for r in checks)
+        summary["bar"] = bar_eval
+    elif args.bar != "none":
+        summary["bar"] = {"preset": args.bar, "note": "preset stub — no rules"}
+
     (out_path / "summary.json").write_text(json.dumps(summary, indent=2))
 
     # markdown table
     md = [f"# eval_recog — {backend.name} on `{args.split or 'all'}`",
           "",
           f"frames {n_frames}, matching IoU ≥ {args.iou} (bearing ≤ {args.bearing} rad fallback), "
-          f"FP-proxy @ conf ≥ {min_conf}",
+          f"FP-proxy @ conf ≥ {min_conf} ({args.fp_mode})",
           "",
           "| class | n_gt | " + " | ".join(f"rate@{c:.2f}" for c in conf_points) +
-          " | conf med |",
-          "|---|" + "---|" * (2 + len(conf_points) + 1)]
+          " | precision@0.15 | conf med |",
+          "|---|" + "---|" * (2 + len(conf_points) + 2)]
     for c in classes:
         s = summary["classes"][c]
         cells = [f"{s[f'rate@{cf:.2f}']}" if s[f"rate@{cf:.2f}"] is not None
                  else "—" for cf in conf_points]
+        prec = s["precision@0.15"]
         md.append(f"| {c} | {s['n_gt']} | " + " | ".join(cells) +
-                  f" | {s['conf_med']} |")
+                  f" | {prec if prec is not None else '—'} | {s['conf_med']} |")
     g = summary["_global"]
-    md += ["", f"FP-proxy/frame: **{g['fp_proxy_per_frame']}** "
-               f"(conf ≥ {min_conf}); latency med "
+    md += ["", f"FP-proxy/frame: **{g['fp_proxy_per_frame']}** ({args.fp_mode}, "
+               f"conf ≥ {min_conf}); latency med "
                f"{g['lat_ms_median']} ms (p90 {g['lat_ms_p90']})", ""]
+    if "bar" in summary:
+        b = summary["bar"]
+        md += [f"## bar: {b['preset']} — {'PASS' if b.get('pass_any_conf') else 'FAIL'}", ""]
+        for conf, row in b.get("per_conf", {}).items():
+            md.append(f"- conf {conf}: FAK {row['fak']} vs base {row['fak_baseline']} "
+                      f"(×{row['fak_ratio']}); min(FE,person) {row['min_fe_person']} "
+                      f"vs {row['min_fe_person_baseline']}; FP {row['fp_proxy']} "
+                      f"vs {row['fp_proxy_baseline']} → {'PASS' if row['pass'] else 'FAIL'}")
+        md.append("")
     (out_path / "README.md").write_text("\n".join(md))
     print(json.dumps(summary, indent=2))
     return 0

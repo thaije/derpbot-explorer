@@ -13,9 +13,12 @@ Per keyframe (results/streams/frames/<run>/f_<t>.jpg):
     wall-clear on the GT PGM (bresenham, 0.5 m/cell), range ≤ MAX_RANGE_M;
   - project each visible GT instance to a PIXEL BBOX via the per-run pinhole
     camera (class-size aware: per-class world-space (cx,cy,cz)+half-extents).
-  - metadata per instance: range bin, px-area bin, occluded flag (LOS partial
-    → the *wall-clear* LOS passes but furniture occlusion is unknown, so the
-    flag here marks PGM-ambiguous boundary cases), clutter = #visible GT.
+  - metadata per instance: range bin, px-area bin, clutter = #visible GT.
+    NOTE: labels are OCCLUSION-UNAWARE (see docs/recog_benchmark.md): the LOS
+    ray-cast clears Walls on the 0.5 m/cell GT PGM only — an instance hidden
+    behind furniture (chairs, cabinets, desks are not in the PGM) still counts
+    as visible. The old per-instance "occluded" field was a hardcoded False
+    stub and was REMOVED in this revision (review round 1, item 3).
   - manifest JSONL + split files (corpus / holdout / stress) + stats.
 
 Splits:
@@ -74,17 +77,28 @@ MIN_RANGE_M = 0.4
 # (only drink_can uses surface=desk, spawn z 0.74 — flagged per instance).
 CLASS_GEO = {
     "fire_extinguisher": (0.0, 0.0, 0.191, 0.075, 0.042, 0.189),
-    "first_aid_kit":     (0.0, 0.0, 0.110, 0.150, 0.060, 0.110),
-    "person":            (0.0, 0.0, 0.983, 0.374, 0.509, 0.365),
+    "first_aid_kit":     (0.0, 0.0, 0.220, 0.150, 0.060, 0.110),
+    "person":            (-0.0993, -0.2052, 0.3618, 0.5092, 0.5092, 0.3618),
     "trash_can":         (0.0, 0.0, 0.368, 0.283, 0.319, 0.368),
-    "office_chair":      (0.0, 0.0, 0.548, 0.448, 0.432, 0.548),
+    "office_chair":      (-0.037, 0.001, 0.548, 0.448, 0.448, 0.548),
     "drink_can":         (0.0, 0.0, 0.072, 0.030, 0.030, 0.072),
-    "drill":             (0.0, 0.0, 0.127, 0.038, 0.111, 0.127),
-    "suitcase":          (0.0, 0.0, 0.065, 0.095, 0.029, 0.069),
+    "drill":             (0.0, 0.030, 0.127, 0.111, 0.111, 0.127),
+    "suitcase":          (0.0, 0.0, 0.0005, 0.0715, 0.029, 0.0695),
     "exit_sign":         (0.0, 0.0, 0.116, 0.150, 0.029, 0.116),
 }
-# spawn-z offsets for classes placed on furniture surfaces in the scenario yamls
-SPAWN_Z = {"drink_can": 0.74}
+# Yaw note (review round 1): the placer assigns model yaws ∈ {0, π/2, π, 3π/2}
+# (object_placer.py) and the GT JSONs carry no yaw, so the per-axis half-extents
+# above are the MAX over the mesh's x/y axes for the asymmetric classes (person,
+# office_chair, drill) — a yaw-invariant hull that slightly over-covers for
+# yaw = 0/π/2; preferred over under-covering labels.
+# Person z: rendered truth = world z span [0, 0.7235] (floor contact → head
+# top; the SDF link z −0.624 exactly cancels the sitting mesh's internal
+# 0.62 m head-origin offset, so the *model-frame* z span is the rendered span).
+# spawn-z offsets: classes placed on furniture / fixtures in the scenario yamls
+# + the model.sdf link-level z offsets folded into cz above (FAK link 0.11,
+# person link −0.624 + mm-mesh unit scale). exit_sign is model-posed at 1.25 m
+# on the office door headers (office_easy_001.sdf).
+SPAWN_Z = {"drink_can": 0.74, "exit_sign": 1.25}
 GT_CLASSES = tuple(CLASS_GEO)
 
 # ── Prompts per class (live-pipeline underscore→space convention) ────────────
@@ -249,11 +263,14 @@ def project_bbox(cx, cy, cz_cam, yaw_w, x, y, z_spawn, geo, W, H,
                  fx, fy, cx0, cy0):
     """World-space object AABB → pixel bbox.
 
-    Projects the 8 corners of the object's axis-aligned world box (center
-    (x, y, z_spawn + cz), half-extents geo) and takes the pixel hull.
-    Returns (x1, y1, x2, y2) or None when fully outside the FOV.
+    Projects the 8 corners of the object's axis-aligned world box — centre
+    (x + geo_cx, y + geo_cy, z_spawn + geo_cz), half-extents geo — and takes
+    the pixel hull. geo[0]/geo[1] shift the hull for asymmetric meshes
+    (person arms/legs). Returns (x1, y1, x2, y2) or None when fully outside.
     """
-    _, _, cz, hx, hy, hz = geo
+    gcx, gcy, cz, hx, hy, hz = geo
+    x += gcx
+    y += gcy
     zc = z_spawn + cz
     us, vs = [], []
     for dx in (-hx, hx):
@@ -298,9 +315,12 @@ def instance_visible_bbox(cx, cy, cz_cam, yaw_w, x, y, z_spawn, geo, W, H,
     """FOV-gated single-instance projection (center + 4 extremes per axis).
 
     Keeps the object when its CENTER bearing is inside the FOV, so objects
-    straddling the frame edge still get a (clipped) box.
+    straddling the frame edge still get a (clipped) box. geo[0]/geo[1] shift
+    the hull for asymmetric meshes (person).
     """
-    _, _, cz, hx, hy, hz = geo
+    gcx, gcy, cz, hx, hy, hz = geo
+    x += gcx
+    y += gcy
     d = math.hypot(x - cx, y - cy)
     rel = (math.atan2(y - cy, x - cx) - yaw_w + math.pi) % (2 * math.pi) - math.pi
     if abs(rel) > HFOV / 2 + FOV_EDGE_SLACK:
@@ -419,7 +439,7 @@ def main() -> int:
                         "range": round(d, 3), "bearing": round(rel, 4),
                         "bbox": [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)],
                         "range_bin": range_bin(d), "area_bin": area_bin(area),
-                        "area_px": round(area, 1), "occluded": False,
+                        "area_px": round(area, 1),
                     })
                     n_inst += 1
                     bin_histo[v["cls"]][range_bin(d)] += 1
