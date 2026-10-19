@@ -121,7 +121,11 @@ def parse_strict(text: str) -> list[dict]:
     if not m:
         raise ValueError(f"no JSON object in reply: {text[:120]!r}")
     obj = json.loads(m.group(0))
-    dets = obj.get("detections", [])
+    if not isinstance(obj, dict) or "detections" not in obj:
+        raise ValueError("reply JSON missing 'detections' key (strict: a "
+                         "well-formed-but-unexpected reply is a parse "
+                         "failure, not a miss)")
+    dets = obj["detections"]
     if not isinstance(dets, list):
         raise ValueError("detections is not a list")
     out = []

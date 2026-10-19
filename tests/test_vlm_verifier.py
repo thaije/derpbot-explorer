@@ -17,7 +17,11 @@ Covers:
      riding along (tracker replay-visible).
   8. Quota (429) path: budget zeroed → no further calls.
 
-Run: python3.12 -m pytest tests/test_vlm_verifier.py -q   (ROS env)
+Run: python3.12 tests/test_vlm_verifier.py -q   (repo-canonical tallied mode)
+Also: python3.12 -m pytest tests/test_vlm_verifier.py -q   (ROS env)
+
+TALLY_GATE = True (conftest.py session guard): this module's tally is green
+in BOTH modes, so pytest counts may not silently drift from the tally.
 """
 
 import os
@@ -41,6 +45,12 @@ except ImportError as exc:
 
 PASS = []
 FAIL = []
+
+# conftest.py session guard: the tally is green in both pytest and the
+# repo-canonical tallied __main__ run — pytest MUST fail if this module's
+# check() tally records FAILs again (the exact drift hazard that left this
+# module red through a green pytest run in the v13-cv round-1 review).
+TALLY_GATE = True
 
 
 def check(name, cond, detail=""):
@@ -183,7 +193,8 @@ def make_verifier(replies, targets=("first_aid_kit",), budget=10,
     # robot pose fixed at origin facing +x
     v._robot_pose = lambda: (0.0, 0.0, 0.0)
     # default: every pending() track has already been seen (age ≥ min age) so
-    # individual ticks exercise the later guards; the min-age test re-seeds
+    # individual ticks exercise the later guards; the min-age test uses a
+    # fresh track id with NO pre-seed (a pre-seed defeats its own first check)
     v._first_seen_sim["track_1"] = 30.0
     return v, tracker
 
@@ -319,11 +330,14 @@ def test_min_age():
     v, tracker = make_verifier(['{"detections": []}'])
     # age is tracked by the verifier's OWN first-seen map (get_pending_candidates
     # strips first_sim_t): a track first seen "now" is too young, ages into
-    # eligibility on later ticks
-    tracker.pending = [pending(first=58.0)]  # age field intentionally stale
+    # eligibility on later ticks. Fresh track id — make_verifier's track_1
+    # pre-seed (age 30 ≥ 5) would defeat this check's "not called" assertion.
+    tracker.pending = [pending(tid="track_fresh", first=58.0)]  # age field stale
     v._tick()
     check("min age: first-sighting tick not called", len(v._client.calls) == 0)
-    v._first_seen_sim["track_1"] = v._sim_time() - 10.0  # seen 10 sim-s ago
+    check("min age: fresh track seeded into first-seen map",
+          "track_fresh" in v._first_seen_sim)
+    v._first_seen_sim["track_fresh"] = v._sim_time() - 10.0  # seen 10 sim-s ago
     v._tick()
     check("min age: aged track called", len(v._client.calls) == 1)
     os.environ.pop("DERPBOT_VLM_VERIFY_MIN_AGE_S", None)
@@ -392,7 +406,10 @@ def test_inject_external_sighting_routes_queue():
 
 
 def test_prompt_derived_from_targets():
-    v, tracker = make_verifier(['{"detections": []}'])
+    # all three mission targets: the check asserts on all three prompts
+    v, tracker = make_verifier(
+        ['{"detections": []}'],
+        targets=("first_aid_kit", "fire_extinguisher", "person"))
     check("prompt: class names via underscore->space rule",
           "first aid kit" in v._prompt and "fire extinguisher" in v._prompt
           and "person" in v._prompt)
