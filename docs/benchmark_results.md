@@ -1,3 +1,45 @@
+## 2026-10-19 — t_8ed4eb97: v13-cv VLM pending-track verifier (glm-5.3-flash, env-gated default-OFF) — Step-0 probe PASS → 5×1 gate BETWEEN → attribution + halt (no 5×3, no submission)
+
+Agent: `derpbot-explorer-v13-cv` @ `2005888` (v12-v2 lineage; new: `agent/vlm_verifier.py` async confirmator, `Tracker.inject_external_sighting`, start_stack forward; `DERPBOT_VLM_VERIFY=1` is the ONLY behavior delta vs the v12-v2 gate agent and it is default-OFF — with the var unset the tree is byte-equivalent v12-v2 behavior). Easy 5×1 (900 s, speed 2, pkg1-pinned tmux server 10-19,30-39, one sim at a time), 5/5 completed 0 failed, port-7400 pre-flight + cleanup verified.
+
+### Mechanism (approved VLM direction, t_bbe085d2 handoff)
+
+Background thread watches the tracker's PENDING (unconfirmed) mission-class candidates; for each track pending ≥5 sim-s, projects the track's map pose to a full-res crop (camera-model projection), asks **glm-5.3-flash** (ollama-cloud) the same structured single-parse prompt family the detector prompts derive from mission targets (underscore→space rule, no hardcoded classes); on a positive ≥0.30 conf it injects ONE sighting at VLM confidence through the standard tracker input queue — every existing gate (association, split, veto, stability, confirm) still applies; nothing is force-confirmed. Guards: ≤1 in-flight call (non-blocking skip), ≤1 call/track/20 sim-s, budget ≤30 calls/run, 429 = quota-stop. Off the control path by construction (daemon thread; zero effect on detector/explorer latency).
+
+### Step 0 — zero-sim probe (36 glm calls, no sim, no change to live behavior)
+
+43-frame manifest from the five v2-holdout streams: 25 candidate glimpse frames (12 GTs, frame-level FOV + near-sighting cross-check + GT-projection visibility filtering) + 11 negatives with zero GT in FOV + 7 negatives with only non-mission GT. 36 calls, 0 parse failures, 0 errors, no 429s, median ≈2.7 s/frame. **Glimpse confirmation 5/5 = 100% on the pose-reliable + object-visible subset (5/18 raw — every miss audited as pose-gap (sighting-stream gaps to 144 s) or occluded/edge projection caught by the visibility filter). Negatives: 9/18 fired = exactly the pre-registered abort bar (50%) — every one audited frame-by-frame: ALL 9 are REAL visible objects (unlisted corridor scenery props: FE + trash can; loose FAK crates; or mission GTs at 13.9 m visible in-frame but outside the tracked window) → frame-verified FALSE hallucinations 0/18 → abort bar NOT triggered.** Probe artifacts in task workspace (`probe_manifest.json`, `probe_results.jsonl`, `probe_verdict.json`) + committed driver `scripts/vlm_verify_probe.py`.
+
+### Gate — pre-registered bars (committed `6593d49` BEFORE running)
+
+PASS ⇔ mean found ≥ 4.9 AND FP/run ≤ 4.0 AND ≥ 3/5 completions → 5×3. REJECT ⇔ mean ≤ 4.5 or FP > 5. Between → attribution + halt. Escalation guards (dup ≤ 7.6, coll ≤ 1.0).
+
+| seed | status | found | FP | coll | dup | cov% | score |
+|---|---|---|---|---|---|---|---|
+| 1 | SUCCESS | 6.0 | 3 | 0 | 4 | 56.4 | 81.9 B |
+| 2 | TIME_LIMIT | 5.0 | 3 | 1 | 4 | 98.9 | 61.4 C |
+| 3 | TIME_LIMIT | 4.0 | 4 | 0 | 3 | 98.7 | 60.7 C |
+| 4 | TIME_LIMIT | 5.0 | 2 | 0 | 6 | 99.1 | 67.3 C |
+| 5 | SUCCESS | 6.0 | 3 | 0 | 0 | 98.7 | 72.7 B |
+
+**Mean found 5.20 · FP/run 3.00 · completions 2/5 → found ✓ FP ✓ completions ✗ → BETWEEN → attribution + halt, no 5×3, no submission, no leaderboard entry.** Neither REJECT leg fires (5.20 > 4.5; FP 3.0 ≤ 5). Mean precision 0.634 (v12-v2 gate cohort 0.633 — unchanged).
+
+### Attribution
+
+- **Mechanism live and on-target:** 14 VLM-confirmed sightings injected across the 5 runs (FAK 3 / FE 8 / person 3, conf 0.55–0.98), stream taps tagged (`bbox=[0,0,0,0]` provenance), budget never exhausted, no parse failures observed in-session.
+- **vs the v12-v2 5×1 gate cohort (same cohort shape):** found 4.20 → **5.20 (+1.0)**, completions 1 → 2, dup 7.6 → **3.4 (−4.2)**, coll 0.8 → 0.2; FP 2.60 → 3.00 (+0.4, inside single-run noise). found 5.20 is the highest gate-era easy mean on record (v10-assoc 4.60, v12-tile 4.40, v12-v2 4.20) and is ≥ the v5-master 5×3 par line 4.87 — with FP/dup/coll at or better than every reference level.
+- **Why not PASS:** the completion leg (2 < 3). The 3 TIME_LIMIT runs sit at cov ≥98.7% — they burned the 900-s clock exploring without converting the last object. Miss breakdown: seed3 {person, FE3} = ZERO same-class sightings ≤2 m all run (the known zero-sighting timing bucket; a pending-track verifier cannot fire on a track that never exists); seed2/seed4 {FAK4} = low-conf FAK clusters never confirmed: seed4 carried a 9-sighting cluster 0.8 m OFF-object (conf 0.21–0.30, pairwise spread 0.15 m) pending all run — one VLM injection (conf 0.98, 1.12 m off GT) fused into it without converting (residual confirm-gate association behavior), and the first useful VLM sighting landed after the cluster had already eaten the clock.
+- **Gate round 1 voided (record):** DERPBOT_VLM_VERIFY was not forwarded into the agent tmux session (`31eebfb` fixes), and `Tracker.get_pending_candidates()` strips `first_sim_t` so the verifier's age gate (`.get("first_sim_t", sim_t)` default) collapsed every track age to 0 and starved whole runs of eligible calls (`2005888` fixes — the verifier now keeps its own first-seen map; 22 unit tests). Round-1 results + streams archived under the task workspace `round1_starved/`, never counted.
+- **Verdict:** the mechanism moves found AND dup/coll at FP parity, but the 5×1 completion leg does not clear; per the pre-registered protocol the campaign halts BEFORE the 5×3. Env stays default-OFF (with the var unset, agent == v12-v2 exactly).
+
+### Files
+
+Result JSONs: `robot-sandbox/results/submissions/derpbot-explorer-v13-cv/easy_seed{1..5}_run1.json` (raw sources `robot-sandbox/results/office_easy_001_20261019T15*.json` + `...T16*.json`, unique signature match, no re-runs). Streams: `results/streams/stream_easy_seed{S}_run1_20261019T15{03,08,26,44}..Z.jsonl` + `20261019T160224Z.jsonl` (injected sightings carry the `[0,0,0,0]` bbox marker). Keyframes: `results/streams/frames/<stream-stem>/` (v2 downscaled default; fullres flag off). Code: `e20b1c3` (verifier + injection + probe driver + 21 tests), `31eebfb` (stack forward), `2005888` (first-seen fix + 22nd test), `6593d49` (pre-registered bars). Probe + gate artifacts also in task workspace t_8ed4eb97.
+
+Par basis: **v1-human-derived** (easy par 6.00/6) + **v2 human re-baseline PENDING** — v13-cv ran entirely on sandbox v2.0.0, so its deltas vs v12-v2 are same-sandbox agent deltas; absolute levels carry the v2-shift caveat as always.
+
+---
+
 ## 2026-10-18 — t_f4620454: matched-version pair completed (v12-v2 easy 5×3 @ sandbox v2.0.0 vs v10-assoc 5×3 @ v1.0.3) — SIM-EFFECT VERDICT: NULL on found (sim + mandatory intrinsics migration; see premise restatement below)
 
 Par basis: **v1-human-derived** (easy par 6.00/6, v1 human teleop n=5/session) — **v2 human re-baseline PENDING (operator)**; the paired deltas below are therefore v1-human-derived-par-relative in spirit, and agent deltas are only interpretable at matched sandbox version, which is exactly what this entry holds fixed.
