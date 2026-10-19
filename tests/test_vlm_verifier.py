@@ -182,6 +182,9 @@ def make_verifier(replies, targets=("first_aid_kit",), budget=10,
     v._budget_left = budget
     # robot pose fixed at origin facing +x
     v._robot_pose = lambda: (0.0, 0.0, 0.0)
+    # default: every pending() track has already been seen (age ≥ min age) so
+    # individual ticks exercise the later guards; the min-age test re-seeds
+    v._first_seen_sim["track_1"] = 30.0
     return v, tracker
 
 
@@ -300,6 +303,7 @@ def test_track_cooldown():
     v, tracker = make_verifier(['{"detections": []}', '{"detections": []}'],
                                cooldown=20.0)
     tracker.pending = [pending(first=40.0)]
+    v._first_seen_sim["track_1"] = 30.0  # seen 30 sim-s ago → eligible now
     v._tick()                     # first call at sim 60
     v._tick()                     # 0 s later — must be skipped
     check("cooldown: only 1 call within 20 sim-s", len(v._client.calls) == 1,
@@ -313,9 +317,15 @@ def test_min_age():
     import importlib
     importlib.reload(vv)
     v, tracker = make_verifier(['{"detections": []}'])
-    tracker.pending = [pending(first=58.0)]  # age = 2 sim-s only
+    # age is tracked by the verifier's OWN first-seen map (get_pending_candidates
+    # strips first_sim_t): a track first seen "now" is too young, ages into
+    # eligibility on later ticks
+    tracker.pending = [pending(first=58.0)]  # age field intentionally stale
     v._tick()
-    check("min age: too-young track not called", len(v._client.calls) == 0)
+    check("min age: first-sighting tick not called", len(v._client.calls) == 0)
+    v._first_seen_sim["track_1"] = v._sim_time() - 10.0  # seen 10 sim-s ago
+    v._tick()
+    check("min age: aged track called", len(v._client.calls) == 1)
     os.environ.pop("DERPBOT_VLM_VERIFY_MIN_AGE_S", None)
     importlib.reload(vv)
 
@@ -326,6 +336,15 @@ def test_already_injected_never_recalled():
     v._injected.add("track_1")
     v._tick()
     check("injected set: no second call", len(v._client.calls) == 0)
+
+
+def test_first_seen_map_tracks_new_ids():
+    v, tracker = make_verifier(['{"detections": []}'])
+    tracker.pending = [pending(tid="track_7")]
+    v._tick()   # first sighting of track_7 → age 0, must NOT call
+    check("new track id: first tick not called", len(v._client.calls) == 0)
+    v._tick()   # age still ~0 (poll interval) — still not called
+    check("new track id: second tick still too young", len(v._client.calls) == 0)
 
 
 def test_quota_stops_budget():

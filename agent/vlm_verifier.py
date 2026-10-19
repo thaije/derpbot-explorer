@@ -215,6 +215,7 @@ class VLMPendingVerifier:
         self._in_flight = threading.Semaphore(1)      # <=1 in-flight call
         self._budget_left = VLM_VERIFY_BUDGET
         self._last_call_sim: dict[str, float] = {}    # track_id -> sim-t last call
+        self._first_seen_sim: dict[str, float] = {}   # track_id -> sim-t first seen
         self._injected: set[str] = set()              # track_ids already confirmed
         self._calls_made = 0
 
@@ -314,23 +315,37 @@ class VLMPendingVerifier:
         sim_t = self._sim_time()
         pending = self._tracker.get_pending_candidates(sim_t)
         # oldest-first: a track that has been pending longest is the most
-        # worth one call; only mission classes arrive here (worker filter)
+        # worth one call; only mission classes arrive here (worker filter).
+        # NOTE: Tracker.get_pending_candidates() strips first_sim_t (its dict
+        # carries the explorer-facing fields only), so age is tracked HERE —
+        # the verifier's own first-seen map (t_8ed4eb97 gate-round-1 fix: the
+        # .get("first_sim_t", sim_t) default collapsed every age to 0 and
+        # starved the verifier of eligible tracks for whole runs).
+        for c in pending:
+            tid = c["track_id"]
+            if tid not in self._first_seen_sim:
+                self._first_seen_sim[tid] = sim_t
+        self._first_seen_sim = {
+            k: v for k, v in self._first_seen_sim.items()
+            if any(p["track_id"] == k for p in pending) or k in self._injected
+        }
         eligible = []
         for c in pending:
             tid = c["track_id"]
             if tid in self._injected:
                 continue
-            age = sim_t - float(c.get("first_sim_t", sim_t))
+            age = sim_t - self._first_seen_sim.get(tid, sim_t)
             if age < VLM_VERIFY_MIN_AGE_S:
                 continue
             last = self._last_call_sim.get(tid)
             if last is not None and sim_t - last < VLM_VERIFY_TRACK_COOLDOWN_S:
                 continue
-            eligible.append(c)
+            eligible.append((age, c))
         if not eligible:
             return
-        # one call per tick (max 1 Hz + the in-flight guard)
-        c = eligible[0]
+        # oldest-first (the track pending longest gets the call)
+        eligible.sort(key=lambda ac: -ac[0])
+        c = eligible[0][1]
         self._verify_one(c, sim_t)
 
     def _verify_one(self, cand: dict, sim_t: float) -> None:
