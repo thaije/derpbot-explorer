@@ -30,6 +30,7 @@ from frontier_explorer import FrontierExplorer
 from detector import Detector
 from depth_projector import DepthProjector
 from tracker import Tracker
+import vlm_verifier as vlm_verifier_mod
 
 logging.basicConfig(
     level=logging.INFO,
@@ -114,6 +115,20 @@ class AgentNode(Node):
                 f"[STARTUP TIMING] tracker init: +{t3 - t2_end:.2f}s (total {t3 - self._t_start:.2f}s)"
             )
 
+            # VLM pending-track verifier (v13-cv, t_8ed4eb97) — env-gated,
+            # default OFF, zero behavior change when unset. Runs on its own
+            # daemon thread; never blocks detector/explorer/control.
+            self._vlm_verifier = None
+            if vlm_verifier_mod.VLMPendingVerifier.enabled_from_env():
+                self._vlm_verifier = vlm_verifier_mod.VLMPendingVerifier(
+                    node=self,
+                    tracker=self._tracker,
+                    detector=self._detector,
+                    projector=self._depth_projector,
+                    targets=list(mission.targets),
+                )
+                self._vlm_verifier.start()
+
         # --- Frontier explorer ---
         t4_start = self.get_clock().now().nanoseconds / 1e9
         explorer_tracker = self._tracker
@@ -178,6 +193,9 @@ class AgentNode(Node):
     def shutdown(self) -> None:
         self.get_logger().info("AgentNode: shutting down.")
         self._explorer.stop()
+        vlm_v = getattr(self, "_vlm_verifier", None)
+        if vlm_v is not None:
+            vlm_v.stop()
         if self._tracker is not None:
             self._tracker.stop()
 

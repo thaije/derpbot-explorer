@@ -1306,6 +1306,56 @@ class Tracker:
         if self._keyframe_recorder is not None:
             self._keyframe_recorder.stop()
 
+    # ------------------------------------------------------------------
+    # External sighting injection (v13-cv VLM verifier, t_8ed4eb97)
+    # ------------------------------------------------------------------
+
+    def inject_external_sighting(
+        self,
+        class_name: str,
+        world_pos: tuple[float, float],
+        robot_pose: tuple[float, float, float],
+        confidence: float,
+        source: str = "vlm_verify",
+    ) -> bool:
+        """Inject ONE sighting from a non-detector source into the SAME
+        pipeline the detector relay feeds (all existing gates apply).
+
+        Used by agent/vlm_verifier.py to publish a verifier-gated sighting at
+        VLM confidence (v13-cv): the sighting rides the standard input_queue
+        → tracker_worker path, so association, split, veto, stability and
+        confirm gates treat it exactly like a detector sighting. The stream
+        recorder taps it too (provenance `source` kept for stream forensics).
+
+        Returns True when the tuple was enqueued.
+        """
+        rx, ry, ryaw = robot_pose
+        try:
+            self._recorder.record(
+                class_name=class_name,
+                confidence=confidence,
+                bbox=(0.0, 0.0, 0.0, 0.0),
+                world_pos=world_pos,
+                robot_pose=(rx, ry, ryaw),
+                depth=None,
+            )
+        except Exception:
+            pass  # recorder is a write-only observer
+        try:
+            self._input_queue.put_nowait(
+                (class_name, world_pos, (rx, ry), confidence)
+            )
+            return True
+        except Exception:
+            try:
+                self._input_queue.get_nowait()
+                self._input_queue.put_nowait(
+                    (class_name, world_pos, (rx, ry), confidence)
+                )
+                return True
+            except Exception:
+                return False
+
 
 # ---------------------------------------------------------------------------
 # Policy-override bootstrap for OFFLINE REPLAY ONLY (scripts/replay_tracker.py,
