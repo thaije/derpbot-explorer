@@ -49,9 +49,9 @@ verified below).
 | b6 | yolo-world-l | 0.6134 | 0.0000 | 1.0000 | 0.4222 | 18 | ✗ no FAK, FE 0.65× |
 | b7 | florence-2-large (per-prompt CPG) | 0.3355 | 0.4969 | 0.3433 | 13.7101 | 5580 (CPU) | ✗ over-detects |
 | b8 | mm-grounding-dino-tiny (o365v1+goldg+v3det) | 0.9233 | 0.2270 | 0.9254 | **0.2218** | 329 | ✗ FAK 0.40× |
-| vlm1 | glm-5.3-flash (94-frame stratified subset) | 0.9796 | 0.6364 | 1.0000 | 1.4362 | 5874 | bar legs pass on subset (n=94) |
+| vlm1 | glm-5.3-flash (94-frame stratified subset) | 0.9796 | 0.6364 | 1.0000 | 1.0106 | 5874 | bar legs pass on subset (n=94) |
 | vlm2 | qwen3-vl:235b | incomplete (registry) | — | — | — | — | see VLM ladder |
-| vlm3 | kimi-k3:cloud (94-frame subset) | 0.9796 | 0.5000 | 1.0000 | 1.2660 | 11727 | bar legs pass on subset (n=94) |
+| vlm3 | kimi-k3:cloud (94-frame subset) | 0.9796 | 0.5000 | 1.0000 | 0.8617 | 11727 | bar legs pass on subset (n=94) |
 
 Notes per candidate:
 - **b2** is the raw (non-ensemble) checkpoint of the SAME size the agent runs:
@@ -109,12 +109,13 @@ bins + zero-object negatives; `vlm_sample_ids.json`).
 | drink_can | 21 | 0.0952 | 0.0476 | 0.60 |
 | suitcase | 10 | 0.0 | 0.0 | — |
 
-FP-proxy 1.4362/frame @0.15, latency 5.9 s median (wall). On the SAME 94 frames
-the OWLv2 baseline scores FE 0.9796 / **FAK 0.3182** / person 1.0000,
-FP 2.1064/frame. glm-5.3-flash: FAK **0.6364 = 2.00× baseline** ✓ (≥1.5×),
-FE 1.00× ✓, person 1.00× ✓ — but FP-proxy 1.4362 vs baseline 2.1064 ✓ —
-**all three bar legs pass on the 94-frame subset** (single-parse protocol,
-0 parse failures).
+FP-proxy **1.0106/frame** @0.15 (round-1 publication said 1.4362 — inflated
+by the scorer bug fixed in round 2, below), latency 5.9 s median (wall). On
+the SAME 94 frames the OWLv2 baseline scores FE 0.9796 / **FAK 0.3182** /
+person 1.0000, **FP 1.2128/frame** (round-1 publication said 2.1064).
+glm-5.3-flash: FAK **0.6364 = 2.00× baseline** ✓ (≥1.5×), FE 1.00× ✓,
+person 1.00× ✓ — FP-proxy 1.0106 vs baseline 1.2128 ✓ — **all three bar legs
+pass on the 94-frame subset** (single-parse protocol, 0 parse failures).
 
 ### vlm3 — kimi-k3:cloud (94/94, 0 parse fails, 0 errors, no 429s)
 
@@ -133,14 +134,16 @@ Extra-High tokens buy the remaining FP problem.
 | drink_can | 21 | 0.1905 | 0.55 |
 | suitcase | 10 | 0.2000 | 0.82 |
 
-FP-proxy **1.2660/frame** @0.15, latency 11.7 s/frame (wall). vs subset
-baseline (FAK 0.3182, FP 2.1064): FAK 1.57× ✓, FE 1.00× ✓, person 1.00× ✓,
-FP 0.60× ✓ — **all legs pass**, like glm; kimi trades 0.14 FAK rate (0.500 vs
-0.636) for 0.17 FP/frame (1.266 vs 1.436) at 2× the latency and Extra-High
-token cost. Hybrids (task-workspace `kimi_hybrid.json`): +kimi@0.5 → FAK
-0.5 (2.27×), FP 2.5851; +kimi@0.9 → FAK 0.4091 (1.29×), FP 2.2447 — same
+FP-proxy **0.8617/frame** @0.15 (corrected from the round-1 1.2660, see the
+round-2 note below), latency 11.7 s/frame (wall). vs subset
+baseline (FAK 0.3182, FP 1.2128): FAK 1.57× ✓, FE 1.00× ✓, person 1.00× ✓,
+FP 0.71× ✓ — **all legs pass**, like glm. Standalone kimi actually improves on
+glm's FP too (0.8617 vs 1.0106) at the same FAK trade (0.500 vs 0.636) — but
+at 2× the latency and Extra-High token cost. Hybrids (corrected, task-workspace
+`kimi_hybrid.json` + `hybrid_scores_v2.json`): +kimi@0.5 → FAK 0.5 (1.57×),
+FP 1.5319; +kimi@0.9 → FAK 0.4091 (1.29×), FP 1.3085 — same
 FAK-gain-vs-FP-cost coupling as the glm hybrid; neither hybrid beats the
-baseline FP at the conf that delivers the FAK gain.
+baseline FP (1.2128) at the conf that delivers the FAK gain.
 
 ### vlm2 — qwen3-vl:235b — REGISTRY-RETIRED, mark incomplete
 
@@ -163,16 +166,23 @@ OWLv2 det).
 
 | config | FE | FAK | person | FP-proxy/frame |
 |---|---|---|---|---|
-| OWLv2 only (subset) | 0.9796 (48/49) | 0.3182 (7/22) | 1.0000 (41/41) | 2.1064 |
-| + glm@conf 0.9 | 0.9796 | 0.4091 (1.29×) | 1.0000 | 2.1809 |
-| **+ glm@conf 0.5** | 0.9796 | **0.5455 (1.71×)** | 1.0000 | 2.6915 |
-| + glm@conf 0.15 (all) | 0.9796 | 0.7727 (2.43×)? | 1.0000 | (see subset_scores.json) |
+| OWLv2 only (subset) | 0.9796 (48/49) | 0.3182 (7/22) | 1.0000 (41/41) | **1.2128** |
+| + glm@conf 0.9 | 0.9796 | 0.4091 (1.29×) | 1.0000 | 1.2872 |
+| **+ glm@conf 0.5** | 0.9796 | **0.5455 (1.71×)** | 1.0000 | 1.6277 |
+| + glm@conf 0.15 (all) | 0.9796 | 0.6364 (2.00×) | 1.0000 | 1.7234 |
 
-The hybrid second pass buys real FAK recall (1.71× at conf 0.5) at the cost of
-the FP-proxy leg (2.69 > 2.11) — the merged VLM detections that lift FAK are
-the same ones the FP gate penalizes. This is the scored low-cadence
-configuration; it does NOT hit equal-or-better FP at conf 0.5, and at conf 0.9
-FAK gain shrinks to 1.29×.
+(The round-1 table published FP 2.1064 / 2.1809 / 2.6915 for the first three
+rows and left the @0.15 row unscored — all inflated by the scorer bug fixed in
+round 2, see below. All six hybrid configs, glm and kimi, are now scored in
+task-workspace `hybrid_scores_v2.json`.)
+
+The hybrid second pass buys real FAK recall (1.71× at conf 0.5, 2.00× with all
+glm dets) at the cost of the FP-proxy leg (1.6277 > 1.2128, 1.42× at the
+all-dets floor) — the merged VLM detections that lift FAK are the same ones
+the FP gate penalizes. This is the scored low-cadence configuration; it does
+NOT hit equal-or-better FP at any conf that delivers the FAK gain (conf 0.9
+does approach FP parity at 1.06× but its FAK gain shrinks to 1.29×, below the
+1.5× leg).
 
 ## HF scan (task item 7)
 
@@ -204,11 +214,13 @@ FAK gain shrinks to 1.29×.
    a candidate for a PRECISION-oriented config if the bar is ever re-registered
    for a low-FP objective (do NOT swap under the current bar).** Stress row:
    FAK 0.0 (14 gt) — G-DINO-family FAK blind spot persists under stress.
-3. **glm-5.3-flash passes all three bar legs on the 94-frame stratified
-   subset** (FAK 2.00×, FE/person parity, better FP) — but at 5.9 s/frame it is
+3. **glm-5.3-flash passes all three bar legs standalone on the 94-frame
+   stratified subset** (FAK 2.00×, FE/person parity, FP 1.0106 = 0.83× the
+   corrected subset baseline 1.2128) — but at 5.9 s/frame it is
    a <0.5 Hz candidate, i.e. a **second-pass hybrid** by the operator's own
-   protocol, and the scored hybrid (FP 2.69 @FAK 1.71×) does NOT beat the
-   baseline's FP at the operating point that clears FAK. The two effects
+   protocol, and the scored hybrid (FP 1.6277 = 1.34× baseline @FAK 1.71×;
+   round-1 "FP 2.69 @FAK 1.71×" was inflated by the scorer bug) does NOT beat
+   the baseline's FP at the operating point that clears FAK. The two effects
    (FAK gain vs FP cost inside the same merge) are the same detections.
 4. **kimi-k3 was gated on "the first two show a real grounding signal worth
    Extra-High tokens":** glm-5.3-flash shows that signal (all bar legs pass on
@@ -243,8 +255,43 @@ FAK gain shrinks to 1.29×.
   (38 frames) — corpus/stress continuity + robustness rows for the HF-scan candidate
 - Task workspace `bar_eval.json` — per-conf bar legs + FP curves (mirror-validated)
 - Task workspace `glm_score.json`, `kimi_score.json`, `kimi_hybrid.json`,
-  `florence2_score.json`, `qwen8b_partial_score.json`, `subset_scores.json`
-  (subset baselines + hybrid configs); raw ladder outputs `/tmp/vlm_glm_probe.jsonl`
-  (94), `/tmp/vlm_kimi94.jsonl` (94), `/tmp/vlm_qwen3vl8b.jsonl` (10)
-- Harness change (uncommitted in scripts/eval_recog.py): mm_gdino + florence2
-  backend wiring (task 7 + b7), committed with the docs update below.
+  `hybrid_scores_v2.json`, `florence2_score.json`, `qwen8b_partial_score.json`,
+  `subset_scores.json` (subset baselines + hybrid configs); raw ladder outputs
+  archived in the task workspace as `vlm_glm_probe.jsonl` (94),
+  `vlm_kimi94.jsonl` (94), plus `/tmp/vlm_qwen3vl8b.jsonl` (10, volatile).
+
+## Round-2 correction (review round 1, artifact lens)
+
+The round-1 VLM/hybrid FP-proxy numbers were inflated by a scorer bug:
+`vlm_score.py` (and the aggregate hybrid script) resolved the per-run GT JSONs
+under `derpbot-explorer/results/submissions/`, which does not exist — the GTs
+live in the robot-sandbox submission dirs used by the harness's `GT_DIRS`. The
+missing-dir `FileNotFoundError` was swallowed, so the `gt_within_radius`
+suppression never fired and every unmatched det @0.15 counted as FP. Fix:
+GT source repointed to the harness's dirs (+ loud failure if a run's GT is
+missing); all affected configs re-scored. Corrected numbers (rate columns were
+never affected — no verdict flips):
+
+| config | FP-proxy/frame round-1 (buggy) | corrected |
+|---|---|---|
+| subset OWLv2 baseline (94 frames) | 2.1064 | **1.2128** |
+| glm-5.3-flash standalone | 1.4362 | **1.0106** |
+| kimi-k3 standalone | 1.2660 | **0.8617** |
+| hybrid +glm@0.9 | 2.1809 | **1.2872** |
+| hybrid +glm@0.5 | 2.6915 | **1.6277** |
+| hybrid +glm@0.15 (all) | unscored | **1.7234** |
+| hybrid +kimi@0.9 | 2.2447 | **1.3085** |
+| hybrid +kimi@0.5 | 2.5851 | **1.5319** |
+| hybrid +kimi@0.15 (all) | unscored | **1.5638** |
+
+Corrected-vs-buggy FP was re-derived independently (fresh matcher
+implementation over `frame_records.jsonl` + manifest + robot-sandbox GT dirs)
+with exact agreement on every row above. Verdict unchanged in substance:
+standalone glm/kimi pass all bar legs on the subset (more strongly than first
+published); the hybrids still couple FAK gain to FP cost (no hybrid reaches
+FP ≤ 1.2128 at a conf with FAK ≥ 1.5×); the "+ glm@conf 0.15" row is now scored
+(FAK 2.00×, FP 1.7234) replacing the round-1 unscored "0.7727 (2.43×)?" entry,
+which cited a subset file that did not contain it. The kimi-hybrid multiplier
+"2.27×" was stale; corrected to 1.57× in §vlm3.
+- Harness change (scripts/eval_recog.py): mm_gdino + florence2 backend wiring
+  (task 7 + b7), committed (8be6b9c, 8e4f8fa).
