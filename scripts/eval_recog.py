@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import sys
 import time
@@ -80,13 +81,16 @@ def run_key_run(run_key: str):
 class OwlV2Backend:
     name = "owlv2"
 
-    def __init__(self, device: str):
+    def __init__(self, device: str, model_id: str | None = None):
         import torch
         from PIL import Image
         from transformers import Owlv2ForObjectDetection, Owlv2Processor
         self.torch = torch
         self._pil = Image
         mid = "google/owlv2-base-patch16-ensemble"
+        if model_id:
+            mid = model_id
+            self.name = "owlv2:" + model_id.split("/")[-1].replace("-ensemble", "_ens")
         self.processor = Owlv2Processor.from_pretrained(mid)
         self.model = Owlv2ForObjectDetection.from_pretrained(mid).to(device).eval()
         self.device = device
@@ -122,7 +126,8 @@ class OwlV2Backend:
 class YoloWorldBackend:
     def __init__(self, device: str, size: str, name: str):
         from ultralytics import YOLOWorld
-        w = {"s": "yolov8s-worldv2.pt", "m": "yolov8m-worldv2.pt"}[size]
+        w = {"s": "yolov8s-worldv2.pt", "m": "yolov8m-worldv2.pt",
+             "l": "yolov8l-worldv2.pt"}[size]
         self.name = name
         self.model = YOLOWorld(w).to(device)
         self.device = device
@@ -146,14 +151,13 @@ class YoloWorldBackend:
 
 
 class GdinoBackend:
-    name = "gdino_tiny"
-
-    def __init__(self, device: str):
+    def __init__(self, device: str, model_id: str | None = None):
         import torch
         from PIL import Image
         from transformers import (AutoModelForZeroShotObjectDetection,
                                   AutoProcessor)
-        mid = "IDEA-Research/grounding-dino-tiny"
+        mid = model_id or "IDEA-Research/grounding-dino-tiny"
+        self.name = "gdino_base" if "base" in mid else "gdino_tiny"
         self.torch = torch
         self._pil = Image
         self.processor = AutoProcessor.from_pretrained(mid)
@@ -197,12 +201,35 @@ class GdinoBackend:
 
 
 def make_backend(name: str, device: str):
+    if name.startswith("mm_gdino:"):
+        # MM-Grounding-DINO (HF task 7): openmmlab-community/mm_grounding_dino_*
+        # checkpoints via the built-in MMGroundingDinoForObjectDetection class
+        # (transformers >= 4.44) — same interface as GdinoBackend.
+        mid = name.split(":", 1)[1]
+        b = GdinoBackend(device, model_id=mid)
+        b.name = "mmgdino:" + mid.split("/")[-1]
+        return b
     if name == "owlv2":
         return OwlV2Backend(device)
+    if name.startswith("owlv2:"):
+        # explicit HF checkpoint override, e.g. owlv2:google/owlv2-large-patch14-ensemble
+        return OwlV2Backend(device, model_id=name.split(":", 1)[1])
     if name.startswith("yolo_world_"):
         return YoloWorldBackend(device, name.rsplit("_", 1)[1], name)
     if name == "gdino_tiny":
         return GdinoBackend(device)
+    if name == "gdino_base":
+        return GdinoBackend(device, model_id="IDEA-Research/grounding-dino-base")
+    if name.startswith("florence2"):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "florence2_backend",
+            str(EXPLORER_ROOT / "scripts" / "florence2_backend.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        size = name.rsplit("_", 1)[1] if name.startswith("florence2_") \
+            else "large"
+        return mod.Florence2Backend(device, size=size)
     raise ValueError(f"unknown model {name}")
 
 
@@ -329,7 +356,10 @@ def main() -> int:
         classes = [c for c in classes if c in set(args.classes)]
     prompts = [prompt_map.get(c, c.replace("_", " ")) for c in classes]
     print(f"classes: {list(zip(classes, prompts))}", flush=True)
-    backend.init(prompts)
+    try:
+        backend.init(prompts, cls_names=classes)
+    except TypeError:
+        backend.init(prompts)
     cls_of_prompt = dict(zip(prompts, classes))
 
     conf_points = sorted(args.conf_points)
@@ -339,6 +369,11 @@ def main() -> int:
     fp_at_min = 0
     fp_conf = args.fp_conf
     lat, n_frames = [], 0
+    # Batch backends (florence2: pipe-stdin interacts badly with its
+    # transformers-4.49 worker) prefetch in blocks via infer_batch().
+    batch_backend = hasattr(backend, "infer_batch")
+    batch_size = int(os.environ.get("EVAL_RECOG_BATCH", "64")) \
+        if batch_backend else 0
     out_path = Path(args.out) if args.out else (
         EXPLORER_ROOT / "results" / "eval_recog" /
         f"{(args.split or 'all')}_{args.model}")
@@ -376,21 +411,11 @@ def main() -> int:
         gt_all_cache[run] = out
         return out
 
-    for r in rows:
-        img = cv2.imread(str(EXPLORER_ROOT / r["image"]))
-        if img is None:
-            continue
+    def score_frame(r, img, dets, gt_by_cls):
+        """Shared scoring body — one frame's detections against GT.
+        Mutates per_cls / fp_at_min (via nonlocal) and appends a record."""
+        nonlocal fp_at_min
         H, W = img.shape[:2]
-        gt_by_cls = defaultdict(list)
-        for o in r["objects"]:
-            gt_by_cls[o["cls"]].append(o)
-        t0 = time.perf_counter()
-        dets = backend.infer(img)
-        lat.append((time.perf_counter() - t0) * 1000)
-        n_frames += 1
-        # remap prompt→class
-        dets = [{**d, "class": cls_of_prompt.get(d["class"], d["class"])}
-                for d in dets]
         det_by_cls = defaultdict(list)
         for d in dets:
             det_by_cls[d["class"]].append(d)
@@ -454,9 +479,60 @@ def main() -> int:
             "matched": matched_pairs,
             "fp": fp_frame,
         }) + "\n")
-        if n_frames % 50 == 0:
-            print(f"  {n_frames}/{len(rows)} frames", flush=True)
-    fh.close()
+
+    if batch_backend:
+        # Batch path: preload frames + GT in blocks, one worker pass per
+        # block (pipe-stdin workers hang — see florence2_batch.py).
+        def frames_with_gt(block_rows):
+            out = []
+            for r in block_rows:
+                img = cv2.imread(str(EXPLORER_ROOT / r["image"]))
+                if img is None:
+                    continue
+                gt_by_cls = defaultdict(list)
+                for o in r["objects"]:
+                    gt_by_cls[o["cls"]].append(o)
+                out.append((r, img, gt_by_cls))
+            return out
+
+        for i in range(0, len(rows), batch_size):
+            block = frames_with_gt(rows[i:i + batch_size])
+            results = backend.infer_batch([
+                (r["frame_id"], img) for r, img, _ in block])
+            for r, img, gt_by_cls in block:
+                H, W = img.shape[:2]
+                reply = results.get(r["frame_id"], [])
+                if reply and isinstance(reply[0], dict) \
+                        and "error" in reply[0]:
+                    print(f"WARN frame {r['frame_id']}: {reply[0]['error']}",
+                          flush=True)
+                    reply = []
+                lat.append(float(backend.wall_ms or 0))
+                n_frames += 1
+                dets = [{**d, "class": cls_of_prompt.get(
+                    d["class"], d["class"])} for d in reply]
+                score_frame(r, img, dets, gt_by_cls)
+            print(f"  {n_frames}/{len(rows)} frames (batch)", flush=True)
+        fh.close()
+    else:
+        for r in rows:
+            img = cv2.imread(str(EXPLORER_ROOT / r["image"]))
+            if img is None:
+                continue
+            H, W = img.shape[:2]
+            gt_by_cls = defaultdict(list)
+            for o in r["objects"]:
+                gt_by_cls[o["cls"]].append(o)
+            t0 = time.perf_counter()
+            dets = backend.infer(img)
+            lat.append((time.perf_counter() - t0) * 1000)
+            n_frames += 1
+            dets = [{**d, "class": cls_of_prompt.get(d["class"], d["class"])}
+                    for d in dets]
+            score_frame(r, img, dets, gt_by_cls)
+            if n_frames % 50 == 0:
+                print(f"  {n_frames}/{len(rows)} frames", flush=True)
+        fh.close()
 
     # aggregate
     summary = {"model": backend.name, "split": args.split or "all",
