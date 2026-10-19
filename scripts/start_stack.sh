@@ -196,7 +196,10 @@ if [[ $START_AGENT -eq 1 ]]; then
     fi
     # t_b0b71441: forward the recorder's full-res keyframe flag (default off).
     KEYFRAME_FULLRES_FWD="DERPBOT_KEYFRAME_FULLRES='${DERPBOT_KEYFRAME_FULLRES:-0}'"
-    tmux new -s agent -d "${ROS_ENV} cd $EXPLORER_ROOT && DERPBOT_READY_FLAG='$READY_FLAG' $FRONTIER_DEBUG_FWD $STREAM_FLAG_FWD $STREAM_SCOPE_FWD $KEYFRAME_FULLRES_FWD $EXPLORER_ROOT/.venv/bin/python agent/agent_node.py ${AGENT_FLAGS}"
+    # t_8ed4eb97 (v13-cv): forward the VLM pending-track verifier flag
+    # (default off — zero behavior change when unset).
+    VLM_VERIFY_FWD="DERPBOT_VLM_VERIFY='${DERPBOT_VLM_VERIFY:-0}'"
+    tmux new -s agent -d "${ROS_ENV} cd $EXPLORER_ROOT && DERPBOT_READY_FLAG='$READY_FLAG' $FRONTIER_DEBUG_FWD $STREAM_FLAG_FWD $STREAM_SCOPE_FWD $KEYFRAME_FULLRES_FWD $VLM_VERIFY_FWD $EXPLORER_ROOT/.venv/bin/python agent/agent_node.py ${AGENT_FLAGS}"
 
     if [[ "${PAUSED:-0}" == "1" ]]; then
         # Poll for the agent's ready flag. The flag is created at the top of
