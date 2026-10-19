@@ -67,8 +67,14 @@ Notes per candidate:
   detects few FAKs at any threshold.
 - **b8** (task item 7 scan — see "HF scan" below): the cleanest detector of the
   sweep — FP-proxy **0.2218/frame at 0.15 (4.7× better than baseline)** with
-  FE 0.9233 / person 0.9254, and it clears the bar LETTER at conf 0.5 (see
-  below) — but FAK 0.2270 = 0.40× baseline at matched FP. Fails FAK leg.
+  FE 0.9233 / person 0.9254. **Matched-FP operating point (conf 0.30):** FAK
+  0.1840 = 4.3× the baseline's 0.0429 ✓, person 0.9254 ≥ 0.3881 ✓, FP 0.1848 ≤
+  0.4475 ✓ — the only failing leg is FE 0.9201 vs baseline 0.9457, a 0.026 gap
+  that sits inside the documented sub-0.05 label-noise band. The bar verdict is
+  FAILED as registered (the FE leg binds), but this is the one local operating
+  point where every other leg clears with margin — the strongest near-miss of
+  the sweep, and the reason b8 ranks first among local detectors despite the
+  conf-0.15 FAK reading.
 - **b7** Florence-2: per-prompt CAPTION_TO_PHRASE_GROUNDING returns uncalibrated
   constant conf=1.0 and over-detects (14.3 dets/frame; FP-proxy 13.7/frame);
   not salvageable without a confidence model.
@@ -187,7 +193,9 @@ FAK gain shrinks to 1.29×.
 ## Verdict (ranked)
 
 1. **No local detector clears the pre-registered bar at matched FP.** The FAK
-   leg kills every one: best local FAK ratio is b3 at 1.05×, which fails person ≥ 1.0×.
+   leg kills every one at conf 0.15 (best 1.05×, b3 — which fails person ≥ 1.0×).
+   Closest near-miss: **b8 at conf 0.30** (FAK 4.3×, person ✓, FP ✓ by 2.4×;
+   only FE fails, by 0.026 — inside the noise band documented above).
 2. **b8 mm-GDINO-tiny-v3det is the strongest local detector** (task-item-7 HF
    scan): FP-proxy 0.2218 holdout / 0.1800 full-corpus / 0.1579 stress vs
    baseline 1.0331 (corpus 0.8042) — 4.6× better, with FE 0.7555 / person
