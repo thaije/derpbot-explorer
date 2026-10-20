@@ -1,3 +1,70 @@
+## 2026-10-20 — t_6124e5bb: v13-cv easy 5×3 decision batch @ sandbox v2 — 4/15 completions (27% vs 75% bar) → **HALT + report, no submission** (version selected by pre-registered rule: re-gate BETWEEN ⇒ `cb4ce47` as-is)
+
+Agent: `derpbot-explorer-v13-cv` @ `cb4ce47` lineage (HEAD `f54efbb` = identical agent code, docs-only commits after), `DERPBOT_VLM_VERIFY=1` (per protocol — the verifier is the tree's one env-gated behavior, ON as in the 5×1 gate). Version selection per the pre-registered rule on t_6124e5bb: parent re-gate (t_d479428a, round-1 approved) returned **BETWEEN** ⇒ run **`cb4ce47` as-is**, NOT `v13-cv-fu`. Run 1 JSONs of this batch are those gate runs (SKIP-resume); runs 2–3 are new (10 new, 0 failed). Easy 5×3 (900 s, speed 2, pkg1 pin `10-19,30-39`, port-7400 pre-flight, one sim at a time, resumable runner `scripts/run_benchmark.sh` with `DERPBOT_STREAM_RUN`). Batch wall 15:25Z–18:05Z ≈ 2h40m.
+
+### Decision bars (pre-registered standing rule on t_6124e5bb)
+
+| metric | value | bar |
+|---|---|---|
+| completions | **4/15 (27%)** | ≥11/15 submit · 8–10 attribute-one-defect · <8 halt — **HALT + report** |
+| mean found (obj/6) | 4.80 | goal-check context only |
+| mean FP | 3.67 | ≤4.0 sanity ✓ |
+| mean dup | 4.33 | ≤7.6 ref ✓ |
+| mean collisions | 1.20 | ≤1.0 ref (slightly over; dominated by seed1 run2 = 14) |
+
+**Goal arithmetic explicit: 4/15 = 27% < 75% bar (12/15) → halt branch; completions did not even reach the 12/15 goal check, let alone the ≥11 submission bar.** Standing reject rule from t_8ed4eb97 (mean found ≤4.5 → REJECT) does NOT fire (4.80 > 4.5), but that rule gates the *submission*, not the halt: the 5×3 decision bar (<8/15 = halt + report, no submission) is the operative one and it fires.
+
+### Result table (found = mission targets 6, completions = 6/6)
+
+| seed | run | status | found | FP | dup | coll | cov% | score |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 1 | SUCCESS | 6.0 | 3 | 4 | 0 | 56.4 | 81.9 B |
+| 1 | 2 | TIME_LIMIT | 5.0 | 16 | 6 | 14 | 88.2 | 43.3 D |
+| 1 | 3 | TIME_LIMIT | 5.0 | 4 | 13 | 2 | 74.7 | 60.4 C |
+| 2 | 1 | TIME_LIMIT | 5.0 | 3 | 4 | 1 | 98.9 | 61.4 C |
+| 2 | 2 | TIME_LIMIT | 5.0 | 8 | 5 | 0 | 98.7 | 63.3 C |
+| 2 | 3 | TIME_LIMIT | 5.0 | 1 | 6 | 1 | 99.0 | 64.1 C |
+| 3 | 1 | TIME_LIMIT | 4.0 | 4 | 3 | 0 | 98.7 | 60.7 C |
+| 3 | 2 | SUCCESS | 6.0 | 2 | 2 | 0 | 91.7 | 78.5 B |
+| 3 | 3 | SUCCESS | 6.0 | 4 | 6 | 0 | 91.6 | 73.4 B |
+| 4 | 1 | TIME_LIMIT | 5.0 | 2 | 6 | 0 | 99.1 | 67.3 C |
+| 4 | 2 | TIME_LIMIT | 5.0 | 1 | 5 | 0 | 98.6 | 69.8 C |
+| 4 | 3 | TIME_LIMIT | **0.0** | 0 | 0 | 0 | 20.9 | 50.7 D |
+| 5 | 1 | SUCCESS | 6.0 | 3 | 0 | 0 | 98.7 | 72.7 B |
+| 5 | 2 | TIME_LIMIT | 5.0 | 2 | 3 | 0 | 98.9 | 67.2 C |
+| 5 | 3 | TIME_LIMIT | 4.0 | 2 | 2 | 0 | 99.6 | 62.8 C |
+
+Mean score 65.2 (v12-v2 twin: 64.1), mean cov 87.6% (91.1%).
+
+### Paired analysis v13-cv vs v12-v2 (n=15, per-run paired, bootstrap 95% CI seed 1337)
+
+| metric | v13-cv | v12-v2 | paired Δ |
+|---|---|---|---|
+| mean found | 4.80 | 4.53 | **+0.27**, CI [−0.87, +1.13] — NULL (CI spans zero) |
+| completions | 4/15 (27%) | 3/15 (20%) | +1 — NULL |
+| mean FP | 3.67 | 2.47 | +1.20 (verifier's conf-gated injections add some FP mass) |
+| mean dup | 4.33 | 6.00 | −1.67 (fewer dup re-submissions) |
+| mean collisions | 1.20 | 0.73 | +0.47 (single run2 outlier: 14 vs 7) |
+
+Same shape as every sim-effect pair since t_f4620454: **the VLM pending-track verifier buys +0.27 found on average (within noise), not completions.** Per-seed wins cluster where injections landed in-window (seed5 run1 +4.0, seed2 all three runs +1.0, seed3 runs 2–3 +1.0 each); losses cluster on nav flakes (seed4 run3 −6.0) and injection-stochasticity (seed1 run3 −1.0).
+
+### Completion-leg attribution (the 11 non-completions)
+
+The blocking object per run (mission-target, detected/total):
+
+- **first_aid_kit 1/2 in 5 runs** (seed1 run2, seed2 runs 1–3, seed4 run1, seed5 run2) and inside the seed5 run3 double-miss — **FAK is dominant: 9 of 30 FAK sighting opportunities missed over 15 runs (30% FAK miss rate vs 13% FFE, 20% person)**, the same class the re-gate attributed to the detector-coverage/zero-sighting bucket and single-glimpse `diverse=1` (below `MIN_SIGHTINGS=2`).
+- person 0/1 in 2 runs (seed1 run3, seed3 run1); FE 2/3 in 3 runs.
+- **seed4 run3 (found 0, cov 20.9%, 0.447 m traveled):** navigation/agent-immobility flake — the stream (`results/streams/stream_easy_seed4_run3_20261020T171307Z.jsonl`) shows 4208 sightings of one fire extinguisher ~2.2 m from spawn across t=7.4–818, 0 VLM injections (no pending tracks beyond it), zero coverage progress. Same "nav failure, unrelated to new changes" signature as the 2026-05-16 seed4 note and t_b0b71441-era flakes. Excluding it, seed4 mean = 68.5 C.
+
+### Verdict
+
+**Completions 4/15 = 27% < 75% (12/15 goal) and < the 8/15 halt floor → HALT + report; no submission, no leaderboard entry, validate_submission not run (only the ≥11/15 branch requires it).** The VLM verifier's confirmed effect remains the small within-noise found gain (+0.27 paired) plus dup reduction; it does not move the completion leg, which is held back by FAK sighting coverage (detector bucket) and rare nav immobility flakes — both outside the verifier's mechanism.
+
+Files: `robot-sandbox/results/submissions/derpbot-explorer-v13-cv/` (15 run JSONs + benchmark_submission.yaml + benchmark_run.log); raw sources `robot-sandbox/results/office_easy_001_20261020T15*.json`–`T18*.json`; streams `derpbot-explorer/results/streams/stream_easy_seed{S}_run{R}_20261020T1*.jsonl` (run1 rows are the 2026-10-19 gate streams' own logs, re-emitted at SKIP; run2/3 fresh). Runner invocation: `taskset -ac 10-19,30-39 run_benchmark.sh --agent-name derpbot-explorer-v13-cv --difficulties easy --runs-per-seed 3 --speed 2` with `DERPBOT_VLM_VERIFY=1`, SKIP-resumed over the 5×1 gate JSONs.
+
+Par basis: **v1-human-derived** (easy par 6.00/6) + **v2 human re-baseline PENDING (operator)** — same-sandbox (v2.0.0) agent deltas only; absolute levels carry the v2-shift caveat as always.
+
+---
 ## 2026-10-20 — t_d479428a: v13-cv-fu tracker conversion fix — Step-0 ROOT-CAUSE named (seed4-class outlier-aligned chimera, `agent/tracker.py` `try_split` core rule) → injection-conditional split-evidence fix → replay A/B exact → 5×1 re-gate **BETWEEN** (found 4.60 / FP 2.00 / completions 1/5) → halt (sibling 5×3 runs `cb4ce47` as-is per its pre-registered rule)
 
 Agent: `derpbot-explorer-v13-cv-fu` @ `0e93cb2` (= `cb4ce47` + conversion fix `a0b640f` + pre-registered re-gate bars `0e93cb2`); `DERPBOT_VLM_VERIFY=1` is the ONLY env behavior delta, everything else off.
