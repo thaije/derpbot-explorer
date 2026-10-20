@@ -140,7 +140,14 @@ def run_tracker(sightings: list[dict]) -> list[dict]:
     def feed():
         for s in sightings:
             try:
-                iq.put((s["class_name"], (s["x"], s["y"]), (s["rx"], s["ry"]), s["confidence"]))
+                # t_d479428a: stream rows with the injected provenance marker
+                # (bbox [0,0,0,0]) replay as externally verified sightings —
+                # the same 5-tuple Tracker.inject_external_sighting enqueues
+                # live — so replay exercises the injection-conditional split
+                # gate exactly as the live pipeline did.
+                flag = s.get("bbox") == [0.0, 0.0, 0.0, 0.0]
+                iq.put((s["class_name"], (s["x"], s["y"]), (s["rx"], s["ry"]),
+                        s["confidence"], flag))
             except Exception:
                 return
             time.sleep(0.01)

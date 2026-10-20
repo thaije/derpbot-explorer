@@ -210,6 +210,15 @@ class TrackedObject:
                 return True
         return False
 
+    # Split evidence bookkeeping (t_d479428a): parallel to positions, marks
+    # sightings that entered the track via an EXTERNAL-VERIFIED source
+    # (Tracker.inject_external_sighting passes the marker on the worker
+    # tuple — detector relays never carry a 5th element, so flag False).
+    injected_flags: list[bool] = field(default_factory=list)
+
+    def _has_injected(self) -> bool:
+        return any(self.injected_flags)
+
     def try_split(
         self,
     ) -> Optional[tuple["TrackedObject", "TrackedObject"]]:
@@ -268,9 +277,33 @@ class TrackedObject:
             return None
         if math.hypot(cA[0] - cB[0], cA[1] - cB[1]) < SPLIT_SEPARATION_M:
             return None
-        # both halves must be re-sighted real objects, not diffuse scatter
-        if not (self._has_core(idxA) and self._has_core(idxB)):
-            return None
+        # both halves must be re-sighted real objects, not diffuse scatter…
+        # UNLESS the track carries an externally verified sighting
+        # (t_d479428a, v13-cv-fu: the VLM verifier injects through the SAME
+        # input queue at VLM confidence; `injected_flags` marks those tuples).
+        # An outlier-ALIGNED chimera (one early MATCH_RADIUS misassociation
+        # anchors the running mean off-object; the re-sighted core mass sits
+        # in the OTHER half with the track spread exceeding STABILITY_RADIUS)
+        # can NEVER satisfy the both-halves rule — the singleton half has no
+        # fellow sightings by construction — so the stability gate rejects
+        # the whole track forever and every later fused verified sighting
+        # keeps polishing an unconvertible centroid (seed4 gate run: one
+        # 0.25-conf FAK outlier at t=8.6 anchored track_2 1.47 m off the
+        # object; 53 near-GT sightings incl. one 0.98-conf VLM injection
+        # fused in; core check 1/23 every tick; pending all 900 s). With
+        # verified evidence on the track, one corroborated core half
+        # suffices: the verified sighting certifies the mass side, the
+        # discarded corner is quarantined and left to starve.
+        # Injection-conditional: with no external sightings (injected_flags
+        # empty — detector relays never carry the 5th tuple element) this is
+        # behavior-identical to the classic both-halves rule. NOT a global
+        # confirm-bar lowering (the v4/v6 lesson: global lowering collapsed
+        # recall AND FP discipline).
+        coreA, coreB = self._has_core(idxA), self._has_core(idxB)
+        if not (coreA or coreB):
+            return None  # no re-sighted object anywhere → diffuse scatter
+        if not (coreA and coreB) and not self._has_injected():
+            return None  # classic rule, unless externally verified evidence
 
         def child(idxs: list[int], suffix: str) -> "TrackedObject":
             c = TrackedObject(track_id=f"{self.track_id}{suffix}",
@@ -278,6 +311,7 @@ class TrackedObject:
             c.positions = [self.positions[i] for i in idxs]
             c.robot_poses = [self.robot_poses[i] for i in idxs]
             c.confidences = [self.confidences[i] for i in idxs]
+            c.injected_flags = [self.injected_flags[i] for i in idxs]
             c.quarantined = True
             # re-earn confirmation state: fast-confirm counts restart at 0
             c.in_view_frames = 0
@@ -447,6 +481,11 @@ def tracker_worker(
         _count += 1
         class_name, world_pos, robot_pose = item[0], item[1], item[2]
         confidence = item[3] if len(item) > 3 else 1.0
+        # Externally verified sighting marker (t_d479428a): the VLM verifier
+        # appends a 5th tuple element True via Tracker.inject_external_sighting
+        # — detector relays always send 4-tuples (relay code, agent/tracker.py
+        # _relay_loop), so flag False there.
+        injected = bool(item[4]) if len(item) > 4 else False
 
         if class_name not in targets:
             continue
@@ -466,6 +505,7 @@ def tracker_worker(
             obj.positions.append((wx, wy))
             obj.robot_poses.append((rx, ry))
             obj.confidences.append(confidence)
+            obj.injected_flags.append(injected)
 
             # Spread-triggered split (t_ca2ea380): if this sighting pushed a
             # same-class track beyond STABILITY_RADIUS spread, try to divide
@@ -1342,15 +1382,18 @@ class Tracker:
         except Exception:
             pass  # recorder is a write-only observer
         try:
+            # t_d479428a: 5th tuple element marks this as an externally
+            # verified sighting (the tracker's split-evidence gate reads it;
+            # detector-relay tuples have length 4 → not injected).
             self._input_queue.put_nowait(
-                (class_name, world_pos, (rx, ry), confidence)
+                (class_name, world_pos, (rx, ry), confidence, True)
             )
             return True
         except Exception:
             try:
                 self._input_queue.get_nowait()
                 self._input_queue.put_nowait(
-                    (class_name, world_pos, (rx, ry), confidence)
+                    (class_name, world_pos, (rx, ry), confidence, True)
                 )
                 return True
             except Exception:

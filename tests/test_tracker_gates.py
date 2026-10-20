@@ -28,14 +28,20 @@ def check(name, cond, detail=""):
 
 
 def run_worker(sightings, wait_s=2.5):
-    """Feed (class, wx, wy, rx, ry, conf) tuples; return published messages."""
+    """Feed (class, wx, wy, rx, ry, conf[, injected]) tuples; return messages.
+
+    Optional 7th element True marks an externally verified sighting (the
+    5-tuple Tracker.inject_external_sighting enqueues, t_d479428a)."""
     ctx = mp.get_context("spawn")
     iq, oq, ev = ctx.Queue(), ctx.Queue(), ctx.Event()
     p = ctx.Process(target=tracker_worker, args=(["cup", "bottle"], iq, oq, ev))
     p.start()
     ev.wait(timeout=5.0)
     for s in sightings:
-        iq.put((s[0], (s[1], s[2]), (s[3], s[4]), s[5]))
+        tup = (s[0], (s[1], s[2]), (s[3], s[4]), s[5])
+        if len(s) > 6:
+            tup = tup + (bool(s[6]),)
+        iq.put(tup)
         time.sleep(0.05)
     time.sleep(wait_s)
     iq.put(None)
@@ -147,6 +153,60 @@ def main():
     klass = {(m["class_name"]) for m in conf_msgs(out)}
     check("veto cleared on separation", klass == {"cup"},
           str(klass))
+
+    # 9. Outlier-aligned chimera with an externally verified sighting
+    #    (t_d479428a, v13-cv-fu): one early sighting anchors the track's
+    #    running mean off-object; a corroborated core mass forms elsewhere
+    #    (spread > STABILITY_RADIUS) and a high-trust VERIFIER INJECTION
+    #    fuses in — the track was pending forever before the fix (core check
+    #    failed on the singleton anchor half every tick). After: the split
+    #    fires on the injected evidence, the mass half converts, the corner
+    #    is quarantined off. Geometry mirrors the live seed4 case: anchor
+    #    1.47m from the core, core sightings pairwise-tight.
+    #    Tuple order in run_worker: (class, wx, wy, rx, ry, conf).
+    #    First 3 corner sightings + 3 core sightings (robot moves 0.45m
+    #    apart within the core half so it re-sights densely):
+    out = run_worker([
+        ("cup", 10.0, 10.0, 0.0, 0.0, 0.25),   # corner anchor (off-object)
+        ("cup", 6.0, 6.5, 1.0, 1.0, 0.28),
+        ("cup", 6.1, 6.4, 1.45, 1.0, 0.22),
+        ("cup", 6.0, 6.6, 1.9, 1.0, 0.30),
+        ("cup", 6.05, 6.45, 2.35, 1.0, 0.24),
+        ("cup", 5.95, 6.55, 2.8, 1.0, 0.26),
+        ("cup", 6.0, 6.5, 3.25, 1.0, 0.98, True),  # VLM injection, marker set
+    ])
+    msgs = conf_msgs(out)
+    check("injected chimera: corner split off, mass half converts",
+          len(msgs) >= 1 and msgs[0]["class_name"] == "cup"
+          and abs(msgs[0]["world_x"] - 6.0) < 0.3
+          and abs(msgs[0]["world_y"] - 6.5) < 0.3,
+          str([(m["world_x"], m["world_y"]) for m in msgs]))
+
+    # 10. Same track WITHOUT the injected marker: the classic rule holds —
+    #     no split evidence → no outlier-aligned split → the chimera stays
+    #     rejected (the no-injection-behavior-unchanged guarantee). Geometry
+    #     = the live seed4 track_2 case (corner 1.47m from the mass, mass
+    #     pairwise-tight at GT, track spread 2.08m > STABILITY_RADIUS —
+    #     replay-proven pending-forever on master before this fix).
+    out = run_worker([
+        ("cup", 8.6, 5.13, 0.18, 0.29, 0.25),      # corner anchor (seed4 t=8.6)
+        ("cup", 10.0, 4.76, 0.18, 0.29, 0.26),
+        ("cup", 10.0, 4.74, 0.18, 0.29, 0.22),
+        ("cup", 10.03, 4.83, 0.18, 0.29, 0.29),
+        ("cup", 9.92, 4.82, 0.18, 0.29, 0.27),
+        ("cup", 10.03, 4.84, 0.18, 0.29, 0.28),
+        ("cup", 10.07, 4.79, 0.18, 0.29, 0.30),
+        ("bottle", 60.0, 60.0, 2.0, 2.0, 0.6),     # far bottle: no cross-talk
+        ("cup", 9.53, 3.79, 0.25, 0.48, 0.22),     # mass core at GT (seed4 1.53,3.80)
+        ("cup", 9.53, 3.79, 0.29, 0.55, 0.24),
+        ("cup", 9.53, 3.81, 0.32, 0.61, 0.18),
+        ("cup", 9.52, 3.79, 0.39, 0.79, 0.16),
+        ("cup", 9.52, 3.79, 0.43, 0.87, 0.19),
+        ("cup", 9.51, 3.80, 0.49, 0.96, 0.18),
+    ])
+    msgs = conf_msgs(out)
+    check("seed4-shaped chimera, no injection marker: stays rejected",
+          len(msgs) == 0, str([(m["world_x"], m["world_y"]) for m in msgs]))
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     sys.exit(1 if FAIL else 0)

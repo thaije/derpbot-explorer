@@ -396,8 +396,10 @@ def test_inject_external_sighting_routes_queue():
                                     (0.0, 0.0, 0.0), 0.9)
     check("inject: returns True", ok is True)
     item = t._input_queue.get_nowait()
-    check("inject: tuple shape (cls, pos, pose, conf)",
-          item == ("first_aid_kit", (3.0, 0.4), (0.0, 0.0), 0.9), str(item))
+    # t_d479428a: 5-tuple with the externally-verified marker True (worker
+    # reads item[4]; detector relays send 4-tuples → flag False there)
+    check("inject: tuple shape (cls, pos, pose, conf, injected=True)",
+          item == ("first_aid_kit", (3.0, 0.4), (0.0, 0.0), 0.9, True), str(item))
     check("inject: stream recorder tapped",
           t._recorder.rec["class_name"] == "first_aid_kit"
           and t._recorder.rec["confidence"] == 0.9)
