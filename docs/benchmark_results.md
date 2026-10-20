@@ -1,3 +1,76 @@
+## 2026-10-20 — t_d479428a: v13-cv-fu tracker conversion fix — Step-0 ROOT-CAUSE named (seed4-class outlier-aligned chimera, `agent/tracker.py` `try_split` core rule) → injection-conditional split-evidence fix → replay A/B exact → 5×1 re-gate **BETWEEN** (found 4.60 / FP 2.00 / completions 1/5) → halt (sibling 5×3 runs `cb4ce47` as-is per its pre-registered rule)
+
+Agent: `derpbot-explorer-v13-cv-fu` @ `0e93cb2` (= `cb4ce47` + conversion fix `a0b640f` + pre-registered re-gate bars `0e93cb2`); `DERPBOT_VLM_VERIFY=1` is the ONLY env behavior delta, everything else off.
+
+### Step 0 — root cause (zero-sim: seed4 gate stream replayed through the LIVE tracker_worker, BEFORE any fix)
+
+Seed4 gate stream `stream_easy_seed4_run1_20261019T154415Z.jsonl` on master `cb4ce47`: **`found=5/16 … first_aid_kit:1/2`** — the exact live miss reproduces. `tracker_worker` stderr names the gate:
+
+```
+gate-rejected first_aid_kit track=track_2 diversity=2 max_conf=0.30 spread=2.08m   ← first tick at n=2
+… 39 rejection lines: diversity 2→12, max_conf 0.30→0.98 (post-injection), spread 2.08m constant
+split chimera track_4 (12 sightings, spread=1.76m) -> 4A(9) + 4B(3)     ← track_4 DID split (12 sightings)
+gate-rejected first_aid_kit track=track_2 diversity=… spread=2.08m      ← track_2 NEVER split
+```
+
+**Named: `TrackedObject.try_split` (`agent/tracker.py:272`), the `_has_core` both-halves rule, jammed by a MATCH_RADIUS-alignment outlier anchor. NOT `MIN_SIGHTINGS` (track_2 held diverse ≥2 all run), NOT injected-conf margin, NOT first-seen/age interplay, NOT stability-window timing, NOT a `TIGHT_MATCH_RADIUS` re-merge.** Timeline (stream + replica):
+
+1. **t=8.6** — the run's FIRST FAK sighting (`0.25`, `(0.91, 5.13)`, **1.47m from GT4**) creates `track_2` — a projection-depth outlier; every later same-object sighting sits ≤0.35m of GT4.
+2. **t=10→26.8** — all 53 near-GT4 sightings fuse into `track_2` within `MATCH_RADIUS 2.0` of the anchored centroid (+ running-mean pull on the core): mass sits ON GT (pairwise ≤0.35m) but the anchor's 1.47m offset inflates track spread to **2.08m > STABILITY_RADIUS 1.2** → stability leg rejects every tick; no split because…
+3. **The VLM injection (t=26.8, conf 0.98, sighting #24) FUSES INTO `track_2`.** At the split attempt: **extremes-seeded 2-means → sizes 1/23, `coreA=False / coreB=True` measured at injection — the singleton-anchor half has no fellow sightings and can NEVER satisfy the re-sighted-core rule (by construction; the anchor is never re-sighted) → the split NEVER fires and the track stays pending to end-of-run.** `track_4`'s chimera (a "both real objects" split) DID split — the asymmetry proves the block is the outlier-aligned shape, not the mechanism at large.
+4. Re-audit of the other candidates: not a margin failure (margin disabled, CONFIDENCE_MARGIN=0.0, conf 0.98 ≥ 0.15+0); not a veto (no different-class neighbor logged at track_2); not candidate expiry (CANDIDATE_TIMEOUT_S only gates the verifier's 1-sighting pending dict, not worker confirmation).
+
+### Step 1 — fix (generic, injection-conditional, NO global confirm-bar lowering, no class/oracle logic)
+
+- Worker tuples gain a 5th element marking externally verified sightings: `Tracker.inject_external_sighting` sends `(class, pos, pose, conf, True)`; detector relays and pre-fix replays send 4-tuples → flag `False` (`agent/tracker.py`, `injected_flags[]` parallel to positions, propagates through `try_split` child construction).
+- `try_split` core rule: `coreA, coreB = _has_core(idxA), _has_core(idxB)`. The split now requires, unchanged, **≥1 cored half (scatters never split) AND the classic both-halves rule** — with ONE relaxation: when the track carries an externally verified sighting (`_has_injected()`), a one-cored-half split is allowed (the singleton anchor half may lack a core; the mass side is certified by verified evidence, the discarded side is quarantined + left to starve). With NO injected sighting, behavior is bit-identical to master.
+- Replay fidelity: `scripts/replay_tracker.py` now translates stream rows with the `[0,0,0,0]` injection provenance marker into the same 5-tuple the live verifier enqueues.
+
+### Replay A/B (seed4 gate stream + 3 corpus v10 streams)
+
+| replay | found | TP | FP | DP | Δ (fu − master) |
+|---|---|---|---|---|---|
+| seed4 gate stream (WITH injection) | 5/16 → **6/16** | 5 → 6 | 1 → 1 | 7 → 7 | **found +1, FP +0, DP +0** |
+| corpus stream seed1 (no injection) | 4/16 ↔ 4/16 | 4 ↔ 4 | 1 ↔ 1 | 5 ↔ 5 | all 0 |
+| corpus stream seed2 (no injection) | 2/16 ↔ 2/16 | 2 ↔ 2 | 1 ↔ 1 | 0 ↔ 0 | all 0 |
+| corpus stream seed5 (no injection) | 5/16 ↔ 5/16 | 5 ↔ 5 | 3 ↔ 3 | 2 ↔ 2 | all 0 |
+
+(a) the seed4 fused injection now converts: new TP `first_aid_kit#4` centroid **0.072m from GT** via `track_2BB` (split cascade: `track_2 → 2A(1) + 2B(23)` at the injection, then 2B's mass re-splits classically `→ 2BA + 2BB` one tick past STABILITY_RADIUS); centroid-err TP mean improved 0.496 → 0.425. All 34 pre-campaign corpus streams carry 0 `[0,0,0,0]` rows → (b)'s A-side is provenance-clean by construction; proven delta = 0 exactly (beyond tolerance).
+
+### Step 2 — tests (tallied) + commits
+
+`test_tracker_gates.py` 10/10 (2 NEW: injected outlier-aligned chimera converts + converts's corner quarantined; same geometry on the 4-tuple path stays rejected — a live tracker_worker regression pair, not just a unit shim). `test_vlm_verifier.py` 22 pytest + 44 tally (inject-tuple shape updated to the 5-tuple). Full-suite tallies: assoc/split 7/0, replay fixture 10/0, projector intrinsics 22/0, slam sentinel 37/0, wiring 27/0, watchdog OK, keyframe 42/0, gpclip 7/7 — **206 checks, 0 failed**. Commits `a0b640f` (fix + tests) and `0e93cb2` (pre-registered re-gate bars).
+
+### Step 3 — 5×1 re-gate (bars pre-registered `0e93cb2`, committed BEFORE running; same bars as t_8ed4eb97)
+
+| seed | status | found | FP | dup | coll | cov% | score |
+|---|---|---|---|---|---|---|---|
+| 1 | TIME_LIMIT | 3.0 | 5 | 4 | 3 | 98.7 | 41.4 D |
+| 2 | TIME_LIMIT | 4.0 | 2 | 1 | 1 | 98.7 | 55.3 C |
+| 3 | TIME_LIMIT | 5.0 | 2 | 1 | 0 | 98.7 | 67.1 C |
+| 4 | **SUCCESS** | **6.0** | **0** | 10 | 0 | 98.7 | 79.3 B |
+| 5 | TIME_LIMIT | 5.0 | 1 | 6 | 0 | 100.0 | 66.3 C |
+
+**Mean found 4.60 · FP/run 2.00 · completions 1/5 → found leg ✗ (4.60 < 4.9) · FP ✓ · completions ✗ (1 < 3) → BETWEEN → attribution + halt.** Neither REJECT leg fires (4.60 > 4.5; FP 2.00 ≤ 5).
+
+### Attribution
+
+- **The seed4-class conversion defect is FIXED (within-cohort proven):** live seed4 = **found 6/6, SUCCESS, FP 0** — every injected sighting (4, conf 0.95–0.98 incl. the FAK pair on the previously-jamming class) converted. Zero-sighting-bucket/zero-timing misses = zero on seed4.
+- **The cohort moved DOWN overall (found 5.20 → 4.60, −0.60) on misses OUTSIDE the fix's scope** — all four remaining misses audited from the fu streams: seed1 {person#0, FE#2, FAK#1} + seed2 {FAK#0, FAK#1} + seed3 FAK#1 = **zero same-class sightings ≤2m all run (the known detector-coverage/zero-sighting bucket — a pending-track verifier cannot fire on tracks that never exist)**; seed5 FAK#1 = 6 sightings ≤2m but all within 0.85m of robot-pose span at t=364–371 (single-glimpse, `diverse=1`, below MIN_SIGHTINGS=2 — never confirmable by any current rule; injector never even eligible). These are the same buckets t_8ed4eb97 already attributed as out-of-scope; none are tracker-gate regressions.
+- **Injection STOCHASTICITY moved the gate, not the fix:** the pre-fix 5.20 leaned on 3 of its 4 seed1 injections landing in-window early (seed1 6.0 → 3.0 here on the same coverage-bucket structure, only 1 late injection at t=579); seed5's pre-fix 6.0 leaned on an in-window FAK injection (t≈294) that the re-gate's seed5 run never received (its only injection, t=506, converted FPE#3 — no FAK call ever became eligible there). The fix's own effect (seed4 conversion) is the only within-cohort delta this fix controls.
+- FP moved 3.00 → 2.00 (−1.0, −33%); dup 3.4 → 4.4; coll 0.2 → 0.8 — all within single-run noise. **Verdict: fix works as designed, cohort lands BETWEEN on pre-existing detector-coverage/injection-timing variance; 5×3 proceeds with `cb4ce47` per the sibling card's pre-registered rule.**
+
+### Step 4 — sibling selection
+
+Per t_6124e5bb's pre-registered rule (BETWEEN-halt ⇒ run `cb4ce47` as-is): the full 5×3 runs **`cb4ce47`, `DERPBOT_VLM_VERIFY=1`, NOT the fu fix**.
+
+### Files & provenance
+
+Result JSONs: `robot-sandbox/results/submissions/derpbot-explorer-v13-cv-fu/easy_seed{1..5}_run1.json` (raw sources `robot-sandbox/results/office_easy_001_20261020T1*.json`, unique-signature match, no re-runs). Streams: `results/streams/stream_easy_seed{S}run1_run1_20261020T1*.jsonl` (injected rows carry the `[0,0,0,0]` bbox marker). Runner: `scripts/regate_fu_runner.sh` (resumable; pkg1 pin via `taskset -ac 10-19,30-39` on the runner tree, verified by a live-child affinity check mid-batch: `Cpus_allowed_list: 10-19,30-39`). `validate_submission.py`: **PASS** (after adding the required `submitted` date key to benchmark_submission.yaml). Batch wall: 13:35Z–14:57Z ≈ 82 min, 5/5 completed 0 failed.
+
+Par basis: **v1-human-derived** (easy par 6.00/6) + **v2 human re-baseline PENDING (operator)** — same-sandbox (v2.0.0) agent deltas only; absolute levels carry the v2-shift caveat as always.
+
+---
 ## 2026-10-19 — t_8ed4eb97: v13-cv VLM pending-track verifier (glm-5.3-flash, env-gated default-OFF) — Step-0 probe PASS → 5×1 gate BETWEEN → attribution + halt (no 5×3, no submission)
 
 Agent: `derpbot-explorer-v13-cv` @ `2005888` (v12-v2 lineage; new: `agent/vlm_verifier.py` async confirmator, `Tracker.inject_external_sighting`, start_stack forward; `DERPBOT_VLM_VERIFY=1` is the ONLY behavior delta vs the v12-v2 gate agent and it is default-OFF — with the var unset the tree is byte-equivalent v12-v2 behavior). Easy 5×1 (900 s, speed 2, pkg1-pinned tmux server 10-19,30-39, one sim at a time), 5/5 completed 0 failed, port-7400 pre-flight + cleanup verified.
